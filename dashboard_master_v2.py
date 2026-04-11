@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 
 IS_RENDER = bool(os.environ.get("RENDER")) or bool(os.environ.get("PORT"))
 
@@ -25,6 +25,7 @@ BAR_FILE = DATA_DIR / "bar_koelingen.json"
 GENERAL_FILE = DATA_DIR / "algemeen.json"
 STATE_FILE = DATA_DIR / "bar_state.json"
 PRODUCT_TYPES_FILE = DATA_DIR / "product_soorten.json"
+LOCATIONS_FILE = DATA_DIR / "locaties.json"
 OP_FILE = DATA_DIR / "op_list.json"
 
 STATS_FILE = DATA_ROOT / "dashboard_stats.json"
@@ -43,6 +44,9 @@ FOTOS_MAP = BASE_DIR / "Foto's"
 PYTHON_BIN = sys.executable
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+app.secret_key = os.environ.get("APP_SECRET_KEY", "casa-cara-dashboard-secret-key")
+AUTH_FILE = DATA_ROOT / "auth.json"
+MASTER_PASSWORD = "Beeldaliba1*"
 
 DEFAULT_STATS = {
     "last_run": None,
@@ -112,11 +116,23 @@ def ensure_files():
             {"naam": "Overig", "locatie": "-"}
         ], indent=2, ensure_ascii=False), encoding="utf-8")
 
+    if not LOCATIONS_FILE.exists():
+        LOCATIONS_FILE.write_text(json.dumps([
+            "Magazijn",
+            "Kelder",
+            "Wijnrek",
+            "Bar",
+            "-"
+        ], indent=2, ensure_ascii=False), encoding="utf-8")
+
     if not OP_FILE.exists():
         OP_FILE.write_text(json.dumps({"items": []}, indent=2, ensure_ascii=False), encoding="utf-8")
 
     if not STATE_FILE.exists():
         STATE_FILE.write_text(json.dumps({"checked_fill_items": []}, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if not AUTH_FILE.exists():
+        AUTH_FILE.write_text(json.dumps({"access_code": ""}, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def load_json(path: Path):
@@ -125,6 +141,21 @@ def load_json(path: Path):
 
 def save_json(path: Path, data):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def load_auth():
+    ensure_files()
+    return load_json(AUTH_FILE)
+
+def save_auth(data):
+    save_json(AUTH_FILE, data)
+
+def has_access_code():
+    data = load_auth()
+    return bool((data.get("access_code") or "").strip())
+
+def is_logged_in():
+    return bool(session.get("is_logged_in"))
+
 
 
 
@@ -189,13 +220,31 @@ def get_types():
             })
         else:
             changed = True
-    # dedupe by name, keep last location
     deduped = {}
     for item in migrated:
         deduped[item["naam"]] = item
     result = sorted(deduped.values(), key=lambda x: x.get("naam", "").lower())
     if changed or result != raw:
         save_json(PRODUCT_TYPES_FILE, result)
+    return result
+
+def get_locations():
+    raw = load_json(LOCATIONS_FILE)
+    migrated = []
+    changed = False
+    for item in raw:
+        if isinstance(item, str):
+            migrated.append(item)
+        elif isinstance(item, dict):
+            migrated.append(item.get("naam", "-"))
+            changed = True
+        else:
+            changed = True
+    result = sorted(list(dict.fromkeys([x for x in migrated if x])), key=lambda x: x.lower())
+    if "-" not in result:
+        result.append("-")
+    if changed or result != raw:
+        save_json(LOCATIONS_FILE, result)
     return result
 
 
@@ -233,9 +282,12 @@ def normalize_bar_data():
 
 
 def build_fill_items(bar_data):
+    op_pairs = {(x.get("koeling_id"), x.get("product_id")) for x in load_op_items()}
     items = []
     for cooling in bar_data.get("koelingen", []):
         for product in cooling.get("producten", []):
+            if (cooling.get("id"), product.get("id")) in op_pairs:
+                continue
             voorraad = int(product.get("voorraad", 0))
             minimum = int(product.get("minimum", 0))
             soort = product.get("soort", "Overig")
@@ -256,6 +308,85 @@ def build_fill_items(bar_data):
     return items
 
 
+
+LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inloggen</title>
+<style>
+:root{
+  --bg:#06101c; --bg2:#0b1220; --text:#eff6ff; --muted:#9fb0c7;
+  --line:rgba(159,176,199,.14); --accent:#38bdf8; --danger:#ef4444; --shadow:0 20px 50px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; min-height:100vh; color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
+    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
+    linear-gradient(180deg, var(--bg), var(--bg2));
+  display:flex; align-items:center; justify-content:center;
+}
+.wrap{width:min(960px,calc(100vw - 28px));display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{
+  background:linear-gradient(180deg, rgba(16,27,48,.88), rgba(12,20,36,.80));
+  border:1px solid var(--line); border-radius:30px; padding:26px; box-shadow:var(--shadow);
+}
+h1,h2{margin:0 0 10px}
+p{margin:0;color:var(--muted);line-height:1.6}
+.form{margin-top:16px;display:grid;gap:12px}
+input{
+  width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
+  border-radius:14px;padding:14px 14px;font-size:15px;outline:none;
+}
+button{
+  border:none;border-radius:14px;padding:14px 16px;font-size:14px;font-weight:800;cursor:pointer;
+  background:linear-gradient(180deg,#8ae3ff,#38bdf8);color:#08263a;
+}
+.msg{margin-top:12px;padding:12px 14px;border-radius:14px;font-size:14px}
+.msg.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd7d7}
+.msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#d4ffe3}
+.logo{width:56px;height:56px;object-fit:contain;border-radius:14px;background:white;padding:8px;margin-bottom:14px}
+@media (max-width:800px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Inloggen</h1>
+    <p>Voer je code in om naar het dashboard te gaan.</p>
+    {% if message %}
+      <div class="msg {{ 'error' if not success else 'ok' }}">{{ message }}</div>
+    {% endif %}
+    <form class="form" method="post" action="/login">
+      <input type="password" name="access_code" placeholder="Jouw code" required>
+      <button type="submit">Inloggen</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Nieuwe code maken</h2>
+    <p>Heb je nog geen code? Maak er een aan met het hoofdwachtwoord.</p>
+    <form class="form" method="post" action="/setup-code">
+      <input type="password" name="master_password" placeholder="Hoofdwachtwoord" required>
+      <input type="password" name="new_access_code" placeholder="Nieuwe code" required>
+      <button type="submit">Code opslaan</button>
+    </form>
+    {% if code_exists %}
+      <div class="msg ok">Er is al een code ingesteld. Je kunt die altijd overschrijven met het hoofdwachtwoord.</div>
+    {% else %}
+      <div class="msg ok">Er is nog geen code ingesteld. Maak hier je eerste code aan.</div>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>
+"""
+
 HOME_HTML = """
 
 <!DOCTYPE html>
@@ -272,7 +403,7 @@ HOME_HTML = """
   --text:#eff6ff;
   --muted:#9fb0c7;
   --line:rgba(159,176,199,.14);
-  --accent:#63d5ff;
+  --accent:#334155;
   --shadow:0 20px 50px rgba(0,0,0,.28);
 }
 *{box-sizing:border-box}
@@ -282,9 +413,9 @@ body{
   color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
   background:
-    radial-gradient(circle at 10% 0%, rgba(56,189,248,.15), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(99,213,255,.10), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(34,197,94,.06), transparent 30%),
+    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
+    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
     linear-gradient(180deg, var(--bg), var(--bg2));
   display:flex;
   align-items:center;
@@ -323,7 +454,7 @@ p{margin:0 auto;color:var(--muted);line-height:1.65;max-width:760px;font-size:16
   display:block;
   text-decoration:none;
   color:inherit;
-  background:linear-gradient(180deg, rgba(16,27,48,.88), rgba(12,20,36,.80));
+  background:linear-gradient(180deg, rgba(22,22,22,.96), rgba(12,12,12,.94));
   border:1px solid var(--line);
   border-radius:30px;
   padding:24px;
@@ -379,6 +510,7 @@ p{margin:0 auto;color:var(--muted);line-height:1.65;max-width:760px;font-size:16
 <body>
   <div class="wrap">
     <div class="hero">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><a href="/logout" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);padding:10px 14px;border-radius:16px;background:rgba(16,27,48,.88);border:1px solid var(--line)">Uitloggen</a></div>
       <div class="eyebrow">Welkom</div>
       <h1>Welkom</h1>
       <p>Kies welke tool je wilt openen. Zo blijven je Gmail automation en Casa Cara netjes van elkaar gescheiden en overzichtelijk.</p>
@@ -393,7 +525,7 @@ p{margin:0 auto;color:var(--muted);line-height:1.65;max-width:760px;font-size:16
           <div class="tag">Bestaande tool</div>
         </a>
 
-        <a class="card" href="/casa-cara">
+        <a class="card casa-card" href="/casa-cara">
           <div class="icon">
             <img src="/static/casa.png" alt="Casa Cara logo" onerror="this.style.display='none'; this.parentNode.innerHTML='🍽️'; this.parentNode.style.fontSize='30px';">
           </div>
@@ -419,8 +551,8 @@ CASA_HTML = """
 <link rel="icon" type="image/png" href="/static/casa.png">
 <style>
 :root{
-  --bg:#000000; --bg2:#070707; --text:#eff6ff; --muted:#9fb0c7;
-  --line:rgba(159,176,199,.14); --accent:#d4b06a; --good:#22c55e; --danger:#ef4444;
+  --bg:#000000; --bg2:#050505; --text:#f6f1e7; --muted:#b4ab9a;
+  --line:rgba(201,170,112,.16); --accent:#d4b06a; --good:#d4b06a; --danger:#b84f4f;
   --shadow:0 20px 50px rgba(0,0,0,.28);
 }
 *{box-sizing:border-box}
@@ -428,23 +560,23 @@ body{
   margin:0; min-height:100vh; color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
   background:
-    radial-gradient(circle at 10% 0%, rgba(212,176,106,.12), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(196,153,72,.08), transparent 22%),
+    radial-gradient(circle at 10% 0%, rgba(212,176,106,.04), transparent 22%),
+    radial-gradient(circle at 90% 0%, rgba(196,153,72,.03), transparent 20%),
     linear-gradient(180deg, var(--bg), var(--bg2));
 }
 .wrap{max-width:1260px;margin:0 auto;padding:24px 18px 42px}
 .topbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
 .back{
   display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);
-  padding:10px 14px;border-radius:16px;background:rgba(16,27,48,.88);border:1px solid var(--line)
+  padding:10px 14px;border-radius:16px;background:rgba(18,18,18,.95);border:1px solid var(--line)
 }
 .hero,.card{
-  background:linear-gradient(180deg, rgba(16,27,48,.88), rgba(12,20,36,.80));
+  background:linear-gradient(180deg, rgba(22,22,22,.96), rgba(12,12,12,.94));
   border:1px solid var(--line); border-radius:28px; padding:20px; box-shadow:var(--shadow);
 }
 .hero h1{margin:0 0 8px;font-size:40px;letter-spacing:-.03em}
 .hero p{margin:0;color:var(--muted);line-height:1.6}
-.tabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 20px;padding:8px;border-radius:22px;background:rgba(10,18,32,.54);border:1px solid var(--line)}
+.tabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 20px;padding:8px;border-radius:22px;background:rgba(14,14,14,.88);border:1px solid var(--line)}
 .tabbtn{
   border:none;border-radius:16px;padding:12px 16px;font-size:14px;font-weight:800;cursor:pointer;
   color:var(--text);background:transparent;
@@ -459,25 +591,25 @@ body{
 .form-row.locations{grid-template-columns:1fr auto}
 .form-row.products{grid-template-columns:1.2fr .8fr 1fr auto}
 .form-row input,.form-row select{
-  width:100%;border:1px solid rgba(159,176,199,.16);background:rgba(16,27,48,.72);color:var(--text);
+  width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
   border-radius:14px;padding:12px 13px;font-size:14px;outline:none;
 }
 .btn{
   border:none;border-radius:14px;padding:12px 16px;font-size:14px;font-weight:800;cursor:pointer;
   background:rgba(212,176,106,.16);color:#f5e7c8;border:1px solid rgba(212,176,106,.28);
 }
-.btn.danger{background:rgba(239,68,68,.12);color:#ffd7d7;border-color:rgba(239,68,68,.22)}
-.btn.good{background:rgba(34,197,94,.12);color:#d4ffe3;border-color:rgba(34,197,94,.22)}
+.btn.danger{background:linear-gradient(180deg,#df8a8a,#b84f4f);color:#fff4f4;border-color:rgba(184,79,79,.30)}
+.btn.good{background:linear-gradient(180deg,#f3dfb2,#d4b06a);color:#1b1307;border-color:rgba(212,176,106,.28)}
 .btn.small{padding:8px 12px;font-size:13px}
 .koeling-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .koeling{
-  background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:22px;padding:16px;cursor:pointer;
+  background:rgba(20,20,20,.96);border:1px solid var(--line);border-radius:22px;padding:16px;cursor:pointer;
 }
 .koeling .title{font-weight:800;margin-bottom:6px}
 .koeling .meta{font-size:13px;color:var(--muted);line-height:1.45}
 .fill-list,.line-list{display:grid;gap:10px}
 .fill-item,.line{
-  background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:20px;padding:14px;
+  background:rgba(18,18,18,.95);border:1px solid var(--line);border-radius:20px;padding:14px;
 }
 .fill-item.urgent{border-color:rgba(239,68,68,.28);background:rgba(239,68,68,.06)}
 .line-top,.fill-top{display:flex;justify-content:space-between;gap:12px;align-items:start}
@@ -489,13 +621,13 @@ body{
   background:rgba(212,176,106,.14);color:#f5e7c8;border:1px solid rgba(212,176,106,.28);
 }
 .qty input{
-  max-width:110px;border:1px solid rgba(159,176,199,.16);background:rgba(16,27,48,.72);color:var(--text);
+  max-width:110px;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
   border-radius:12px;padding:10px 12px;font-size:14px;
 }
 .pill-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .pill{
   display:inline-flex;align-items:center;gap:8px;
-  padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid var(--line);font-size:13px
+  padding:8px 12px;border-radius:999px;background:rgba(20,20,20,.98);border:1px solid var(--line);font-size:13px
 }
 .empty{padding:16px;border-radius:18px;background:rgba(255,255,255,.03);border:1px dashed var(--line);color:var(--muted)}
 .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.76);display:none;align-items:center;justify-content:center;z-index:9999}
@@ -506,13 +638,13 @@ body{
 .modal .field{margin-top:12px}
 .modal .field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 .modal input,.modal select{
-  width:100%;border:1px solid rgba(159,176,199,.16);background:rgba(16,27,48,.72);color:var(--text);
+  width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
   border-radius:14px;padding:12px 13px;font-size:14px;outline:none;
 }
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
 .toast-wrap{position:fixed;top:18px;right:18px;z-index:10000;display:grid;gap:10px}
 .toast{
-  min-width:280px;max-width:380px;background:rgba(9,15,28,.96);border:1px solid rgba(159,176,199,.16);
+  min-width:280px;max-width:380px;background:rgba(9,15,28,.96);border:1px solid rgba(201,170,112,.16);
   color:var(--text);border-radius:18px;padding:14px 16px;box-shadow:0 18px 40px rgba(0,0,0,.32)
 }
 .toast .title{font-weight:900;margin-bottom:4px}
@@ -522,16 +654,28 @@ body{
   .grid,.form-row,.koeling-grid{grid-template-columns:1fr}
   .form-row.products,.form-row.type-row{grid-template-columns:1fr}
 }
+@media (max-width:640px){
+  .wrap{padding:16px 12px 28px}
+  .hero,.card{padding:16px}
+  .hero h1{font-size:32px}
+  .tabs{gap:8px;padding:6px}
+  .tabbtn{width:100%;text-align:center}
+  .line-top,.fill-top{flex-direction:column;align-items:stretch}
+  .qty{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+  .qty input{grid-column:1 / -1;max-width:none}
+  .btn{width:100%}
+  .pill{width:100%;justify-content:space-between}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
-    <a class="back" href="/">← Terug naar home</a>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="back" href="/">← Terug naar home</a><a class="back" href="/logout">Uitloggen</a></div>
   </div>
 
   <div class="hero">
-    <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin-bottom:8px;"><img src="/static/casa.png" alt="Casa Cara" style="width:54px;height:54px;object-fit:contain;border-radius:14px;background:rgba(255,255,255,.04);padding:6px;"><h1 style="margin:0;">Casa Cara</h1></div>
+    <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin-bottom:8px;"><img src="/static/casa.png" alt="Casa Cara" onerror="this.style.display='none'" style="width:54px;height:54px;object-fit:contain;border-radius:14px;background:rgba(255,255,255,.04);padding:6px;"><h1 style="margin:0;">Casa Cara</h1></div>
     <p>Casa Cara in eigen stijl, met warme kleuren en dezelfde slimme workflow.</p>
   </div>
 
@@ -562,7 +706,7 @@ body{
           <input id="dienstDatum" type="date">
           <input id="dienstTijd" placeholder="Tijd, bijv. 12:00 - 21:00">
           <input id="dienstNotitie" placeholder="Notitie">
-          <button class="btn" onclick="addDienst()">Toevoegen</button>
+          <button type="button" class="btn" onclick="addDienst()">Toevoegen</button>
         </div>
       </div>
     </div>
@@ -584,26 +728,31 @@ body{
           <div id="koelingGrid" class="koeling-grid" style="margin-top:12px;"></div>
           <div class="form-row locations">
             <input id="newCoolingName" placeholder="Nieuwe koeling naam">
-            <button class="btn" onclick="addCooling()">Koeling toevoegen</button>
+            <button type="button" class="btn" onclick="addCooling()">Koeling toevoegen</button>
           </div>
         </div>
 
         <div class="card">
           <h2 class="section-title">Bijvuloverzicht</h2>
           <div class="muted">Gesorteerd op locatie zodat je minder hoeft te lopen.</div>
-          <div class="line-list" style="margin-top:12px;">
-            <div class="line">
-              <div class="name">Open bijvuloverzicht</div>
-              <div class="meta">Bekijk alle open items, gesorteerd op locatie, en markeer ze als gepakt.</div>
-            </div>
-          </div>
+          <div id="fillSummaryCard" class="line-list" style="margin-top:12px;"></div>
           <div style="margin-top:12px;">
-            <button class="btn good" onclick="openFillOverview()">Naar bijvuloverzicht</button>
+            <button id="fillOverviewBtn" class="btn good" onclick="openFillOverview()">Naar bijvuloverzicht</button>
           </div>
         </div>
       </div>
 
       <div class="grid" style="margin-top:18px;">
+
+        <div class="card">
+          <h2 class="section-title">Locaties</h2>
+          <div class="muted">Beheer hier de locaties die je koppelt aan productsoorten.</div>
+          <div id="locationsList" class="pill-list"></div>
+          <div class="form-row locations">
+            <input id="newLocationName" placeholder="Nieuwe locatie">
+            <button class="btn" onclick="addLocation()">Locatie toevoegen</button>
+          </div>
+        </div>
         <div class="card">
           <h2 class="section-title">Productsoorten</h2>
           <div class="muted">Elke productsoort heeft nu een vaste locatie. Nieuwe producten nemen die automatisch over.</div>
@@ -611,7 +760,7 @@ body{
           <div class="form-row type-row">
             <input id="newTypeName" placeholder="Nieuwe productsoort">
             <select id="newTypeLocation"></select>
-            <button class="btn" onclick="addProductType()">Toevoegen</button>
+            <button type="button" class="btn" onclick="addProductType()">Toevoegen</button>
           </div>
         </div>
 
@@ -636,7 +785,11 @@ body{
             <h2 class="section-title">Bijvuloverzicht</h2>
             <div class="muted">Gesorteerd op locatie zodat je sneller kunt lopen en overzicht houdt.</div>
           </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <select class="styled-select" id="fillSortMode" class="styled-select" onchange="renderFillOverviewOnly()" style="min-width:180px;">
+              <option value="locatie">Sorteren op locatie</option>
+              <option value="soort">Sorteren op productsoort</option>
+            </select>
             <button class="btn" onclick="backToBarHomeFromFill()">← Terug</button>
             <button class="btn good" onclick="markAllFilled()">Alles bijgevuld 🥳</button>
           </div>
@@ -650,9 +803,13 @@ body{
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
           <div>
             <h2 class="section-title" id="detailTitle">Koeling</h2>
-            <div class="muted">Nieuw product toevoegen staat bovenaan. Producten zijn echt aanpasbaar.</div>
+            <div class="muted">Nieuw product toevoegen staat bovenaan. Vul hier direct in tot welk aantal je wilt aanvullen.</div>
           </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <select class="styled-select" id="coolingSortMode" class="styled-select" onchange="renderCoolingDetail()" style="min-width:220px;">
+              <option value="soort">Sorteren op productsoort</option>
+              <option value="locatie">Sorteren op locatie</option>
+            </select>
             <button class="btn" onclick="backToBarHome()">← Terug</button>
             <button class="btn danger" onclick="deleteCurrentCooling()">Koeling verwijderen</button>
           </div>
@@ -661,9 +818,9 @@ body{
         <h3 style="margin:18px 0 8px;">Nieuw product toevoegen</h3>
         <div class="form-row products">
           <input id="newProductName" placeholder="Productnaam">
-          <input id="newProductMinimum" type="number" placeholder="Minimum">
+          <input id="newProductMinimum" type="number" placeholder="Aanvullen tot">
           <select id="newProductType"></select>
-          <button class="btn" onclick="addProduct()">Toevoegen</button>
+          <button type="button" class="btn" onclick="addProduct()">Toevoegen</button>
         </div>
 
         <div id="productList" class="line-list" style="margin-top:16px;"></div>
@@ -694,6 +851,16 @@ body{
   </div>
 </div>
 
+<div id="productBackdrop" class="modal-backdrop">
+  <div class="modal">
+    <h3 id="productModalTitle">Productinfo</h3>
+    <div id="productModalBody"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeProductModal()">Sluiten</button>
+    </div>
+  </div>
+</div>
+
 <div id="toastWrap" class="toast-wrap"></div>
 
 <script>
@@ -705,6 +872,7 @@ let opData = [];
 let selectedCoolingId = null;
 let confirmAction = null;
 let editSaveAction = null;
+let activeProductModal = null;
 
 const esc = v => (v ?? '').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 
@@ -750,6 +918,32 @@ function runEditSave(){
   if(editSaveAction){ editSaveAction(); }
 }
 
+function openProductModal(coolingId, productId){
+  const cooling = (barData.koelingen || []).find(k => k.id === coolingId);
+  const product = (cooling?.producten || []).find(p => p.id === productId);
+  if(!product) return;
+
+  const locatie = productTypesData.find(t => t.naam === (product.soort || 'Overig'))?.locatie || '-';
+  document.getElementById('productModalTitle').textContent = product.naam;
+  document.getElementById('productModalBody').innerHTML = `
+    <div class="field"><label>Productsoort</label><div class="muted">${esc(product.soort || 'Overig')}</div></div>
+    <div class="field"><label>Locatie</label><div class="muted">${esc(locatie)}</div></div>
+    <div class="field"><label>Aanvullen tot</label><div class="muted">${esc(product.minimum)}</div></div>
+    <div class="field"><label>Moet bijgevuld worden</label><div class="muted">${esc(product.voorraad || 0)}</div></div>
+  `;
+  document.getElementById('productBackdrop').classList.add('active');
+}
+function closeProductModal(){
+  document.getElementById('productBackdrop').classList.remove('active');
+  activeProductModal = null;
+}
+
+
+function confirmDeleteDienst(id){
+  confirmAction = () => deleteDienst(id);
+  openConfirm('Weet je zeker dat je deze dienst wilt verwijderen?');
+}
+
 async function loadAll(){
   await Promise.all([loadGeneral(), loadBar(), loadProductTypes(), loadLocations(), loadOpItems()]);
   renderGeneral();
@@ -772,7 +966,7 @@ async function loadProductTypes(){
   productTypesData = await res.json();
 }
 async function loadLocations(){
-  const res = await fetch('/api/product-type-locations');
+  const res = await fetch('/api/locations');
   locationsData = await res.json();
 }
 async function loadOpItems(){
@@ -797,7 +991,7 @@ function renderGeneral(){
             <div class="name">${esc(item.day_label || item.date)}</div>
             <div class="meta">${esc(item.time || '-')}<br>${esc(item.note || '')}</div>
           </div>
-          <button class="btn danger small" onclick="deleteDienst('${item.id}')">Verwijderen</button>
+          <button class="btn danger small" onclick="confirmDeleteDienst('${item.id}')">Verwijderen</button>
         </div>
       `;
       list.appendChild(el);
@@ -817,6 +1011,7 @@ async function adjustTips(mode){
   generalData = await res.json();
   input.value = '';
   renderGeneral();
+  showToast('Diensten', 'Dienst verwijderd.', 'success');
 }
 
 async function addDienst(){
@@ -862,7 +1057,9 @@ function renderBarHome(){
       grid.appendChild(el);
     });
   }
+  renderLocations();
   renderProductTypes();
+  renderFillSummary();
   renderOpList();
   renderBarSummary();
 }
@@ -870,22 +1067,32 @@ function renderBarHome(){
 function renderFillOverviewOnly(){
   const fillItems = barData.fill_items || [];
   const fillList = document.getElementById('fillList');
+  const mode = document.getElementById('fillSortMode')?.value || 'locatie';
   fillList.innerHTML = '';
+
   if(!fillItems.length){
     fillList.innerHTML = '<div class="empty">Alles ziet er goed uit. Er hoeft nu niets bijgevuld te worden.</div>';
-  } else {
-    fillItems.forEach(item => {
+    return;
+  }
+
+  groupedItems(fillItems, mode).forEach(([groupName, items]) => {
+    const header = document.createElement('div');
+    header.className = 'line';
+    header.innerHTML = `<div class="name">${esc(mode === 'soort' ? 'Productsoort' : 'Locatie')}: ${esc(groupName)}</div><div class="meta">${items.length} item(s)</div>`;
+    fillList.appendChild(header);
+
+    items.forEach(item => {
       const urgent = Number(item.voorraad) === 0 || Number(item.voorraad) < Math.ceil(Number(item.minimum) / 2);
       const el = document.createElement('div');
       el.className = 'fill-item' + (urgent ? ' urgent' : '');
       el.innerHTML = `
         <div class="fill-top">
           <div>
-            <div class="title">${esc(item.locatie)} · ${esc(item.product)}</div>
+            <div class="title">${esc(item.product)}</div>
             <div class="meta">
-              Soort: ${esc(item.soort)} · ${esc(item.koeling)}<br>
-              Huidig: ${item.voorraad} · Minimum: ${item.minimum}<br>
-              Bijvullen: ${item.bijvullen}
+              Locatie: ${esc(item.locatie)} · Soort: ${esc(item.soort)} · ${esc(item.koeling)}<br>
+              Aanvullen tot: ${item.minimum}<br>
+              <strong style="font-size:18px;color:#f5deb0;">Moet bijgevuld worden: ${item.bijvullen}</strong>
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -896,7 +1103,7 @@ function renderFillOverviewOnly(){
       `;
       fillList.appendChild(el);
     });
-  }
+  });
 }
 
 function renderProductTypes(){
@@ -935,6 +1142,76 @@ function renderProductTypes(){
       typeLocationSelect.appendChild(opt);
     });
   }
+}
+
+
+
+function groupedItems(items, mode){
+  const map = {};
+  items.forEach(item => {
+    let key = mode === 'soort' ? (item.soort || 'Overig') : (item.locatie || '-');
+    if(!map[key]) map[key] = [];
+    map[key].push(item);
+  });
+  return Object.keys(map).sort((a,b)=>a.localeCompare(b, 'nl')).map(key => [key, map[key]]);
+}
+
+function renderFillSummary(){
+  const target = document.getElementById('fillSummaryCard');
+  const btn = document.getElementById('fillOverviewBtn');
+  if(!target || !btn) return;
+  const openItems = (barData.fill_items || []).length;
+
+  if(openItems === 0){
+    target.innerHTML = `
+      <div class="line">
+        <div class="name">Alles is bijgevuld</div>
+        <div class="meta">Er zijn nu geen open bijvulitems. Je hoeft het overzicht niet te openen.</div>
+      </div>
+    `;
+    btn.disabled = true;
+    btn.style.opacity = '0.55';
+    btn.style.cursor = 'not-allowed';
+  } else {
+    target.innerHTML = `
+      <div class="line">
+        <div class="name">${openItems} open bijvulitem(s)</div>
+        <div class="meta">Er moet nog bijgevuld worden. Open het overzicht voor de volledige lijst, gesorteerd op locatie of productsoort.</div>
+      </div>
+    `;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+  }
+}
+
+function renderLocations(){
+  const list = document.getElementById('locationsList');
+  const typeLocationSelect = document.getElementById('newTypeLocation');
+  if(!list || !typeLocationSelect) return;
+  list.innerHTML = '';
+  typeLocationSelect.innerHTML = '';
+
+  if(!locationsData.length){
+    list.innerHTML = '<div class="empty">Nog geen locaties toegevoegd.</div>';
+    const opt = document.createElement('option');
+    opt.value = '-';
+    opt.textContent = '-';
+    typeLocationSelect.appendChild(opt);
+    return;
+  }
+
+  locationsData.forEach(loc => {
+    const pill = document.createElement('div');
+    pill.className = 'pill';
+    pill.innerHTML = `${esc(loc)} <button class="btn small" onclick="renameLocation('${loc.replaceAll("'", "\\'")}')">Wijzig</button> <button class="btn danger small" onclick="deleteLocation('${loc.replaceAll("'", "\\'")}')">×</button>`;
+    list.appendChild(pill);
+
+    const opt = document.createElement('option');
+    opt.value = loc;
+    opt.textContent = loc;
+    typeLocationSelect.appendChild(opt);
+  });
 }
 
 function renderOpList(){
@@ -978,6 +1255,7 @@ async function addCooling(){
   barData = await res.json();
   document.getElementById('newCoolingName').value = '';
   renderBarHome();
+  showToast('Bar', 'Koeling toegevoegd.', 'success');
 }
 
 function openCooling(id){
@@ -1008,42 +1286,59 @@ function renderCoolingDetail(){
   const cooling = (barData.koelingen || []).find(k => k.id === selectedCoolingId);
   const title = document.getElementById('detailTitle');
   const list = document.getElementById('productList');
+  const sortMode = document.getElementById('coolingSortMode')?.value || 'soort';
+
   if(!cooling){
     title.textContent = 'Koeling niet gevonden';
     list.innerHTML = '<div class="empty">Deze koeling bestaat niet meer.</div>';
     return;
   }
+
   title.textContent = cooling.naam;
   list.innerHTML = '';
+
   if(!cooling.producten.length){
     list.innerHTML = '<div class="empty">Nog geen producten in deze koeling.</div>';
     return;
   }
-  cooling.producten.forEach(product => {
-    const low = Number(product.voorraad) < Number(product.minimum);
+
+  const normalized = cooling.producten.map(product => {
     const locatie = productTypesData.find(t => t.naam === (product.soort || 'Overig'))?.locatie || '-';
-    const el = document.createElement('div');
-    el.className = 'line';
-    el.innerHTML = `
-      <div class="line-top">
-        <div>
-          <div class="name">${esc(product.naam)}</div>
-          <div class="meta">Soort: ${esc(product.soort || 'Overig')} · Locatie: ${esc(locatie)} · Minimum: ${product.minimum}<br>${low ? 'Onder minimum' : 'Op voorraad'}</div>
+    return {...product, locatie};
+  });
+
+  groupedItems(normalized, sortMode).forEach(([groupName, products]) => {
+    const header = document.createElement('div');
+    header.className = 'line';
+    header.innerHTML = `<div class="name">${esc(sortMode === 'soort' ? 'Productsoort' : 'Locatie')}: ${esc(groupName)}</div><div class="meta">${products.length} product(en)</div>`;
+    list.appendChild(header);
+
+    products.forEach(product => {
+      const refillAmount = Number(product.voorraad || 0);
+      const el = document.createElement('div');
+      el.className = 'line';
+      el.innerHTML = `
+        <div class="line-top">
+          <div>
+            <div class="name">${esc(product.naam)}</div>
+            <div class="meta">Soort: ${esc(product.soort || 'Overig')} · Locatie: ${esc(product.locatie)} · Aanvullen tot: ${product.minimum}</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn small" onclick="openProductModal('${selectedCoolingId}', '${product.id}')">Bekijk productinfo</button>
+            <button class="btn small" onclick="editProduct('${product.id}')">Aanpassen</button>
+            <button class="btn danger small" onclick="confirmDeleteProduct('${product.id}')">Verwijderen</button>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn small" onclick="editProduct('${product.id}')">Aanpassen</button>
-          <button class="btn danger small" onclick="confirmDeleteProduct('${product.id}')">Verwijderen</button>
+        <div class="qty">
+          <button onclick="adjustProduct('${product.id}', -5)">-5</button>
+          <button onclick="adjustProduct('${product.id}', -1)">−</button>
+          <input type="number" value="${refillAmount}" oninput="queueProductRefillSave('${product.id}', this.value)" onchange="setProductRefill('${product.id}', this.value)" onkeydown="if(event.key==='Enter'){ event.preventDefault(); setProductRefill('${product.id}', this.value); this.blur(); }">
+          <button onclick="adjustProduct('${product.id}', 1)">+</button>
+          <button onclick="adjustProduct('${product.id}', 5)">+5</button>
         </div>
-      </div>
-      <div class="qty">
-        <button onclick="adjustProduct('${product.id}', -5)">-5</button>
-        <button onclick="adjustProduct('${product.id}', -1)">−</button>
-        <input type="number" value="${product.voorraad}" onchange="setProductStock('${product.id}', this.value)">
-        <button onclick="adjustProduct('${product.id}', 1)">+</button>
-        <button onclick="adjustProduct('${product.id}', 5)">+5</button>
-      </div>
-    `;
-    list.appendChild(el);
+      `;
+      list.appendChild(el);
+    });
   });
 }
 
@@ -1051,40 +1346,81 @@ async function addProduct(){
   const name = document.getElementById('newProductName').value.trim();
   const minimum = Number(document.getElementById('newProductMinimum').value || 0);
   const soort = document.getElementById('newProductType').value;
-  if(!name){ showToast('Bar', 'Vul eerst een productnaam in.'); return; }
-  const res = await fetch('/api/product-add', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: selectedCoolingId, name, minimum, soort})
-  });
-  barData = await res.json();
-  document.getElementById('newProductName').value = '';
-  document.getElementById('newProductMinimum').value = '';
-  renderBarHome();
-  renderCoolingDetail();
+
+  if(!name){
+    showToast('Bar', 'Vul eerst een productnaam in.');
+    return;
+  }
+
+  try{
+    const res = await fetch('/api/product-add', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cooling_id: selectedCoolingId, name, minimum, soort})
+    });
+
+    const data = await res.json();
+    barData = data;
+
+    document.getElementById('newProductName').value = '';
+    document.getElementById('newProductMinimum').value = '';
+    if(document.getElementById('newProductType').options.length){
+      document.getElementById('newProductType').selectedIndex = 0;
+    }
+
+    renderBarHome();
+    renderCoolingDetail();
+    showToast('Bar', 'Product toegevoegd.', 'success');
+  } catch(e){
+    showToast('Bar', 'Toevoegen lukte niet.', 'info');
+  }
 }
 
+let productRefillTimers = {};
+
 async function adjustProduct(productId, delta){
-  const res = await fetch('/api/product-adjust', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: selectedCoolingId, product_id: productId, delta})
-  });
-  barData = await res.json();
-  renderBarHome();
-  renderCoolingDetail();
+  const cooling = (barData.koelingen || []).find(k => k.id === selectedCoolingId);
+  const product = (cooling?.producten || []).find(p => p.id === productId);
+  const currentRefill = Number(product?.voorraad || 0);
+  const refill = Math.max(currentRefill + delta, 0);
+  await saveProductRefill(productId, refill, false);
 }
-async function setProductStock(productId, value){
-  const stock = Number(value || 0);
-  const res = await fetch('/api/product-set-stock', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: selectedCoolingId, product_id: productId, stock})
-  });
-  barData = await res.json();
-  renderBarHome();
-  renderCoolingDetail();
+
+function queueProductRefillSave(productId, value){
+  if(productRefillTimers[productId]){
+    clearTimeout(productRefillTimers[productId]);
+  }
+  productRefillTimers[productId] = setTimeout(() => {
+    setProductRefill(productId, value);
+  }, 300);
 }
+
+async function setProductRefill(productId, value){
+  const refill = Math.max(Number(value || 0), 0);
+  await saveProductRefill(productId, refill, true);
+}
+
+async function saveProductRefill(productId, refill, showMessage){
+  try{
+    const res = await fetch('/api/product-set-refill', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cooling_id: selectedCoolingId, product_id: productId, refill})
+    });
+
+    const data = await res.json();
+    barData = data;
+    renderBarHome();
+    renderCoolingDetail();
+
+    if(showMessage){
+      showToast('Bar', 'Aantal aangepast.', 'success');
+    }
+  } catch(e){
+    showToast('Bar', 'Aantal aanpassen lukte niet.', 'info');
+  }
+}
+
 function editProduct(productId){
   const cooling = (barData.koelingen || []).find(k => k.id === selectedCoolingId);
   const product = (cooling.producten || []).find(p => p.id === productId);
@@ -1093,7 +1429,7 @@ function editProduct(productId){
   const typeOptions = productTypesData.map(t => `<option value="${esc(t.naam)}" ${t.naam === (product.soort || 'Overig') ? 'selected' : ''}>${esc(t.naam)} · ${esc(t.locatie)}</option>`).join('');
   openEdit('Product aanpassen', `
     <div class="field"><label>Naam</label><input id="editProductName" value="${esc(product.naam)}"></div>
-    <div class="field"><label>Minimum</label><input id="editProductMinimum" type="number" value="${product.minimum}"></div>
+    <div class="field"><label>Aanvullen tot</label><input id="editProductMinimum" type="number" value="${product.minimum}"></div>
     <div class="field"><label>Productsoort</label><select id="editProductType">${typeOptions}</select></div>
   `, async () => {
     const res = await fetch('/api/product-edit', {
@@ -1124,6 +1460,7 @@ async function doDeleteProduct(productId){
   barData = await res.json();
   renderBarHome();
   renderCoolingDetail();
+  showToast('Bar', 'Product verwijderd.', 'success');
 }
 function confirmDeleteProduct(productId){
   confirmAction = () => doDeleteProduct(productId);
@@ -1140,6 +1477,7 @@ async function doDeleteCurrentCooling(){
   selectedCoolingId = null;
   backToBarHome();
   renderBarHome();
+  showToast('Bar', 'Koeling verwijderd.', 'success');
 }
 async function deleteCurrentCooling(){
   confirmAction = () => doDeleteCurrentCooling();
@@ -1202,6 +1540,67 @@ async function markAllFilled(){
   showToast('Bijvullen', 'Alles is bijgevuld.', 'success');
 }
 
+async function addLocation(){
+  const name = document.getElementById('newLocationName').value.trim();
+  if(!name){ showToast('Locaties', 'Vul eerst een locatie in.'); return; }
+  const res = await fetch('/api/location-add', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name})
+  });
+  const data = await res.json();
+  locationsData = data.locations;
+  productTypesData = data.types;
+  document.getElementById('newLocationName').value = '';
+  renderLocations();
+  renderProductTypes();
+  showToast('Locaties', 'Locatie toegevoegd.', 'success');
+}
+async function doDeleteLocation(name){
+  const res = await fetch('/api/location-delete', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name})
+  });
+  const data = await res.json();
+  locationsData = data.locations;
+  productTypesData = data.types;
+  renderLocations();
+  renderProductTypes();
+  renderBarHome();
+  if(selectedCoolingId){ renderCoolingDetail(); }
+  showToast('Productsoorten', 'Productsoort verwijderd.', 'success');
+}
+function deleteLocation(name){
+  confirmAction = () => doDeleteLocation(name);
+  openConfirm('Weet je zeker dat je deze locatie wilt verwijderen?');
+}
+function renameLocation(oldName){
+  openEdit('Locatie aanpassen', `
+    <div class="field"><label>Nieuwe naam voor locatie</label><input id="editLocationName" value="${esc(oldName)}"></div>
+  `, async () => {
+    const newName = document.getElementById('editLocationName').value.trim();
+    if(!newName || newName === oldName){
+      closeEdit();
+      return;
+    }
+    const res = await fetch('/api/location-rename', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({old_name: oldName, new_name: newName})
+    });
+    const data = await res.json();
+    locationsData = data.locations;
+    productTypesData = data.types;
+    renderLocations();
+    renderProductTypes();
+    renderBarHome();
+    if(selectedCoolingId){ renderCoolingDetail(); }
+    closeEdit();
+    showToast('Locaties', 'Locatie aangepast.', 'success');
+  });
+}
+
 async function addProductType(){
   const name = document.getElementById('newTypeName').value.trim();
   const locatie = document.getElementById('newTypeLocation').value.trim();
@@ -1213,8 +1612,10 @@ async function addProductType(){
   });
   productTypesData = await res.json();
   document.getElementById('newTypeName').value = '';
-  document.getElementById('newTypeLocation').value = '';
+  document.getElementById('newTypeLocation').selectedIndex = 0;
+  renderLocations();
   renderProductTypes();
+  renderFillSummary();
   renderOpList();
   renderBarSummary();
 }
@@ -1348,7 +1749,7 @@ button,.linkbtn{
 }
 button:hover,.linkbtn:hover{transform:translateY(-2px);opacity:.98;box-shadow:0 16px 34px rgba(0,0,0,.24);border-color:rgba(159,176,199,.20)}
 button:disabled{opacity:.58;cursor:not-allowed;transform:none}
-.primary{background:linear-gradient(180deg,#f3e2bf,#d4b06a);color:#3a2a10}
+.primary{background:linear-gradient(180deg,#8ae3ff,#38bdf8);color:#08263a}
 .secondary{background:rgba(28,37,56,.96)}
 .danger{background:linear-gradient(180deg,#fca5a5,#ef4444);color:#3b0909}
 .progress-shell{margin-top:16px;background:rgba(11,18,32,.66);border-radius:20px;padding:14px 16px;border:1px solid var(--line)}
@@ -1357,7 +1758,7 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
 .progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#7ddfff,#38bdf8);transition:width .25s ease}
 .tabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 20px;padding:8px;border-radius:22px;background:rgba(10,18,32,.54);border:1px solid var(--line)}
 .tabbtn{background:transparent;color:var(--text);border:1px solid transparent;box-shadow:none}
-.tabbtn.active{background:linear-gradient(180deg,#f3e2bf,#d4b06a);color:#3a2a10;border-color:transparent;box-shadow:0 10px 24px rgba(56,189,248,.24)}
+.tabbtn.active{background:linear-gradient(180deg,#8ae3ff,#38bdf8);color:#08263a;border-color:transparent;box-shadow:0 10px 24px rgba(56,189,248,.24)}
 .tabpanel{display:none}.tabpanel.active{display:block}
 .section-title{margin:0 0 14px;font-size:20px;letter-spacing:-.02em}
 .muted{color:var(--muted);font-size:14px}
@@ -1367,7 +1768,7 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
 .stat .value-row{display:flex;align-items:flex-end;gap:10px}
 .stat .value{font-size:36px;font-weight:900;line-height:1.05;letter-spacing:-.03em}
 .stat .delta{font-size:13px;color:#91d7ff;font-weight:800;background:rgba(56,189,248,.10);padding:6px 9px;border-radius:999px;border:1px solid rgba(56,189,248,.16)}
-.searchbar{width:100%;border:1px solid rgba(159,176,199,.16);background:rgba(16,27,48,.72);color:var(--text);border-radius:18px;padding:14px 15px;font-size:14px;margin-bottom:14px;outline:none}
+.searchbar{width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);border-radius:18px;padding:14px 15px;font-size:14px;margin-bottom:14px;outline:none}
 .list{display:grid;gap:10px}
 .item{background:rgba(17,27,45,.78);border-radius:20px;padding:15px 16px;cursor:pointer;border:1px solid rgba(159,176,199,.08)}
 .item .time{color:var(--muted);font-size:12px;margin-bottom:6px}
@@ -1397,7 +1798,7 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
 .modal .val{margin-top:4px;line-height:1.55}
 .modal-close{float:right;background:rgba(31,41,55,.9);margin-left:10px}
 .toast-wrap{position:fixed;top:18px;right:18px;z-index:10000;display:grid;gap:10px}
-.toast{min-width:300px;max-width:390px;background:rgba(9,15,28,.96);border:1px solid rgba(159,176,199,.16);color:var(--text);border-radius:20px;padding:14px 16px;box-shadow:0 18px 40px rgba(0,0,0,.32)}
+.toast{min-width:300px;max-width:390px;background:rgba(9,15,28,.96);border:1px solid rgba(201,170,112,.16);color:var(--text);border-radius:20px;padding:14px 16px;box-shadow:0 18px 40px rgba(0,0,0,.32)}
 .toast .title{font-weight:900;margin-bottom:4px}
 .toast.success{border-color:rgba(34,197,94,.35)}
 .toast.info{border-color:rgba(56,189,248,.35)}
@@ -1412,11 +1813,12 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
 <div class="wrap">
   <div class="topbar">
     <a class="back" href="/">← Terug naar home</a>
+    <a class="back" href="/logout">Uitloggen</a>
   </div>
   <div class="hero">
     <div class="hero-main">
       <div class="eyebrow">Gmail automation center</div>
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;"><img src="/static/gmail.png" alt="Gmail" style="width:42px;height:42px;object-fit:contain;border-radius:12px;background:white;padding:6px;"><h1>Gmail Cleaner</h1></div>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;"><img src="/static/gmail.png" alt="Gmail" onerror="this.style.display='none'" style="width:42px;height:42px;object-fit:contain;border-radius:12px;background:white;padding:6px;"><h1>Gmail Cleaner</h1></div>
       <p>Je centrale overzicht voor Gmail-opruiming, PDF-downloads, goedkeuringen en geschiedenis.</p>
       <div class="statusrow">
         <div class="status" id="statusText"><span class="dot" id="statusDot"></span><span id="statusLabel">Status laden…</span></div>
@@ -1558,6 +1960,60 @@ refreshAll();setInterval(refreshAll,2500);
 """
 
 
+
+@app.before_request
+def require_login():
+    allowed_paths = {"/login", "/setup-code", "/logout"}
+    if request.path.startswith("/static/"):
+        return None
+    if request.path in allowed_paths:
+        return None
+    if is_logged_in():
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "message": "Niet ingelogd."}), 401
+    return redirect(url_for("login_page"))
+
+
+@app.route("/login", methods=["GET"])
+def login_page():
+    message = session.pop("login_message", "")
+    success = session.pop("login_success", False)
+    return render_template_string(LOGIN_HTML, message=message, success=success, code_exists=has_access_code())
+
+@app.route("/login", methods=["POST"])
+def login_submit():
+    access_code = (request.form.get("access_code") or "").strip()
+    auth = load_auth()
+    if access_code and access_code == (auth.get("access_code") or "").strip():
+        session["is_logged_in"] = True
+        return redirect(url_for("home"))
+    session["login_message"] = "Onjuiste code."
+    session["login_success"] = False
+    return redirect(url_for("login_page"))
+
+@app.route("/setup-code", methods=["POST"])
+def setup_code():
+    master_password = (request.form.get("master_password") or "").strip()
+    new_access_code = (request.form.get("new_access_code") or "").strip()
+    if master_password != MASTER_PASSWORD:
+        session["login_message"] = "Hoofdwachtwoord onjuist."
+        session["login_success"] = False
+        return redirect(url_for("login_page"))
+    if not new_access_code:
+        session["login_message"] = "Vul een nieuwe code in."
+        session["login_success"] = False
+        return redirect(url_for("login_page"))
+    save_auth({"access_code": new_access_code})
+    session["login_message"] = "Nieuwe code opgeslagen. Je kunt nu inloggen."
+    session["login_success"] = True
+    return redirect(url_for("login_page"))
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login_page"))
+
 @app.route("/")
 def home():
     ensure_files()
@@ -1599,6 +2055,69 @@ def api_bar():
 def api_product_types():
     ensure_files()
     return jsonify(get_types())
+
+@app.route("/api/locations")
+def api_locations():
+    ensure_files()
+    return jsonify(get_locations())
+
+@app.route("/api/location-add", methods=["POST"])
+def api_location_add():
+    ensure_files()
+    payload = request.json or {}
+    name = payload.get("name", "").strip()
+    locations = get_locations()
+    if name and name not in locations:
+        locations.append(name)
+        locations = sorted(list(dict.fromkeys([x for x in locations if x])), key=lambda x: x.lower())
+        if "-" not in locations:
+            locations.append("-")
+        save_json(LOCATIONS_FILE, locations)
+    return jsonify({"locations": locations, "types": get_types()})
+
+@app.route("/api/location-delete", methods=["POST"])
+def api_location_delete():
+    ensure_files()
+    payload = request.json or {}
+    name = payload.get("name", "").strip()
+    locations = [x for x in get_locations() if x != name]
+    if "-" not in locations:
+        locations.append("-")
+    save_json(LOCATIONS_FILE, locations)
+
+    types = get_types()
+    changed = False
+    for t in types:
+        if t.get("locatie") == name:
+            t["locatie"] = "-"
+            changed = True
+    if changed:
+        save_json(PRODUCT_TYPES_FILE, types)
+    return jsonify({"locations": locations, "types": types})
+
+@app.route("/api/location-rename", methods=["POST"])
+def api_location_rename():
+    ensure_files()
+    payload = request.json or {}
+    old_name = payload.get("old_name", "").strip()
+    new_name = payload.get("new_name", "").strip()
+    locations = []
+    for loc in get_locations():
+        if loc == old_name:
+            locations.append(new_name)
+        else:
+            locations.append(loc)
+    locations = sorted(list(dict.fromkeys([x for x in locations if x])), key=lambda x: x.lower())
+    if "-" not in locations:
+        locations.append("-")
+    save_json(LOCATIONS_FILE, locations)
+
+    types = get_types()
+    for t in types:
+        if t.get("locatie") == old_name:
+            t["locatie"] = new_name
+    save_json(PRODUCT_TYPES_FILE, types)
+    return jsonify({"locations": locations, "types": types})
 
 @app.route("/api/product-type-locations")
 def api_product_type_locations():
@@ -1683,6 +2202,7 @@ def api_product_add():
     ensure_files()
     payload = request.json or {}
     bar_data = load_json(BAR_FILE)
+    added = False
     for cooling in bar_data.get("koelingen", []):
         if cooling.get("id") == payload.get("cooling_id"):
             products = cooling.get("producten", [])
@@ -1694,11 +2214,11 @@ def api_product_add():
                 "soort": payload.get("soort", "Overig")
             })
             cooling["producten"] = products
+            added = True
             break
-    save_json(BAR_FILE, bar_data)
-    save_op_items([x for x in load_op_items() if not (x.get("koeling_id")==cooling_id and x.get("product_id")==product_id)])
+    if added:
+        save_json(BAR_FILE, bar_data)
     return jsonify({"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data)})
-
 
 @app.route("/api/product-delete", methods=["POST"])
 def api_product_delete():
@@ -1715,43 +2235,34 @@ def api_product_delete():
     return jsonify({"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data)})
 
 
-@app.route("/api/product-adjust", methods=["POST"])
-def api_product_adjust():
+@app.route("/api/product-set-refill", methods=["POST"])
+def api_product_set_refill():
     ensure_files()
     payload = request.json or {}
     cooling_id = payload.get("cooling_id")
     product_id = payload.get("product_id")
-    delta = int(payload.get("delta", 0) or 0)
+    refill = max(int(payload.get("refill", 0) or 0), 0)
+
     bar_data = load_json(BAR_FILE)
+    updated = False
+
     for cooling in bar_data.get("koelingen", []):
         if cooling.get("id") == cooling_id:
             for product in cooling.get("producten", []):
                 if product.get("id") == product_id:
-                    product["voorraad"] = max(int(product.get("voorraad", 0)) + delta, 0)
+                    product["voorraad"] = refill
+                    updated = True
                     break
             break
-    save_json(BAR_FILE, bar_data)
-    return jsonify({"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data)})
 
+    if updated:
+        save_json(BAR_FILE, bar_data)
 
-@app.route("/api/product-set-stock", methods=["POST"])
-def api_product_set_stock():
-    ensure_files()
-    payload = request.json or {}
-    cooling_id = payload.get("cooling_id")
-    product_id = payload.get("product_id")
-    stock = max(int(payload.get("stock", 0) or 0), 0)
-    bar_data = load_json(BAR_FILE)
-    for cooling in bar_data.get("koelingen", []):
-        if cooling.get("id") == cooling_id:
-            for product in cooling.get("producten", []):
-                if product.get("id") == product_id:
-                    product["voorraad"] = stock
-                    break
-            break
-    save_json(BAR_FILE, bar_data)
-    return jsonify({"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data)})
-
+    return jsonify({
+        "ok": updated,
+        "koelingen": bar_data.get("koelingen", []),
+        "fill_items": build_fill_items(bar_data)
+    })
 
 @app.route("/api/product-edit", methods=["POST"])
 def api_product_edit():
@@ -1795,9 +2306,12 @@ def api_fill_mark_product():
 @app.route("/api/fill-mark-all", methods=["POST"])
 def api_fill_mark_all():
     ensure_files()
+    op_pairs = {(x.get("koeling_id"), x.get("product_id")) for x in load_op_items()}
     bar_data = load_json(BAR_FILE)
     for cooling in bar_data.get("koelingen", []):
         for product in cooling.get("producten", []):
+            if (cooling.get("id"), product.get("id")) in op_pairs:
+                continue
             if int(product.get("voorraad", 0)) < int(product.get("minimum", 0)):
                 product["voorraad"] = int(product.get("minimum", 0))
     save_json(BAR_FILE, bar_data)
@@ -1850,6 +2364,57 @@ def api_op_mark_available():
     bar_data = load_json(BAR_FILE)
     return jsonify({"bar": {"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data)}, "op_items": load_op_items()})
 
+
+@app.route("/api/locations-add", methods=["POST"])
+def api_locations_add():
+    ensure_files()
+    payload = request.json or {}
+    name = payload.get("name", "").strip()
+    locations = get_locations()
+    if name and name not in locations:
+        locations.append(name)
+        locations = sorted(list(dict.fromkeys(locations)), key=lambda x: x.lower())
+        save_json(LOCATIONS_FILE, locations)
+    return jsonify(locations)
+
+@app.route("/api/locations-delete", methods=["POST"])
+def api_locations_delete():
+    ensure_files()
+    payload = request.json or {}
+    name = payload.get("name", "").strip()
+    locations = [x for x in get_locations() if x != name]
+    if "-" not in locations:
+        locations.append("-")
+    save_json(LOCATIONS_FILE, sorted(list(dict.fromkeys(locations)), key=lambda x: x.lower()))
+    types = get_types()
+    changed = False
+    for t in types:
+        if t.get("locatie") == name:
+            t["locatie"] = "-"
+            changed = True
+    if changed:
+        save_json(PRODUCT_TYPES_FILE, types)
+    bar_data = load_json(BAR_FILE)
+    return jsonify({"locations": get_locations(), "types": get_types(), "bar": {"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data), "op_items": load_json(OP_FILE)}})
+
+@app.route("/api/locations-rename", methods=["POST"])
+def api_locations_rename():
+    ensure_files()
+    payload = request.json or {}
+    old_name = payload.get("old_name", "").strip()
+    new_name = payload.get("new_name", "").strip()
+    locations = [new_name if x == old_name else x for x in get_locations()]
+    save_json(LOCATIONS_FILE, sorted(list(dict.fromkeys([x for x in locations if x])), key=lambda x: x.lower()))
+    types = get_types()
+    changed = False
+    for t in types:
+        if t.get("locatie") == old_name:
+            t["locatie"] = new_name
+            changed = True
+    if changed:
+        save_json(PRODUCT_TYPES_FILE, types)
+    bar_data = load_json(BAR_FILE)
+    return jsonify({"locations": get_locations(), "types": get_types(), "bar": {"koelingen": bar_data.get("koelingen", []), "fill_items": build_fill_items(bar_data), "op_items": load_json(OP_FILE)}})
 
 @app.route("/api/product-type-add", methods=["POST"])
 def api_product_type_add():
