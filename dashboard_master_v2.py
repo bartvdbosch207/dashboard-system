@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 import subprocess
 import threading
 from pathlib import Path
@@ -6,9 +8,18 @@ from datetime import datetime
 
 from flask import Flask, render_template_string, request, jsonify
 
-BASE_DIR = Path("/Users/bartvandenbosch/Desktop/Dropbox")
-STATIC_DIR = BASE_DIR / "static"
-DATA_DIR = BASE_DIR / "Data" / "Casa Cara"
+IS_RENDER = bool(os.environ.get("RENDER")) or bool(os.environ.get("PORT"))
+
+if IS_RENDER:
+    BASE_DIR = Path(__file__).resolve().parent
+    STATIC_DIR = BASE_DIR / "static"
+    DATA_ROOT = BASE_DIR / "data"
+    DATA_DIR = DATA_ROOT / "casa_cara"
+else:
+    BASE_DIR = Path("/Users/bartvandenbosch/Desktop/Dropbox")
+    STATIC_DIR = BASE_DIR / "static"
+    DATA_ROOT = BASE_DIR
+    DATA_DIR = BASE_DIR / "Data" / "Casa Cara"
 
 BAR_FILE = DATA_DIR / "bar_koelingen.json"
 GENERAL_FILE = DATA_DIR / "algemeen.json"
@@ -16,20 +27,20 @@ STATE_FILE = DATA_DIR / "bar_state.json"
 PRODUCT_TYPES_FILE = DATA_DIR / "product_soorten.json"
 OP_FILE = DATA_DIR / "op_list.json"
 
-STATS_FILE = BASE_DIR / "dashboard_stats.json"
-TRASH_FILE = BASE_DIR / "trash_history.json"
-DOWNLOADS_FILE = BASE_DIR / "downloads_history.json"
-KEPT_FILE = BASE_DIR / "kept_history.json"
-ACTIVITY_FILE = BASE_DIR / "activity_history.json"
-PENDING_TRASH_FILE = BASE_DIR / "pending_trash.json"
-LOCK_FILE = BASE_DIR / "run.lock"
+STATS_FILE = DATA_ROOT / "dashboard_stats.json"
+TRASH_FILE = DATA_ROOT / "trash_history.json"
+DOWNLOADS_FILE = DATA_ROOT / "downloads_history.json"
+KEPT_FILE = DATA_ROOT / "kept_history.json"
+ACTIVITY_FILE = DATA_ROOT / "activity_history.json"
+PENDING_TRASH_FILE = DATA_ROOT / "pending_trash.json"
+LOCK_FILE = DATA_ROOT / "run.lock"
 
-GMAIL_SCRIPT = BASE_DIR / "System" / "gmail_filter.py"
+GMAIL_SCRIPT = (BASE_DIR / "System" / "gmail_filter.py") if not IS_RENDER else (BASE_DIR / "gmail_filter.py")
 DOCUMENTEN_MAP = BASE_DIR / "Documenten"
 LOONSTROKEN_MAP = BASE_DIR / "Loonstroken"
 FOTOS_MAP = BASE_DIR / "Foto's"
 
-PYTHON_BIN = "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3"
+PYTHON_BIN = sys.executable
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 
@@ -67,6 +78,7 @@ DAY_NAMES_NL = {
 
 
 def ensure_files():
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     if not BAR_FILE.exists():
@@ -138,9 +150,13 @@ def gmail_process_running():
 
 
 def start_gmail_subprocess(args):
+    if not GMAIL_SCRIPT.exists():
+        return False
+
     def _run():
         subprocess.run([PYTHON_BIN, str(GMAIL_SCRIPT), *args], cwd=str(BASE_DIR), check=False)
     threading.Thread(target=_run, daemon=True).start()
+    return True
 
 
 def slugify(text: str) -> str:
@@ -1928,7 +1944,8 @@ def run_gmail():
         mode = "full"
     if gmail_process_running():
         return jsonify({"ok": False, "message": "Er draait al een Gmail-check. Wacht tot deze klaar is."}), 409
-    start_gmail_subprocess([f"--mode={mode}"])
+    if not start_gmail_subprocess([f"--mode={mode}"]):
+        return jsonify({"ok": False, "message": "Gmail script niet gevonden op deze omgeving."}), 503
     messages = {
         "full": "Volledige Gmail-check gestart.",
         "cleanup": "Alleen cleanup gestart.",
@@ -1941,7 +1958,8 @@ def run_gmail():
 def api_approve_trash():
     if gmail_process_running():
         return jsonify({"ok": False, "message": "Er draait al een Gmail-check. Wacht tot deze klaar is."}), 409
-    start_gmail_subprocess(["--approve-trash"])
+    if not start_gmail_subprocess(["--approve-trash"]):
+        return jsonify({"ok": False, "message": "Gmail script niet gevonden op deze omgeving."}), 503
     return jsonify({"ok": True, "message": "Goedkeuring verwerkt. Mails gaan nu naar de prullenbak."})
 
 
@@ -1949,12 +1967,16 @@ def api_approve_trash():
 def api_reject_trash():
     if gmail_process_running():
         return jsonify({"ok": False, "message": "Er draait al een Gmail-check. Wacht tot deze klaar is."}), 409
-    start_gmail_subprocess(["--reject-trash"])
+    if not start_gmail_subprocess(["--reject-trash"]):
+        return jsonify({"ok": False, "message": "Gmail script niet gevonden op deze omgeving."}), 503
     return jsonify({"ok": True, "message": "De wachtrij voor prullenbak is geannuleerd."})
 
 
 @app.route("/open/<target>")
 def open_target(target):
+    if IS_RENDER:
+        return jsonify({"ok": False, "message": "Bestanden openen werkt alleen lokaal."}), 400
+
     mapping = {
         "documenten": DOCUMENTEN_MAP,
         "loonstroken": LOONSTROKEN_MAP,
@@ -1964,8 +1986,9 @@ def open_target(target):
     subprocess.run(["open", str(mapping.get(target, BASE_DIR))], check=False)
     return ("", 204)
 
-import os
+
 
 if __name__ == "__main__":
     ensure_files()
+    normalize_bar_data()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
