@@ -1964,9 +1964,8 @@ def open_target(target):
     subprocess.run(["open", str(mapping.get(target, BASE_DIR))], check=False)
     return ("", 204)
 
-
+import os
 
 if __name__ == "__main__":
     ensure_files()
-    normalize_bar_data()
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
