@@ -16,10 +16,12 @@ if IS_RENDER:
     DATA_ROOT = BASE_DIR / "data"
     DATA_DIR = DATA_ROOT / "casa_cara"
 else:
-    BASE_DIR = Path("/Users/bartvandenbosch/Desktop/Dropbox")
-    STATIC_DIR = BASE_DIR / "static"
-    DATA_ROOT = BASE_DIR
-    DATA_DIR = BASE_DIR / "Data" / "Casa Cara"
+    BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
+# data opslaan op Render disk
+DATA_ROOT = Path("/data")
+DATA_DIR = DATA_ROOT / "Casa Cara"
 
 BAR_FILE = DATA_DIR / "bar_koelingen.json"
 GENERAL_FILE = DATA_DIR / "algemeen.json"
