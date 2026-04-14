@@ -747,6 +747,35 @@ HTML = r"""
       .kprogress{margin-top:10px}
     }
 
+
+    html,body{
+      background:#070b12 !important;
+      overscroll-behavior:none;
+    }
+    body{
+      min-height:100dvh;
+      min-height:100svh;
+      padding-top:env(safe-area-inset-top,0px);
+      padding-bottom:env(safe-area-inset-bottom,0px);
+    }
+    .app{
+      position:relative;
+      min-height:100dvh;
+      min-height:100svh;
+      background:transparent;
+      isolation:isolate;
+    }
+    .app::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      z-index:-1;
+      background:
+        radial-gradient(circle at top left, rgba(212,176,106,.08), transparent 26%),
+        radial-gradient(circle at top right, rgba(112,154,255,.06), transparent 22%),
+        linear-gradient(180deg,#070b12,#0b111a 60%,#070b12);
+    }
+
 </style>
 </head>
 <body>

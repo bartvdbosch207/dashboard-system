@@ -1867,7 +1867,7 @@ GMAIL_HTML = """
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <title>Gmail Cleaner</title>
 <link rel="icon" type="image/png" href="/static/gmail.png">
 <style>
@@ -2020,6 +2020,34 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
     radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
     linear-gradient(180deg, #06101c, #0b1220);
   z-index:-1;
+}
+
+
+html,body{
+  margin:0;
+  min-height:100%;
+  background:#0b1220 !important;
+  overscroll-behavior:none;
+}
+body{
+  min-height:100vh;
+  min-height:100dvh;
+  min-height:100svh;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+.bg-fixed{
+  position:fixed;
+  inset:0;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(56,189,248,.15), transparent 24%),
+    radial-gradient(circle at 90% 0%, rgba(99,213,255,.10), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(34,197,94,.06), transparent 30%),
+    linear-gradient(180deg, #06101c, #0b1220);
+  z-index:-1;
+}
+.wrap{
+  background:transparent !important;
 }
 
 </style>
