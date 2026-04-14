@@ -485,20 +485,69 @@ HTML = r"""
       .modal-backdrop.open .modal{transform:translateY(0) scale(1)}
     }
   
-    .task-card{
+    .klist-card{
       border:1px solid var(--line);
       background:rgba(255,255,255,.02);
       border-radius:18px;
       padding:14px;
     }
-    .subtask-wrap{
+    .kprogress{
+      width:100%;
+      height:8px;
+      border-radius:999px;
+      background:rgba(255,255,255,.08);
+      overflow:hidden;
+      margin-top:10px;
+    }
+    .kprogress > span{
+      display:block;
+      height:100%;
+      border-radius:999px;
+      background:linear-gradient(90deg, rgba(212,176,106,.9), rgba(244,220,170,.95));
+    }
+    .kmeta{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      margin-top:10px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .ktask{
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.02);
+      border-radius:16px;
+      padding:14px;
+    }
+    .ktask-row,.ksub-row{
+      display:flex;
+      align-items:flex-start;
+      gap:12px;
+      cursor:pointer;
+    }
+    .kcheck{
+      width:28px;height:28px;min-width:28px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.03);
+      display:grid;place-items:center;
+      color:var(--muted);font-size:13px;
+      margin-top:2px;
+    }
+    .kcheck.done{
+      background:rgba(111,202,147,.14);
+      border-color:rgba(111,202,147,.28);
+      color:#d8ffe7;
+    }
+    .ksub-wrap{
       margin-top:12px;
       padding-left:12px;
       border-left:1px solid rgba(255,255,255,.08);
       display:grid;
       gap:10px;
     }
-    .subtask-card{
+    .ksub{
       border:1px solid rgba(255,255,255,.06);
       background:rgba(255,255,255,.015);
       border-radius:14px;
@@ -510,20 +559,195 @@ HTML = r"""
       border-radius:18px;
       padding:14px;
     }
-    .recipe-meta{
+    @media (max-width:640px){
+      .item-actions{display:grid;grid-template-columns:1fr;gap:8px}
+      .item-actions .btn{width:100%}
+      .klist-card,.ktask,.ksub,.recipe-card,.list-item{padding:13px}
+    }
+
+
+    .klist-card{
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));
+      border-radius:20px;
+      padding:16px;
+      box-shadow:var(--shadow);
+    }
+    .klist-top{
       display:flex;
-      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:10px;
+    }
+    .klist-left{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      min-width:0;
+    }
+    .klist-icon{
+      width:38px;
+      height:38px;
+      min-width:38px;
+      border-radius:12px;
+      display:grid;
+      place-items:center;
+      background:rgba(212,176,106,.12);
+      border:1px solid rgba(212,176,106,.22);
+      color:#f3dfbc;
+      font-size:16px;
+    }
+    .klist-name{
+      font-size:16px;
+      font-weight:800;
+      letter-spacing:-.02em;
+      color:var(--text);
+    }
+    .klist-sub{
+      color:var(--muted);
+      font-size:13px;
+      margin-top:2px;
+    }
+    .kprogress{
+      width:100%;
+      height:10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.08);
+      overflow:hidden;
+      margin-top:12px;
+    }
+    .kprogress > span{
+      display:block;
+      height:100%;
+      border-radius:999px;
+      background:linear-gradient(90deg, rgba(212,176,106,.92), rgba(244,220,170,.96));
+    }
+    .kmeta{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      margin-top:10px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .klist-actions{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:8px;
+      margin-top:14px;
+    }
+    .kheadbar{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      margin-bottom:14px;
+    }
+    .khead-top{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .khead-actions{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:8px;
+    }
+    .ktask{
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.02);
+      border-radius:18px;
+      padding:14px;
+      box-shadow:0 10px 24px rgba(0,0,0,.12);
+    }
+    .ktask-row,.ksub-row{
+      display:flex;
+      align-items:flex-start;
+      gap:12px;
+      cursor:pointer;
+    }
+    .kcheck{
+      width:30px;
+      height:30px;
+      min-width:30px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.03);
+      display:grid;
+      place-items:center;
+      color:var(--muted);
+      font-size:14px;
+      margin-top:2px;
+    }
+    .kcheck.done{
+      background:rgba(111,202,147,.14);
+      border-color:rgba(111,202,147,.28);
+      color:#d8ffe7;
+    }
+    .ktask-title{
+      font-size:15px;
+      font-weight:800;
+      letter-spacing:-.01em;
+      color:var(--text);
+    }
+    .ktask-title.done,
+    .ksub-title.done{
+      text-decoration:line-through;
+      opacity:.6;
+    }
+    .ktask-meta{
+      color:var(--muted);
+      font-size:13px;
+      margin-top:4px;
+    }
+    .ktask-actions{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:8px;
+      margin-top:12px;
+    }
+    .ksub-wrap{
+      margin-top:12px;
+      padding-left:12px;
+      border-left:1px solid rgba(255,255,255,.08);
+      display:grid;
+      gap:10px;
+    }
+    .ksub{
+      border:1px solid rgba(255,255,255,.06);
+      background:rgba(255,255,255,.015);
+      border-radius:14px;
+      padding:12px;
+    }
+    .ksub-title{
+      font-size:14px;
+      font-weight:700;
+      color:var(--text);
+    }
+    .ksub-actions{
+      display:grid;
+      grid-template-columns:1fr;
       gap:8px;
       margin-top:10px;
     }
-    @media (max-width:640px){
-      .hero h1{font-size:26px}
-      .item-actions{display:grid;grid-template-columns:1fr;gap:8px}
-      .item-actions .btn{width:100%}
-      .task-card,.recipe-card,.list-item{padding:13px}
+    @media (min-width: 700px){
+      .klist-actions,
+      .khead-actions,
+      .ktask-actions,
+      .ksub-actions{
+        grid-template-columns:repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 640px){
+      .klist-card,.ktask,.ksub{padding:13px}
+      .klist-icon{width:34px;height:34px;min-width:34px}
+      .klist-name{font-size:15px}
+      .kprogress{margin-top:10px}
     }
 
-  </style>
+</style>
 </head>
 <body>
 <div class="app">
@@ -782,14 +1006,32 @@ HTML = r"""
         <p>Werk deze lijst stap voor stap af. De lijst blijft bestaan, maar de vinkjes resetten per nieuwe dag.</p>
       </div>
       <div class="panel">
+        <div id="kitchenDetailSummary"></div>
         <div class="panel-head">
           <h3 class="panel-title">Taken</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('keuken-takenlijsten')">Terug naar lijsten</button>
-            <button class="btn accent" onclick="openKitchenTaskModal(window.currentKitchenListId)">Taak toevoegen</button>
+            <button class="btn accent" onclick="openKitchenManagePage(window.currentKitchenListId)">⚙️ Beheer</button>
           </div>
         </div>
         <div class="list" id="kitchenDetailList"></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-keuken-takenlijst-beheer">
+      <div class="hero">
+        <h1 id="kitchenManageTitle">⚙️ Takenlijst beheren</h1>
+        <p>Pas hier alleen de inhoud van deze takenlijst aan. De checklist zelf blijft rustig voor gebruik op de werkvloer.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3 class="panel-title">Beheer</h3>
+          <div class="actions">
+            <button class="btn" onclick="openPage('keuken-takenlijst-detail')">Terug naar checklist</button>
+            <button class="btn accent" onclick="openKitchenTaskModal(window.currentKitchenListId)">+ Taak toevoegen</button>
+          </div>
+        </div>
+        <div class="list" id="kitchenManageList"></div>
       </div>
     </section>
 
@@ -900,7 +1142,10 @@ HTML = r"""
           <select id="fillFilterLocatie" class="btn" onchange="renderFill()"></select>
           <select id="fillFilterSoort" class="btn" onchange="renderFill()"></select>
         </div>
-        <div class="list" id="fillList"></div>
+        <div style="margin-bottom:10px">
+<button id="refillSwitchBtn" class="btn" onclick="openRefillSelector()">Koeling kiezen</button>
+</div>
+<div class="list" id="fillList"></div>
       </div>
     </section>
     <section class="page" id="page-bar-koeling-detail">
@@ -1006,6 +1251,7 @@ HTML = r"""
       'keuken-overzicht': ['Keuken', 'Overzicht'],
       'keuken-takenlijsten': ['Keuken', 'Takenlijsten'],
       'keuken-takenlijst-detail': ['Keuken', 'Takenlijst'],
+      'keuken-takenlijst-beheer': ['Keuken', 'Takenlijst beheren'],
       'keuken-recepten': ['Keuken', 'Recepten'],
       'bar-overzicht': ['Bar', 'Overzicht'],
       'bar-koelingen': ['Bar', 'Koelingen'],
@@ -1028,6 +1274,9 @@ HTML = r"""
     setText('topTitle', title);
     activateNav(page);
     window.scrollTo({ top: 0, behavior: 'instant' });
+    if(page === 'bar-bijvullen' && !window.selectedCooler){
+      openRefillSelector();
+    }
   }
 
   function openModal(title, sub, bodyHtml){
@@ -1399,7 +1648,13 @@ HTML = r"""
   function renderFill(){
     const typeFilter = document.getElementById('fillFilterSoort')?.value || '';
     const locationFilter = document.getElementById('fillFilterLocatie')?.value || '';
+    const selectedCooler = window.selectedCooler || null;
+
     const fill = safeArray(appData.bar.fill_items).filter(item => {
+      if (!selectedCooler) return false;
+      if (selectedCooler === 'all') return true;
+      return item.koeling_id === selectedCooler;
+    }).filter(item => {
       const typeOk = !typeFilter || item.soort === typeFilter;
       const locOk = !locationFilter || item.locatie === locationFilter;
       return typeOk && locOk;
@@ -1431,6 +1686,32 @@ HTML = r"""
       'Er is nu niets om bij te vullen voor deze filter.'
     );
   }
+
+  function openRefillSelector(){
+    const coolers = safeArray(appData.bar.koelingen);
+    openModal(
+      'Welke koeling ga je bijvullen?',
+      '',
+      `
+        <div class="form-grid">
+          ${coolers.map(c => `
+            <button class="btn" onclick="selectRefillCooler('${c.id}','${c.naam}')">${c.naam}</button>
+          `).join('')}
+          <button class="btn accent" onclick="selectRefillCooler('all','Alle koelingen')">Alle koelingen</button>
+        </div>
+      `
+    );
+  }
+
+  function selectRefillCooler(id, name){
+    window.selectedCooler = id;
+    window.selectedCoolerName = name;
+    document.getElementById('refillSwitchBtn') && (document.getElementById('refillSwitchBtn').innerText = 'Koeling: ' + name);
+    closeModal();
+    renderFill();
+  }
+
+
 
 
   function getTodayString(){
@@ -1469,17 +1750,26 @@ HTML = r"""
       (list) => {
         const tasks = safeArray(list.tasks);
         const done = tasks.filter(t => kitchenTaskIsChecked(t)).length;
+        const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
         return `
-          <div class="list-item">
-            <div class="item-top">
-              <div>
-                <div class="item-title">${list.name}</div>
-                <div class="item-sub">${tasks.length} taken · ${done} afgevinkt vandaag</div>
+          <div class="klist-card">
+            <div class="klist-top">
+              <div class="klist-left">
+                <div class="klist-icon">☑</div>
+                <div>
+                  <div class="klist-name">${list.name}</div>
+                  <div class="klist-sub">${done} van ${tasks.length} taken gedaan</div>
+                </div>
               </div>
-              <span class="badge accent">Takenlijst</span>
+              <span class="badge accent">${percent}%</span>
             </div>
-            <div class="item-actions">
-              <button class="btn accent" onclick="openKitchenListDetail('${list.id}')">Open lijst</button>
+            <div class="kprogress"><span style="width:${percent}%"></span></div>
+            <div class="kmeta">
+              <span>${tasks.length ? 'Klaar om af te werken' : 'Nog geen taken in deze lijst'}</span>
+              <span>${tasks.length} taak${tasks.length === 1 ? '' : 'en'}</span>
+            </div>
+            <div class="klist-actions">
+              <button class="btn" onclick="openKitchenListDetail('${list.id}')">Open lijst</button>
               <button class="btn danger" onclick="confirmAction('Takenlijst verwijderen','Weet je zeker dat je deze takenlijst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenList','${list.id}')&quot;)">Verwijderen</button>
             </div>
           </div>
@@ -1491,44 +1781,56 @@ HTML = r"""
 
   function renderKitchenListDetail(){
     const kitchen = appData.kitchen || { lists: [] };
-    const list = safeArray(kitchen.lists).find(item => item.id === currentKitchenListId) || { tasks: [] };
+    const list = safeArray(kitchen.lists).find(item => item.id === currentKitchenListId) || { tasks: [], name: 'Takenlijst' };
     const tasks = safeArray(list.tasks);
+    const done = tasks.filter(t => kitchenTaskIsChecked(t)).length;
+    const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+
+    const title = document.getElementById('kitchenDetailTitle');
+    if (title){
+      title.textContent = `☑ Takenlijst · ${list.name || 'Takenlijst'}`;
+    }
+    const summary = document.getElementById('kitchenDetailSummary');
+    if (summary){
+      summary.innerHTML = `
+        <div class="kheadbar">
+          <div class="khead-top">
+            <div class="item-sub">${done} van ${tasks.length} taken gedaan</div>
+            <span class="badge accent">${percent}%</span>
+          </div>
+          <div class="kprogress"><span style="width:${percent}%"></span></div>
+        </div>
+      `;
+    }
 
     renderList(
       'kitchenDetailList',
       tasks,
       (task) => `
-        <div class="list-item">
-          <div class="item-top">
-            <div>
-              <div class="item-title" style="${kitchenTaskIsChecked(task) ? 'text-decoration:line-through;opacity:.65;' : ''}">${task.name || 'Taak'}</div>
-              <div class="item-sub">${safeArray(task.subtasks).length} subtaken</div>
+        <div class="ktask">
+          <div class="ktask-row" onclick="toggleKitchenTask('${list.id}','${task.id}')">
+            <div class="kcheck ${kitchenTaskIsChecked(task) ? 'done' : ''}">${kitchenTaskIsChecked(task) ? '✓' : ''}</div>
+            <div style="min-width:0;flex:1">
+              <div class="ktask-title ${kitchenTaskIsChecked(task) ? 'done' : ''}">${task.name || 'Taak'}</div>
+              <div class="ktask-meta">${safeArray(task.subtasks).length} subtaken</div>
             </div>
             <span class="badge ${kitchenTaskIsChecked(task) ? 'good' : 'warn'}">${kitchenTaskIsChecked(task) ? 'Gedaan' : 'Open'}</span>
           </div>
-          <div class="item-actions">
-            <button class="btn ${kitchenTaskIsChecked(task) ? '' : 'good'}" onclick="toggleKitchenTask('${list.id}','${task.id}')">${kitchenTaskIsChecked(task) ? 'Vink uit' : 'Aftikken'}</button>
-            <button class="btn" onclick="openKitchenSubtaskModal('${list.id}','${task.id}')">Subtaak toevoegen</button>
-            <button class="btn danger" onclick="confirmAction('Taak verwijderen','Weet je zeker dat je deze taak wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenTask','${list.id}','${task.id}')&quot;)">Verwijderen</button>
-          </div>
           ${safeArray(task.subtasks).length ? `
-            <div class="list" style="margin-top:12px">
+            <div class="ksub-wrap">
               ${safeArray(task.subtasks).map(sub => `
-                <div class="list-item" style="background:rgba(255,255,255,.01)">
-                  <div class="item-top">
-                    <div>
-                      <div class="item-title" style="font-size:14px;${kitchenSubtaskIsChecked(sub) ? 'text-decoration:line-through;opacity:.65;' : ''}">${sub.name || 'Subtaak'}</div>
+                <div class="ksub">
+                  <div class="ksub-row" onclick="toggleKitchenSubtask('${list.id}','${task.id}','${sub.id}')">
+                    <div class="kcheck ${kitchenSubtaskIsChecked(sub) ? 'done' : ''}" style="width:24px;height:24px;min-width:24px;font-size:12px">${kitchenSubtaskIsChecked(sub) ? '✓' : ''}</div>
+                    <div style="min-width:0;flex:1">
+                      <div class="ksub-title ${kitchenSubtaskIsChecked(sub) ? 'done' : ''}">${sub.name || 'Subtaak'}</div>
                     </div>
                     <span class="badge ${kitchenSubtaskIsChecked(sub) ? 'good' : ''}">${kitchenSubtaskIsChecked(sub) ? 'Gedaan' : 'Open'}</span>
-                  </div>
-                  <div class="item-actions">
-                    <button class="btn ${kitchenSubtaskIsChecked(sub) ? '' : 'good'}" onclick="toggleKitchenSubtask('${list.id}','${task.id}','${sub.id}')">${kitchenSubtaskIsChecked(sub) ? 'Vink uit' : 'Aftikken'}</button>
-                    <button class="btn danger" onclick="confirmAction('Subtaak verwijderen','Weet je zeker dat je deze subtaak wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenSubtask','${list.id}','${task.id}','${sub.id}')&quot;)">Verwijderen</button>
                   </div>
                 </div>
               `).join('')}
             </div>
-          ` : `<div class="empty" style="margin-top:12px">Nog geen subtaken.</div>`}
+          ` : ''}
         </div>
       `,
       'Nog geen taken in deze lijst.'
@@ -1545,6 +1847,58 @@ HTML = r"""
     `).join('');
   }
 
+
+
+  function openKitchenManagePage(listId){
+    currentKitchenListId = listId;
+    window.currentKitchenListId = listId;
+    const list = safeArray(appData.kitchen?.lists).find(item => item.id === listId) || {};
+    setText('kitchenManageTitle', `⚙️ Takenlijst beheren · ${list.name || 'Takenlijst'}`);
+    openPage('keuken-takenlijst-beheer');
+    renderKitchenManagePage();
+  }
+
+  function renderKitchenManagePage(){
+    const kitchen = appData.kitchen || { lists: [] };
+    const list = safeArray(kitchen.lists).find(item => item.id === currentKitchenListId) || { tasks: [], name: 'Takenlijst' };
+    const tasks = safeArray(list.tasks);
+
+    renderList(
+      'kitchenManageList',
+      tasks,
+      (task) => `
+        <div class="ktask">
+          <div class="item-top">
+            <div>
+              <div class="ktask-title">${task.name || 'Taak'}</div>
+              <div class="ktask-meta">${safeArray(task.subtasks).length} subtaken</div>
+            </div>
+            <span class="badge accent">Taak</span>
+          </div>
+          <div class="ktask-actions">
+            <button class="btn" onclick="openKitchenSubtaskModal('${list.id}','${task.id}')">+ Subtaak toevoegen</button>
+            <button class="btn danger" onclick="confirmAction('Taak verwijderen','Weet je zeker dat je deze taak wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenTask','${list.id}','${task.id}')&quot;)">Verwijderen</button>
+          </div>
+          ${safeArray(task.subtasks).length ? `
+            <div class="ksub-wrap">
+              ${safeArray(task.subtasks).map(sub => `
+                <div class="ksub">
+                  <div class="item-top">
+                    <div><div class="ksub-title">${sub.name || 'Subtaak'}</div></div>
+                    <span class="badge">Subtaak</span>
+                  </div>
+                  <div class="ksub-actions">
+                    <button class="btn danger" onclick="confirmAction('Subtaak verwijderen','Weet je zeker dat je deze subtaak wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenSubtask','${list.id}','${task.id}','${sub.id}')&quot;)">Verwijderen</button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="empty" style="margin-top:12px">Nog geen subtaken.</div>`}
+        </div>
+      `,
+      'Nog geen taken in deze lijst.'
+    );
+  }
 
   function openKitchenListModal(){
     openModal(
@@ -1595,6 +1949,7 @@ HTML = r"""
       await loadData();
       renderKitchen();
       renderKitchenListDetail();
+      renderKitchenManagePage();
       toast('Taak opgeslagen');
     }catch(err){ toast(err.message, 'error'); }
   }
@@ -1621,6 +1976,7 @@ HTML = r"""
       closeModal();
       await loadData();
       renderKitchenListDetail();
+      renderKitchenManagePage();
       toast('Subtaak opgeslagen');
     }catch(err){ toast(err.message, 'error'); }
   }
@@ -1631,6 +1987,7 @@ HTML = r"""
       await loadData();
       renderKitchen();
       renderKitchenListDetail();
+      renderKitchenManagePage();
       toast('Taak bijgewerkt');
     }catch(err){ toast(err.message, 'error'); }
   }
@@ -1640,6 +1997,7 @@ HTML = r"""
       await postJSON('/api/kitchen/subtask-toggle', { list_id: listId, task_id: taskId, subtask_id: subtaskId });
       await loadData();
       renderKitchenListDetail();
+      renderKitchenManagePage();
       toast('Subtaak bijgewerkt');
     }catch(err){ toast(err.message, 'error'); }
   }
@@ -1659,6 +2017,7 @@ HTML = r"""
       await postJSON('/api/kitchen/task-delete', { list_id: listId, task_id: taskId });
       await loadData();
       renderKitchenListDetail();
+      renderKitchenManagePage();
       toast('Taak verwijderd');
     }catch(err){ toast(err.message, 'error'); }
   }
@@ -1668,6 +2027,7 @@ HTML = r"""
       await postJSON('/api/kitchen/subtask-delete', { list_id: listId, task_id: taskId, subtask_id: subtaskId });
       await loadData();
       renderKitchenListDetail();
+      renderKitchenManagePage();
       toast('Subtaak verwijderd');
     }catch(err){ toast(err.message, 'error'); }
   }
@@ -1741,21 +2101,13 @@ HTML = r"""
       'recipesList',
       items,
       (recipe, index) => `
-        <div class="list-item">
+        <div class="recipe-card">
           <div class="item-top">
             <div>
               <div class="item-title">${recipe.name || 'Recept'}</div>
-              <div class="item-sub">${safeArray(recipe.ingredients).length} ingrediënten</div>
+              <div class="item-sub">Open het recept om ingrediënten, vindplaatsen en het stappenplan te bekijken.</div>
             </div>
             <span class="badge accent">Recept</span>
-          </div>
-          <div class="list" style="margin-top:12px">
-            ${safeArray(recipe.ingredients).slice(0,4).map(ing => `
-              <div class="list-item" style="background:rgba(255,255,255,.01)">
-                <div class="item-title" style="font-size:14px">${ing.naam || '-'}</div>
-                <div class="item-sub">${ing.locatie || '-'}</div>
-              </div>
-            `).join('')}
           </div>
           <div class="item-actions" style="margin-top:12px">
             <button class="btn" onclick="openRecipeInfo(${index})">Open recept</button>
@@ -1858,6 +2210,7 @@ HTML = r"""
     renderDiensten();
     renderDienstTypes();
     renderKitchen();
+    renderKitchenManagePage();
     renderRecipes();
     if (currentPage === 'bar-koeling-detail' && currentKoelingId){
       renderKoelingDetail();
@@ -2629,7 +2982,7 @@ def manage_dienst_type_delete():
     if not name:
         return jsonify({"ok": False, "message": "Dienstsoort ontbreekt."}), 400
 
-    items = [x for x in get_dienst_types() if x != name]
+    items = [x for x in get_dienst_types() if (x.get("naam") if isinstance(x, dict) else x) != name]
     save_dienst_types(items)
     return jsonify({"ok": True})
 
