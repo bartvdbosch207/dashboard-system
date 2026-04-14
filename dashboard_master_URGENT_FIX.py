@@ -335,8 +335,9 @@ html,body{
   color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
 }
-body{display:flex;align-items:center;justify-content:center;padding:24px}
-.wrap{width:min(390px,100%)}
+body{display:flex;align-items:center;justify-content:center;min-height:100dvh;background:#0b1a2b;padding:24px}
+.wrap{
+    background:transparent;width:min(390px,100%)}
 .card{
   background:linear-gradient(180deg, rgba(16,27,48,.9), rgba(12,20,36,.84));
   border:1px solid var(--line);
@@ -415,6 +416,27 @@ p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}
   .pad{gap:10px}
   .key{min-height:54px;font-size:21px}
   .toolbar{margin-top:14px}
+}
+
+
+html{
+  background:#0b1a2b !important;
+}
+body{
+  background:#0b1a2b !important;
+  min-height:100dvh;
+  min-height:100svh;
+  margin:0;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{
+  -webkit-tap-highlight-color:transparent;
+}
+@supports (-webkit-touch-callout: none){
+  html, body{
+    background:#0b1a2b !important;
+  }
 }
 
 </style>
@@ -517,7 +539,7 @@ HOME_HTML = """
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <title>Dashboard</title>
 <link rel="icon" type="image/png" href="/static/gmail.png">
 <style>
@@ -531,9 +553,15 @@ HOME_HTML = """
   --shadow:0 20px 50px rgba(0,0,0,.28);
 }
 *{box-sizing:border-box}
+html,body{
+  margin:0;
+  min-height:100%;
+  background:#0b1a2b !important;
+  overscroll-behavior:none;
+}
 body{
   margin:0;
-  min-height:100vh;
+  min-height:100vh; min-height:100dvh; min-height:100dvh;
   color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
   background:
@@ -545,7 +573,8 @@ body{
   align-items:center;
   justify-content:center;
 }
-.wrap{max-width:1200px;width:100%;padding:36px 20px 44px}
+.wrap{
+    background:#0b1a2b;max-width:1200px;width:100%;padding:calc(36px + env(safe-area-inset-top,0px)) 20px calc(44px + env(safe-area-inset-bottom,0px))}
 .hero{
   background:linear-gradient(180deg, rgba(15,23,42,.82), rgba(15,23,42,.58));
   border:1px solid var(--line);
@@ -638,9 +667,22 @@ p{margin:0 auto;color:var(--muted);line-height:1.65;max-width:760px;font-size:16
   .toolbar{margin-top:14px}
 }
 
+
+.bg-fixed{
+  position:fixed;
+  inset:0;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
+    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
+    linear-gradient(180deg, #06101c, #0b1220);
+  z-index:-1;
+}
+
 </style>
 </head>
 <body>
+<div class="bg-fixed"></div>
   <div class="wrap">
     <div class="hero">
     <div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><a href="/logout" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);padding:10px 14px;border-radius:16px;background:rgba(16,27,48,.88);border:1px solid var(--line)">Uitloggen</a></div>
@@ -679,7 +721,7 @@ CASA_HTML = """
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <title>Casa Cara</title>
 <link rel="icon" type="image/png" href="/static/casa.png">
 <style>
@@ -689,6 +731,12 @@ CASA_HTML = """
   --shadow:0 20px 50px rgba(0,0,0,.28);
 }
 *{box-sizing:border-box}
+html,body{
+  margin:0;
+  min-height:100%;
+  background:#0b1a2b !important;
+  overscroll-behavior:none;
+}
 body{
   margin:0; min-height:100vh; color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
@@ -697,7 +745,8 @@ body{
     radial-gradient(circle at 90% 0%, rgba(196,153,72,.03), transparent 20%),
     linear-gradient(180deg, var(--bg), var(--bg2));
 }
-.wrap{max-width:1260px;margin:0 auto;padding:24px 18px 42px}
+.wrap{
+    background:transparent;max-width:1260px;margin:0 auto;padding:24px 18px 42px}
 .topbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
 .back{
   display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);
@@ -788,7 +837,8 @@ body{
   .form-row.products,.form-row.type-row{grid-template-columns:1fr}
 }
 @media (max-width:640px){
-  .wrap{padding:16px 12px 28px}
+  .wrap{
+    background:transparent;padding:16px 12px 28px}
   .hero,.card{padding:16px}
   .hero h1{font-size:32px}
   .tabs{gap:8px;padding:6px}
@@ -1838,7 +1888,8 @@ body{
     linear-gradient(180deg, var(--bg), var(--bg2));
   min-height:100vh;
 }
-.wrap{max-width:1380px;margin:0 auto;padding:24px 20px 44px}
+.wrap{
+    background:#0b1a2b;max-width:1380px;margin:0 auto;padding:calc(24px + env(safe-area-inset-top,0px)) 20px calc(44px + env(safe-area-inset-bottom,0px))}
 .topbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
 .back{
   display:inline-flex;align-items:center;gap:8px;
@@ -1948,7 +1999,8 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
 .toast.danger{border-color:rgba(239,68,68,.35)}
 @media (max-width:1100px){.hero{grid-template-columns:1fr}.buttons{grid-template-columns:repeat(3,minmax(0,1fr));min-width:0}}
 @media (max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}}
-@media (max-width:640px){.wrap{padding:18px 14px 34px}.hero-main{padding:20px 18px 18px}.hero h1{font-size:34px}.grid{grid-template-columns:1fr}.buttons{grid-template-columns:1fr}.tabs{padding:6px}}
+@media (max-width:640px){.wrap{
+    background:transparent;padding:18px 14px 34px}.hero-main{padding:20px 18px 18px}.hero h1{font-size:34px}.grid{grid-template-columns:1fr}.buttons{grid-template-columns:1fr}.tabs{padding:6px}}
 
 @media (max-width: 480px){
   body{padding:20px}
@@ -1958,9 +2010,22 @@ button:disabled{opacity:.58;cursor:not-allowed;transform:none}
   .toolbar{margin-top:14px}
 }
 
+
+.bg-fixed{
+  position:fixed;
+  inset:0;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
+    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
+    linear-gradient(180deg, #06101c, #0b1220);
+  z-index:-1;
+}
+
 </style>
 </head>
 <body>
+<div class="bg-fixed"></div>
 <div class="wrap">
   <div class="topbar">
     <a class="back" href="/">← Terug naar home</a>
