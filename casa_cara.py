@@ -1,5 +1,5 @@
 
-from flask import Blueprint, render_template_string, jsonify, request
+from flask import Blueprint, render_template_string, jsonify, request, session, redirect
 import json
 from pathlib import Path
 
@@ -15,6 +15,7 @@ LOCATIONS_FILE = DATA_DIR / "locaties.json"
 DIENST_TYPES_FILE = DATA_DIR / "dienst_soorten.json"
 KITCHEN_FILE = DATA_DIR / "kitchen_tasks.json"
 RECIPES_FILE = DATA_DIR / "recipes.json"
+CASA_AUTH_FILE = DATA_DIR / "casa_auth.json"
 
 def load_json(path: Path, default):
     try:
@@ -25,6 +26,103 @@ def load_json(path: Path, default):
 def save_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def load_casa_auth_data():
+    data = load_json(CASA_AUTH_FILE, {"users": []})
+    if not isinstance(data, dict):
+        data = {"users": []}
+    users = []
+    for item in data.get("users", []):
+        if not isinstance(item, dict):
+            continue
+        pin = str(item.get("pin") or "").strip()
+        if not pin:
+            continue
+        users.append({"name": (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker", "pin": pin, "role": "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker", "active": bool(item.get("active", True))})
+    data["users"] = users
+    return data
+
+def save_casa_auth_data(data):
+    users = []
+    for item in data.get("users", []):
+        if not isinstance(item, dict):
+            continue
+        pin = str(item.get("pin") or "").strip()
+        if not pin:
+            continue
+        users.append({"name": (item.get("name") or "Gebruiker").strip() or "Gebruiker", "pin": pin, "role": "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker", "active": bool(item.get("active", True))})
+    save_json(CASA_AUTH_FILE, {"users": users})
+
+def get_casa_user_by_pin(pin: str):
+    pin = (pin or "").strip()
+    for user in load_casa_auth_data().get("users", []):
+        if user.get("active", True) and user.get("pin") == pin:
+            return user
+    return None
+
+def get_current_casa_user():
+    pin = session.get("casa_user_pin")
+    if not pin:
+        return None
+    user = get_casa_user_by_pin(pin)
+    if user:
+        session["casa_user_name"] = user.get("name")
+        session["casa_user_role"] = user.get("role")
+    return user
+
+def is_casa_admin():
+    user = get_current_casa_user()
+    return bool(user and user.get("role") == "admin")
+
+def get_tip_context():
+    user = get_current_casa_user() or {}
+    data = get_general_data()
+    if user.get("role") == "medewerker":
+        user_name = user.get("name", "").strip()
+        personal = data.get("fooienpot_per_user", {}) or {}
+        amount = float(personal.get(user_name, 0) or 0)
+        return {
+            "amount": round(amount, 2),
+            "label": f"Fooienpot van {user_name}" if user_name else "Jouw fooienpot",
+            "is_personal": True,
+        }
+    amount = float(data.get("fooienpot", 0) or 0)
+    return {
+        "amount": round(amount, 2),
+        "label": "Algemene fooienpot",
+        "is_personal": False,
+    }
+
+def admin_only_response():
+    return jsonify({"ok": False, "message": "Alleen een admin mag dit doen."}), 403
+
+@casa_cara.before_request
+def require_casa_login():
+    import time
+    if request.path.startswith("/api/") or request.path in {"/casa", "/casa-cara"}:
+        if not session.get("dashboard_logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "message": "Niet ingelogd."}), 401
+            return redirect("/login")
+        if not session.get("casa_logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "message": "Log eerst in voor Casa Cara."}), 401
+            return redirect("/casa-cara-login")
+        now = time.time()
+        last_activity = float(session.get("casa_last_activity", 0) or 0)
+        if last_activity and (now - last_activity) > 120:
+            for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
+                session.pop(key, None)
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "message": "Casa Cara sessie verlopen. Log opnieuw in."}), 401
+            return redirect("/casa-cara-login")
+        if not get_current_casa_user():
+            for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
+                session.pop(key, None)
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "message": "Casa Cara gebruiker niet gevonden."}), 401
+            return redirect("/casa-cara-login")
+        session["casa_last_activity"] = now
 
 def slugify(text: str) -> str:
     text = (text or "").strip().lower()
@@ -44,10 +142,13 @@ def save_bar_data(data):
     save_json(BAR_FILE, data)
 
 def get_general_data():
-    data = load_json(GENERAL_FILE, {"fooienpot": 0, "diensten": []})
+    data = load_json(GENERAL_FILE, {"fooienpot": 0, "fooienpot_per_user": {}, "diensten": []})
     if not isinstance(data, dict):
-        data = {"fooienpot": 0, "diensten": []}
+        data = {"fooienpot": 0, "fooienpot_per_user": {}, "diensten": []}
     data.setdefault("fooienpot", 0)
+    data.setdefault("fooienpot_per_user", {})
+    if not isinstance(data.get("fooienpot_per_user"), dict):
+        data["fooienpot_per_user"] = {}
     data.setdefault("diensten", [])
     return data
 
@@ -209,17 +310,23 @@ def build_fill_items(bar_data):
 def serialize_app_data():
     bar_data = get_bar_data()
     general_data = get_general_data()
+    tip_context = get_tip_context()
+    general_view = dict(general_data)
+    general_view["fooienpot"] = tip_context["amount"]
+    general_view["fooienpot_label"] = tip_context["label"]
+    general_view["fooienpot_is_personal"] = tip_context["is_personal"]
     return {
         "bar": {
             "koelingen": bar_data.get("koelingen", []),
             "fill_items": build_fill_items(bar_data),
         },
-        "general": general_data,
+        "general": general_view,
         "types": get_types(),
         "locations": get_locations(),
         "dienst_types": get_dienst_types(),
         "kitchen": get_kitchen_data(),
         "recipes": get_recipes_data(),
+        "auth": {"user_name": (get_current_casa_user() or {}).get("name", ""), "role": (get_current_casa_user() or {}).get("role", ""), "is_admin": is_casa_admin(), "users": load_casa_auth_data().get("users", []) if is_casa_admin() else []},
     }
 
 HTML = r"""
@@ -231,6 +338,9 @@ HTML = r"""
     name="viewport"
     content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
   >
+  <meta name="theme-color" content="#070b12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Casa Cara</title>
   <link rel="icon" type="image/png" href="/static/casa.png">
   <style>
@@ -258,12 +368,20 @@ HTML = r"""
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
     html,body{
       margin:0;padding:0;min-height:100%;
-      background:linear-gradient(180deg,#070b12,#0b111a 60%,#070b12);
+      background:#070b12 !important;
       color:var(--text);
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
       overscroll-behavior:none;
+      color-scheme:dark;
     }
     body{touch-action:manipulation}
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      z-index:-3;
+      background:#070b12;
+    }
     button,input,select{font:inherit}
     a{color:inherit;text-decoration:none}
     .app{
@@ -300,6 +418,31 @@ HTML = r"""
     .layout{max-width:var(--app-max);margin:0 auto;padding:18px 16px calc(26px + env(safe-area-inset-bottom,0px))}
     .page{display:none}
     .page.active{display:block}
+
+    .welcome-banner{
+      margin-bottom:14px;
+      padding:6px 2px 2px;
+    }
+    .welcome-banner .welcome-kicker{
+      color:var(--muted);
+      font-size:13px;
+      margin-bottom:6px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+    .welcome-banner h1{
+      margin:0;
+      font-size:36px;
+      line-height:1;
+      letter-spacing:-.04em;
+      color:var(--text);
+    }
+    .welcome-banner p{
+      margin:10px 0 0;
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.5;
+    }
 
     .hero{
       background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));
@@ -474,6 +617,7 @@ HTML = r"""
 
     @media (min-width: 860px){
       .layout{padding-left:24px;padding-right:24px}
+      .welcome-banner h1{font-size:46px}
       .hero h1{font-size:32px}
       .stats-grid{grid-template-columns:repeat(4,1fr)}
       .modal-backdrop{align-items:center}
@@ -560,6 +704,7 @@ HTML = r"""
       padding:14px;
     }
     @media (max-width:640px){
+      .welcome-banner h1{font-size:30px}
       .item-actions{display:grid;grid-template-columns:1fr;gap:8px}
       .item-actions .btn{width:100%}
       .klist-card,.ktask,.ksub,.recipe-card,.list-item{padding:13px}
@@ -800,8 +945,9 @@ HTML = r"""
       <div class="sub-list" id="group-algemeen">
         <button class="sub-btn" data-page="algemeen-dashboard" onclick="openPage('algemeen-dashboard'); closeDrawer();">Overzicht</button>
         <button class="sub-btn" data-page="diensten" onclick="openPage('diensten'); closeDrawer();">Diensten</button>
-        <button class="sub-btn" data-page="dienstsoorten" onclick="openPage('dienstsoorten'); closeDrawer();">Dienstsoorten</button>
+        <button class="sub-btn admin-only" data-page="dienstsoorten" onclick="openPage('dienstsoorten'); closeDrawer();">Dienstsoorten</button>
         <button class="sub-btn" data-page="fooienpot" onclick="openPage('fooienpot'); closeDrawer();">Fooienpot</button>
+        
       </div>
 
       <button class="nav-btn" id="toggle-keuken" onclick="toggleGroup('keuken')">
@@ -821,16 +967,16 @@ HTML = r"""
       <div class="sub-list" id="group-bar">
         <button class="sub-btn" data-page="bar-overzicht" onclick="openPage('bar-overzicht'); closeDrawer();">Overzicht</button>
         <button class="sub-btn" data-page="bar-koelingen" onclick="openPage('bar-koelingen'); closeDrawer();">Koelingen</button>
-        <button class="sub-btn" data-page="bar-productsoorten" onclick="openPage('bar-productsoorten'); closeDrawer();">Productsoorten</button>
-        <button class="sub-btn" data-page="bar-locaties" onclick="openPage('bar-locaties'); closeDrawer();">Locaties</button>
+        <button class="sub-btn admin-only" data-page="bar-productsoorten" onclick="openPage('bar-productsoorten'); closeDrawer();">Productsoorten</button>
+        <button class="sub-btn admin-only" data-page="bar-locaties" onclick="openPage('bar-locaties'); closeDrawer();">Locaties</button>
         <button class="sub-btn" data-page="bar-oplijst" onclick="openPage('bar-oplijst'); closeDrawer();">Op / niet op voorraad</button>
         <button class="sub-btn" data-page="bar-bijvullen" onclick="openPage('bar-bijvullen'); closeDrawer();">Bijvuloverzicht</button>
       </div>
     </nav>
 
     <div class="logout-wrap">
-      <a class="home-btn" href="/">← Terug naar home</a>
-      <a class="logout-btn" href="/logout">⎋ Uitloggen</a>
+      <button class="home-btn admin-only" onclick="openPage('gebruikers'); closeDrawer();">👥 Medewerkers</button>
+      <a class="logout-btn" href="/casa-cara-logout">⎋ Uitloggen</a>
     </div>
   </aside>
 
@@ -844,6 +990,12 @@ HTML = r"""
 
   <main class="layout">
     <section class="page active" id="page-dashboard">
+      <div class="welcome-banner">
+        <div class="welcome-kicker">Casa Cara</div>
+        <h1 id="dashboardWelcome">Welkom!</h1>
+        <p>Fijn dat je er bent. Hieronder vind je meteen het dashboard voor vandaag.</p>
+      </div>
+
       <div class="hero">
         <h1>📊 Dashboard</h1>
         <p>Een rustige startpagina met de belangrijkste info van vandaag. Tik op een blok om direct door te gaan naar de juiste pagina.</p>
@@ -915,14 +1067,14 @@ HTML = r"""
           <div class="panel-head">
             <div style="display:flex;align-items:center;gap:10px">
               <div class="stat-icon">€</div>
-              <h3 class="panel-title">Fooienpot</h3>
+              <h3 class="panel-title" id="tipsPanelTitle">Fooienpot</h3>
             </div>
             <div class="actions">
               <span class="badge accent" id="tipsBadge">€ 0,00</span>
               <button class="btn accent" onclick="openTipsModal()">Aanpassen</button>
             </div>
           </div>
-          <div class="item-sub">Huidige stand van de fooienpot op basis van je bestaande data.</div>
+          <div class="item-sub" id="tipsPanelSub">Huidige stand van de fooienpot op basis van je bestaande data.</div>
         </div>
         <div class="panel">
           <div class="panel-head">
@@ -954,7 +1106,7 @@ HTML = r"""
       </div>
     </section>
 
-    <section class="page" id="page-dienstsoorten">
+    <section class="page admin-only-page" id="page-dienstsoorten">
       <div class="hero">
         <h1>🗂 Dienstsoorten</h1>
         <p>Beheer hier de soorten diensten die je later via een dropdown kunt kiezen.</p>
@@ -965,7 +1117,7 @@ HTML = r"""
             <div class="stat-icon">☰</div>
             <h3 class="panel-title">Dienstsoorten</h3>
           </div>
-          <button class="btn accent" onclick="openDienstTypeModal()">Dienstsoort toevoegen</button>
+          <button class="btn accent admin-only-action" onclick="openDienstTypeModal()">Dienstsoort toevoegen</button>
         </div>
         <div class="list" id="dienstTypesList"></div>
       </div>
@@ -974,18 +1126,23 @@ HTML = r"""
     <section class="page" id="page-fooienpot">
       <div class="hero">
         <h1>💰 Fooienpot</h1>
-        <p>De huidige stand uit je bestaande Casa Cara data.</p>
+        <p id="tipsPageIntro">De huidige stand uit je bestaande Casa Cara data.</p>
       </div>
       <div class="panel">
         <div class="panel-head">
-          <h3 class="panel-title">Stand</h3>
+          <h3 class="panel-title" id="tipsPageTitle">Stand</h3>
           <div class="actions">
             <span class="badge accent" id="tipsPageAmount">€ 0,00</span>
             <button class="btn accent" onclick="openTipsModal()">Aanpassen</button>
           </div>
         </div>
-        <div class="item-sub">Deze pagina is nu ook direct bewerkbaar, zonder terug te vallen op de oude alles-in-één pagina.</div>
+        <div class="item-sub" id="tipsPageSub">Deze pagina is nu ook direct bewerkbaar, zonder terug te vallen op de oude alles-in-één pagina.</div>
       </div>
+    </section>
+
+    <section class="page admin-only-page" id="page-gebruikers">
+      <div class="hero"><h1>👥 Medewerkers</h1><p>Alleen admin kan Casa Cara medewerkers en codes beheren.</p></div>
+      <div class="panel"><div class="panel-head"><h3 class="panel-title">Medewerkers</h3><button class="btn accent admin-only-action" onclick="openUserModal()">Medewerker toevoegen</button></div><div class="list" id="usersList"></div></div>
     </section>
 
     <section class="page" id="page-keuken-overzicht">
@@ -1023,7 +1180,7 @@ HTML = r"""
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Takenlijsten</h3>
-          <button class="btn accent" onclick="openKitchenListModal()">Takenlijst toevoegen</button>
+          <button class="btn accent admin-only-action" onclick="openKitchenListModal()">Takenlijst toevoegen</button>
         </div>
         <div class="list" id="kitchenLists"></div>
       </div>
@@ -1040,14 +1197,14 @@ HTML = r"""
           <h3 class="panel-title">Taken</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('keuken-takenlijsten')">Terug naar lijsten</button>
-            <button class="btn accent" onclick="openKitchenManagePage(window.currentKitchenListId)">⚙️ Beheer</button>
+            <button class="btn accent admin-only-action" onclick="openKitchenManagePage(window.currentKitchenListId)">⚙️ Beheer</button>
           </div>
         </div>
         <div class="list" id="kitchenDetailList"></div>
       </div>
     </section>
 
-    <section class="page" id="page-keuken-takenlijst-beheer">
+    <section class="page admin-only-page" id="page-keuken-takenlijst-beheer">
       <div class="hero">
         <h1 id="kitchenManageTitle">⚙️ Takenlijst beheren</h1>
         <p>Pas hier alleen de inhoud van deze takenlijst aan. De checklist zelf blijft rustig voor gebruik op de werkvloer.</p>
@@ -1057,7 +1214,7 @@ HTML = r"""
           <h3 class="panel-title">Beheer</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('keuken-takenlijst-detail')">Terug naar checklist</button>
-            <button class="btn accent" onclick="openKitchenTaskModal(window.currentKitchenListId)">+ Taak toevoegen</button>
+            <button class="btn accent admin-only-action" onclick="openKitchenTaskModal(window.currentKitchenListId)">+ Taak toevoegen</button>
           </div>
         </div>
         <div class="list" id="kitchenManageList"></div>
@@ -1072,7 +1229,7 @@ HTML = r"""
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Recepten</h3>
-          <button class="btn accent" onclick="openRecipeModal()">Recept toevoegen</button>
+          <button class="btn accent admin-only-action" onclick="openRecipeModal()">Recept toevoegen</button>
         </div>
         <div class="list" id="recipesList"></div>
       </div>
@@ -1115,7 +1272,7 @@ HTML = r"""
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Koelingen</h3>
-          <button class="btn accent" onclick="openKoelingModal()">Koeling toevoegen</button>
+          <button class="btn accent admin-only-action" onclick="openKoelingModal()">Koeling toevoegen</button>
         </div>
         <div class="actions" style="margin-bottom:12px">
           <select id="koelingFilterLocatie" class="btn" onchange="renderCoolers()"></select>
@@ -1125,7 +1282,7 @@ HTML = r"""
       </div>
     </section>
 
-    <section class="page" id="page-bar-productsoorten">
+    <section class="page admin-only-page" id="page-bar-productsoorten">
       <div class="hero">
         <h1>🏷️ Bar · Productsoorten</h1>
         <p>Je productsoorten in een vaste volgorde, met de gekoppelde locatie erbij.</p>
@@ -1133,13 +1290,13 @@ HTML = r"""
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Productsoorten</h3>
-          <button class="btn accent" onclick="openTypeModal()">Productsoort toevoegen</button>
+          <button class="btn accent admin-only-action" onclick="openTypeModal()">Productsoort toevoegen</button>
         </div>
         <div class="list" id="typesList"></div>
       </div>
     </section>
 
-    <section class="page" id="page-bar-locaties">
+    <section class="page admin-only-page" id="page-bar-locaties">
       <div class="hero">
         <h1>📍 Bar · Locaties</h1>
         <p>Alle locaties overzichtelijk onder elkaar, nu ook direct bewerkbaar.</p>
@@ -1147,7 +1304,7 @@ HTML = r"""
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Locaties</h3>
-          <button class="btn accent" onclick="openLocationModal()">Locatie toevoegen</button>
+          <button class="btn accent admin-only-action" onclick="openLocationModal()">Locatie toevoegen</button>
         </div>
         <div class="list" id="locationsList"></div>
       </div>
@@ -1187,7 +1344,7 @@ HTML = r"""
           <h3 class="panel-title">Producten</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('bar-koelingen')">Terug naar koelingen</button>
-            <button class="btn accent" onclick="openProductModal(window.currentKoelingId)">Product toevoegen</button>
+            <button class="btn accent admin-only-action" onclick="openProductModal(window.currentKoelingId)">Product toevoegen</button>
           </div>
         </div>
         <div class="actions" style="margin-bottom:12px">
@@ -1233,6 +1390,10 @@ HTML = r"""
   }
   function pageId(name){ return 'page-' + name; }
   function safeArray(value){ return Array.isArray(value) ? value : []; }
+  function currentRole(){ return appData?.auth?.role || ''; }
+  function isAdmin(){ return currentRole() === 'admin'; }
+  function adminOnly(html){ return isAdmin() ? html : ''; }
+  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','keuken-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
 
   function toast(message, kind='success'){
     const wrap = document.getElementById('toastWrap');
@@ -1270,6 +1431,11 @@ HTML = r"""
     });
   }
 
+  function applyPermissions(){
+    document.querySelectorAll('.admin-only, .admin-only-page, .admin-only-action').forEach(el => { el.style.display = isAdmin() ? '' : 'none'; });
+    if (!isAdmin() && employeeForbiddenPages().includes(currentPage)) currentPage = 'dashboard';
+  }
+
   function pageMeta(page){
     const map = {
       'dashboard': ['Dashboard', 'Casa Cara'],
@@ -1277,6 +1443,7 @@ HTML = r"""
       'diensten': ['Algemeen', 'Diensten'],
       'dienstsoorten': ['Algemeen', 'Dienstsoorten'],
       'fooienpot': ['Algemeen', 'Fooienpot'],
+      'gebruikers': ['Casa Cara', 'Medewerkers'],
       'keuken-overzicht': ['Keuken', 'Overzicht'],
       'keuken-takenlijsten': ['Keuken', 'Takenlijsten'],
       'keuken-takenlijst-detail': ['Keuken', 'Takenlijst'],
@@ -1294,6 +1461,7 @@ HTML = r"""
   }
 
   function openPage(page){
+    if (!isAdmin() && employeeForbiddenPages().includes(page)) page = 'dashboard';
     currentPage = page;
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     const el = document.getElementById(pageId(page));
@@ -1465,8 +1633,7 @@ HTML = r"""
             </div>
             <div class="item-actions">
               <button class="btn" onclick="openProductInfo('${koeling.id}','${product.id}')">Productinfo</button>
-              <button class="btn accent" onclick="openProductModal('${koeling.id}','${product.id}')">Bewerken</button>
-              <button class="btn danger" onclick="confirmAction('Product verwijderen','Weet je zeker dat je dit product wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteProduct','${koeling.id}','${product.id}')&quot;)">Verwijderen</button>
+              ${adminOnly(`<button class=\"btn accent\" onclick=\"openProductModal('${koeling.id}','${product.id}')\">Bewerken</button><button class=\"btn danger\" onclick=\"confirmAction('Product verwijderen','Weet je zeker dat je dit product wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteProduct','${koeling.id}','${product.id}')&quot;)\">Verwijderen</button>`)}
             </div>
           </div>
         `;
@@ -1509,7 +1676,7 @@ HTML = r"""
             </div>
             <div class="form-actions">
               <button class="btn" onclick="closeModal()">Sluiten</button>
-              <button class="btn accent" onclick="closeModal(); openProductModal('${koeling.id}','${product.id}')">Bewerken</button>
+              ${adminOnly(`<button class=\"btn accent\" onclick=\"closeModal(); openProductModal('${koeling.id}','${product.id}')\">Bewerken</button>`)}
             </div>
           </div>
         </div>
@@ -1524,7 +1691,10 @@ HTML = r"""
     const types = safeArray(appData.types);
     const locations = safeArray(appData.locations);
     const tips = appData.general.fooienpot || 0;
+    const tipLabel = appData.general.fooienpot_label || 'Fooienpot';
+    const currentUserName = appData?.auth?.user_name || '';
 
+    setText('dashboardWelcome', currentUserName ? `Welkom! ${currentUserName}` : 'Welkom!');
     setText('statLowStock', String(fill.length));
     setText('statCoolers', String(koelingen.length));
     setText('statTips', euro(tips));
@@ -1533,6 +1703,11 @@ HTML = r"""
     setText('tipsBadge', euro(tips));
     setText('dienstenBadge', `${diensten.length} gepland`);
     setText('tipsPageAmount', euro(tips));
+    setText('tipsPanelTitle', tipLabel);
+    setText('tipsPanelSub', isAdmin() ? 'Huidige stand van de algemene fooienpot.' : 'Dit is jouw eigen fooienpot binnen Casa Cara.');
+    setText('tipsPageTitle', tipLabel);
+    setText('tipsPageIntro', isAdmin() ? 'De huidige stand van de algemene fooienpot.' : 'Hier zie je jouw eigen fooienpot binnen Casa Cara.');
+    setText('tipsPageSub', isAdmin() ? 'Deze pagina is nu ook direct bewerkbaar, zonder terug te vallen op de oude alles-in-één pagina.' : 'Pas hier jouw eigen fooienpot aan zonder de rest van het team te beïnvloeden.');
 
     setText('barOverviewCoolers', String(koelingen.length));
     setText('barOverviewTypes', String(types.length));
@@ -1568,9 +1743,7 @@ HTML = r"""
               <span class="badge ${low > 0 ? 'warn' : 'good'}">${low > 0 ? `${low} alert${low === 1 ? '' : 's'}` : 'In orde'}</span>
             </div>            <div class="item-actions">
               <button class="btn accent" onclick="openKoelingDetail('${koeling.id}')">Open koeling</button>
-              <button class="btn accent" onclick="openKoelingModal('${koeling.id}')">Bewerken</button>
-              <button class="btn" onclick="openProductModal('${koeling.id}')">Product toevoegen</button>
-              <button class="btn danger" onclick="confirmAction('Koeling verwijderen','Weet je zeker dat je deze koeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKoeling','${koeling.id}')&quot;)">Verwijderen</button>
+              ${adminOnly(`<button class=\"btn accent\" onclick=\"openKoelingModal('${koeling.id}')\">Bewerken</button><button class=\"btn\" onclick=\"openProductModal('${koeling.id}')\">Product toevoegen</button><button class=\"btn danger\" onclick=\"confirmAction('Koeling verwijderen','Weet je zeker dat je deze koeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKoeling','${koeling.id}')&quot;)\">Verwijderen</button>`)}
             </div>
           </div>
         `;
@@ -1666,7 +1839,7 @@ HTML = r"""
           </div>
           <div class="item-actions">
             <button class="btn good" onclick="markProductAvailable('${item.koeling_id}','${item.id}')">Weer op voorraad</button>
-            <button class="btn accent" onclick="openProductModal('${item.koeling_id}','${item.id}')">Bewerken</button>
+            ${adminOnly(`<button class=\"btn accent\" onclick=\"openProductModal('${item.koeling_id}','${item.id}')\">Bewerken</button>`)}
           </div>
         </div>
       `,
@@ -1707,7 +1880,7 @@ HTML = r"""
           </div>
           <div class="item-actions">
             <button class="btn good" onclick="quickFill('${item.koeling_id}','${item.product_id}', ${item.minimum})">Zet op minimum</button>
-            <button class="btn accent" onclick="openProductModal('${item.koeling_id}','${item.product_id}')">Bewerken</button>
+            ${adminOnly(`<button class="btn accent" onclick="openProductModal('${item.koeling_id}','${item.product_id}')">Bewerken</button>`)}
             <button class="btn danger" onclick="confirmAction('Product markeren als OP','Weet je zeker dat dit product op is?','Markeer als OP', &quot;doConfirmed('markProductOp','${item.koeling_id}','${item.product_id}')&quot;)">Markeer als OP</button>
           </div>
         </div>
@@ -2140,8 +2313,7 @@ HTML = r"""
           </div>
           <div class="item-actions" style="margin-top:12px">
             <button class="btn" onclick="openRecipeInfo(${index})">Open recept</button>
-            <button class="btn accent" onclick="openRecipeModal(${index})">Bewerken</button>
-            <button class="btn danger" onclick="confirmAction('Recept verwijderen','Weet je zeker dat je dit recept wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteRecipe',${index})&quot;)">Verwijderen</button>
+            ${adminOnly(`<button class=\"btn accent\" onclick=\"openRecipeModal(${index})\">Bewerken</button><button class=\"btn danger\" onclick=\"confirmAction('Recept verwijderen','Weet je zeker dat je dit recept wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteRecipe',${index})&quot;)\">Verwijderen</button>`)}
           </div>
         </div>
       `,
@@ -2172,7 +2344,7 @@ HTML = r"""
             </div>
             <div class="form-actions">
               <button class="btn" onclick="closeModal()">Sluiten</button>
-              <button class="btn accent" onclick="closeModal(); openRecipeModal(${index})">Bewerken</button>
+              ${adminOnly(`<button class=\"btn accent\" onclick=\"closeModal(); openRecipeModal(${index})\">Bewerken</button>`)}
             </div>
           </div>
         </div>
@@ -2204,6 +2376,22 @@ HTML = r"""
     );
   }
 
+  function openUserModal(index=null){
+    if (!isAdmin()) return;
+    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : {};
+    openModal(index === null ? 'Medewerker toevoegen' : 'Medewerker bewerken', 'Alleen admin kan Casa Cara gebruikers beheren.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam</label><input id="userName" value="${user.name || ''}" placeholder="Bijv. Lisa"></div>
+        <div class="field"><label>Rol</label><select id="userRole"><option value="medewerker" ${user.role === 'medewerker' ? 'selected' : ''}>Medewerker</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option></select></div>
+        <div class="field"><label>Code</label><input id="userPin" value="${user.pin || ''}" inputmode="numeric" placeholder="4 cijfers"></div>
+        <div class="form-actions"><button class="btn" onclick="closeModal()">Annuleren</button><button class="btn accent" onclick="saveUser(${index === null ? 'null' : index})">Opslaan</button></div>
+      </div>`);
+  }
+  async function saveUser(index){ try{ await postJSON('/api/manage/user-save', { index, name: document.getElementById('userName').value, role: document.getElementById('userRole').value, pin: document.getElementById('userPin').value }); closeModal(); await loadData(); toast('Medewerker opgeslagen'); }catch(err){ toast(err.message, 'error'); } }
+  async function deleteUser(index){ try{ await postJSON('/api/manage/user-delete', { index }); await loadData(); toast('Medewerker verwijderd'); }catch(err){ toast(err.message, 'error'); } }
+  function renderUsers(){ const items = safeArray(appData.auth?.users); renderList('usersList', items, (user, index) => `
+    <div class="list-item"><div class="item-top"><div><div class="item-title">${user.name || 'Medewerker'}</div><div class="item-sub">Rol: ${user.role || 'medewerker'}</div></div><span class="badge accent">${user.role || 'medewerker'}</span></div><div class="meta-row"><span class="meta-chip">Code: ${user.pin || '-'}</span></div><div class="item-actions"><button class="btn accent" onclick="openUserModal(${index})">Bewerken</button><button class="btn danger" onclick="confirmAction('Medewerker verwijderen','Weet je zeker dat je deze medewerker wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteUser',${index})&quot;)">Verwijderen</button></div></div>`, 'Nog geen gebruikers gevonden.'); }
+
   function renderDiensten(){
     const diensten = safeArray(appData.general.diensten);
     renderList(
@@ -2229,6 +2417,7 @@ HTML = r"""
   }
 
   function renderAll(){
+    applyPermissions();
     initFilters();
     renderDashboard();
     renderCoolers();
@@ -2238,6 +2427,7 @@ HTML = r"""
     renderFill();
     renderDiensten();
     renderDienstTypes();
+    renderUsers();
     renderKitchen();
     renderKitchenManagePage();
     renderRecipes();
@@ -2251,6 +2441,7 @@ HTML = r"""
 
   async function loadData(){
     const res = await fetch('/api/casa-data');
+    if (res.status === 401) { window.location.href = '/casa-cara-login'; return; }
     appData = await res.json();
     renderAll();
   }
@@ -2318,7 +2509,7 @@ HTML = r"""
   function openTipsModal(){
     openModal(
       'Fooienpot aanpassen',
-      'Voer een bedrag in en kies of dit erbij of eraf moet.',
+      (appData.general.fooienpot_is_personal ? 'Voer een bedrag in voor jouw eigen fooienpot.' : 'Voer een bedrag in en kies of dit erbij of eraf moet.'),
       `
         <div class="form-grid">
           <div class="field">
@@ -2366,10 +2557,10 @@ HTML = r"""
           </div>
           <div class="field"><label>Datum</label><input id="dienstDatum" type="date" value="${item.datum || ''}"></div>
           <div class="field"><label>Notitie</label><input id="dienstRol" value="${item.rol || ''}" placeholder="Bijv. Floor / Extra druk"></div>
-          <div class="actions">
+          ${isAdmin() ? `<div class="actions">
             <button class="btn" onclick="openDienstTypeModal()">Dienstsoort toevoegen</button>
             <button class="btn" onclick="openPage('dienstsoorten'); closeModal()">Beheer dienstsoorten</button>
-          </div>
+          </div>` : ''}
           <div class="form-actions">
             <button class="btn" onclick="closeModal()">Annuleren</button>
             <button class="btn accent" onclick="saveDienst(${index === null ? 'null' : index})">Opslaan</button>
@@ -2658,13 +2849,28 @@ def manage_tips_adjust():
         return jsonify({"ok": False, "message": "Ongeldig bedrag."}), 400
     if amount < 0:
         return jsonify({"ok": False, "message": "Gebruik een positief bedrag."}), 400
+
     data = get_general_data()
-    current = float(data.get("fooienpot", 0) or 0)
-    if mode == "subtract":
-        current -= amount
+    user = get_current_casa_user() or {}
+
+    if user.get("role") == "medewerker":
+        name = (user.get("name") or "").strip()
+        per_user = data.get("fooienpot_per_user", {}) or {}
+        current = float(per_user.get(name, 0) or 0)
+        if mode == "subtract":
+            current -= amount
+        else:
+            current += amount
+        per_user[name] = round(current, 2)
+        data["fooienpot_per_user"] = per_user
     else:
-        current += amount
-    data["fooienpot"] = round(current, 2)
+        current = float(data.get("fooienpot", 0) or 0)
+        if mode == "subtract":
+            current -= amount
+        else:
+            current += amount
+        data["fooienpot"] = round(current, 2)
+
     save_general_data(data)
     return jsonify({"ok": True})
 
@@ -2712,6 +2918,8 @@ def manage_dienst_delete():
 
 @casa_cara.route("/api/manage/location-save", methods=["POST"])
 def manage_location_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     original = (payload.get("original") or "").strip()
     name = (payload.get("name") or "").strip()
@@ -2737,6 +2945,8 @@ def manage_location_save():
 
 @casa_cara.route("/api/manage/location-delete", methods=["POST"])
 def manage_location_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -2756,6 +2966,8 @@ def manage_location_delete():
 
 @casa_cara.route("/api/manage/type-save", methods=["POST"])
 def manage_type_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     original = (payload.get("original") or "").strip()
     naam = (payload.get("naam") or "").strip()
@@ -2789,6 +3001,8 @@ def manage_type_save():
 
 @casa_cara.route("/api/manage/type-delete", methods=["POST"])
 def manage_type_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -2806,6 +3020,8 @@ def manage_type_delete():
 
 @casa_cara.route("/api/manage/koeling-save", methods=["POST"])
 def manage_koeling_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("id")
     naam = (payload.get("naam") or "").strip()
@@ -2835,6 +3051,8 @@ def manage_koeling_save():
 
 @casa_cara.route("/api/manage/koeling-delete", methods=["POST"])
 def manage_koeling_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("id")
     if not koeling_id:
@@ -2863,6 +3081,9 @@ def manage_product_save():
     if not koeling_id or not naam:
         return jsonify({"ok": False, "message": "Koeling en productnaam zijn verplicht."}), 400
 
+    if not is_casa_admin() and not product_id:
+        return admin_only_response()
+
     bar = get_bar_data()
     koeling = next((k for k in bar.get("koelingen", []) if k.get("id") == koeling_id), None)
     if not koeling:
@@ -2872,6 +3093,9 @@ def manage_product_save():
     if product_id:
         for product in koeling["producten"]:
             if product.get("id") == product_id:
+                if not is_casa_admin():
+                    if (product.get("naam") != naam) or ((product.get("soort") or "Overig") != soort) or int(product.get("minimum", 0) or 0) != minimum:
+                        return admin_only_response()
                 product["naam"] = naam
                 product["voorraad"] = voorraad
                 product["minimum"] = minimum
@@ -2904,6 +3128,8 @@ def manage_product_save():
 
 @casa_cara.route("/api/manage/product-delete", methods=["POST"])
 def manage_product_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("koeling_id")
     product_id = payload.get("product_id")
@@ -2970,6 +3196,8 @@ def manage_product_mark_available():
 
 @casa_cara.route("/api/manage/dienst-type-save", methods=["POST"])
 def manage_dienst_type_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     original = (payload.get("original") or "").strip()
     name = (payload.get("name") or "").strip()
@@ -3006,6 +3234,8 @@ def manage_dienst_type_save():
 
 @casa_cara.route("/api/manage/dienst-type-delete", methods=["POST"])
 def manage_dienst_type_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -3036,6 +3266,8 @@ def api_kitchen():
 
 @casa_cara.route("/api/kitchen/list-save", methods=["POST"])
 def kitchen_list_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -3060,6 +3292,8 @@ def kitchen_list_save():
 
 @casa_cara.route("/api/kitchen/list-delete", methods=["POST"])
 def kitchen_list_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     data = get_kitchen_data()
@@ -3072,6 +3306,8 @@ def kitchen_list_delete():
 
 @casa_cara.route("/api/kitchen/task-save", methods=["POST"])
 def kitchen_task_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
@@ -3101,6 +3337,8 @@ def kitchen_task_save():
 
 @casa_cara.route("/api/kitchen/task-delete", methods=["POST"])
 def kitchen_task_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -3135,6 +3373,8 @@ def kitchen_task_toggle():
 
 @casa_cara.route("/api/kitchen/subtask-save", methods=["POST"])
 def kitchen_subtask_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -3166,6 +3406,8 @@ def kitchen_subtask_save():
 
 @casa_cara.route("/api/kitchen/subtask-delete", methods=["POST"])
 def kitchen_subtask_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -3205,8 +3447,103 @@ def kitchen_subtask_toggle():
     return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
 
 
+
+
+@casa_cara.route("/api/manage/user-save", methods=["POST"])
+def manage_user_save():
+    if not is_casa_admin():
+        return admin_only_response()
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    pin = "".join(ch for ch in str(payload.get("pin") or "") if ch.isdigit())
+    role = "admin" if (payload.get("role") or "").strip().lower() == "admin" else "medewerker"
+
+    if not name:
+        return jsonify({"ok": False, "message": "Vul een naam in."}), 400
+    if len(pin) != 4:
+        return jsonify({"ok": False, "message": "Code moet uit 4 cijfers bestaan."}), 400
+
+    data = load_casa_auth_data()
+    users = data.get("users", [])
+
+    try:
+        raw_index = payload.get("index", None)
+        index = None if raw_index in (None, "", "null") else int(raw_index)
+    except Exception:
+        return jsonify({"ok": False, "message": "Ongeldige gebruiker."}), 400
+
+    for i, user in enumerate(users):
+        if i == index:
+            continue
+        if (user.get("pin") or "") == pin and user.get("active", True):
+            return jsonify({"ok": False, "message": "Deze code is al in gebruik."}), 400
+
+    user_record = {
+        "name": name,
+        "pin": pin,
+        "role": role,
+        "active": True,
+    }
+
+    if index is None:
+        users.append(user_record)
+    else:
+        if index < 0 or index >= len(users):
+            return jsonify({"ok": False, "message": "Gebruiker niet gevonden."}), 404
+        current = users[index]
+        user_record["active"] = bool(current.get("active", True))
+        users[index] = user_record
+
+    save_casa_auth_data({"users": users})
+
+    current_user = get_current_casa_user()
+    if current_user and current_user.get("pin") == pin:
+        session["casa_user_name"] = name
+        session["casa_user_role"] = role
+
+    return jsonify({"ok": True})
+
+
+@casa_cara.route("/api/manage/user-delete", methods=["POST"])
+def manage_user_delete():
+    if not is_casa_admin():
+        return admin_only_response()
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        index = int(payload.get("index"))
+    except Exception:
+        return jsonify({"ok": False, "message": "Gebruiker niet gevonden."}), 400
+
+    data = load_casa_auth_data()
+    users = data.get("users", [])
+
+    if index < 0 or index >= len(users):
+        return jsonify({"ok": False, "message": "Gebruiker niet gevonden."}), 404
+
+    target = users[index]
+    active_users = [u for u in users if u.get("active", True)]
+    active_admins = [u for u in active_users if (u.get("role") or "").strip().lower() == "admin"]
+
+    if len(active_users) <= 1:
+        return jsonify({"ok": False, "message": "Je kunt niet de laatste gebruiker verwijderen."}), 400
+
+    if (target.get("role") or "").strip().lower() == "admin" and len(active_admins) <= 1:
+        return jsonify({"ok": False, "message": "Je kunt niet de laatste admin verwijderen."}), 400
+
+    current_pin = session.get("casa_user_pin")
+    if current_pin and (target.get("pin") or "") == current_pin:
+        return jsonify({"ok": False, "message": "Je kunt je eigen account niet verwijderen terwijl je bent ingelogd."}), 400
+
+    users.pop(index)
+    save_casa_auth_data({"users": users})
+    return jsonify({"ok": True})
+
+
 @casa_cara.route("/api/recipes/save", methods=["POST"])
 def recipe_save():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -3237,6 +3574,8 @@ def recipe_save():
 
 @casa_cara.route("/api/recipes/delete", methods=["POST"])
 def recipe_delete():
+    if not is_casa_admin():
+        return admin_only_response()
     payload = request.get_json(silent=True) or {}
     data = get_recipes_data()
     items = data.get("items", [])

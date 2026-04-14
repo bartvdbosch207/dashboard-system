@@ -48,6 +48,7 @@ app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 app.secret_key = os.environ.get("APP_SECRET_KEY", "casa-cara-dashboard-secret-key")
 app.register_blueprint(casa_cara)
 AUTH_FILE = DATA_ROOT / "auth.json"
+CASA_AUTH_FILE = Path(__file__).resolve().parent / "data" / "casa_cara" / "casa_auth.json"
 MASTER_PASSWORD = "Beeldaliba1*"
 
 DEFAULT_STATS = {
@@ -136,6 +137,9 @@ def ensure_files():
     if not AUTH_FILE.exists():
         AUTH_FILE.write_text(json.dumps({"access_code": ""}, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    if not CASA_AUTH_FILE.exists():
+        CASA_AUTH_FILE.write_text(json.dumps({"users": []}, indent=2, ensure_ascii=False), encoding="utf-8")
+
 
 def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -155,10 +159,64 @@ def has_access_code():
     data = load_auth()
     return bool((data.get("access_code") or "").strip())
 
+def load_casa_auth():
+    ensure_files()
+    if not CASA_AUTH_FILE.exists():
+        save_json(CASA_AUTH_FILE, {"users": []})
+    data = load_json_file(CASA_AUTH_FILE, {"users": []})
+    if not isinstance(data, dict):
+        data = {"users": []}
+    users = []
+    for item in data.get("users", []):
+        if not isinstance(item, dict):
+            continue
+        pin = str(item.get("pin") or "").strip()
+        if not pin:
+            continue
+        users.append({
+            "name": (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker",
+            "pin": pin,
+            "role": "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker",
+            "active": bool(item.get("active", True)),
+        })
+    data["users"] = users
+    return data
+
+def save_casa_auth(data):
+    ensure_files()
+    clean_users = []
+    for item in data.get("users", []):
+        if not isinstance(item, dict):
+            continue
+        pin = str(item.get("pin") or "").strip()
+        if not pin:
+            continue
+        clean_users.append({
+            "name": (item.get("name") or "Gebruiker").strip() or "Gebruiker",
+            "pin": pin,
+            "role": "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker",
+            "active": bool(item.get("active", True)),
+        })
+    save_json(CASA_AUTH_FILE, {"users": clean_users})
+
+def casa_users_exist():
+    return any(u.get("active", True) for u in load_casa_auth().get("users", []))
+
+def find_casa_user_by_pin(pin: str):
+    pin = (pin or "").strip()
+    if not pin:
+        return None
+    for user in load_casa_auth().get("users", []):
+        if user.get("active", True) and (user.get("pin") or "") == pin:
+            return user
+    return None
+
 def is_logged_in():
-    return bool(session.get("is_logged_in"))
+    return bool(session.get("dashboard_logged_in"))
 
 
+def is_casa_logged_in():
+    return bool(session.get("casa_logged_in"))
 
 
 
@@ -318,98 +376,158 @@ LOGIN_HTML = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>Dashboard</title>
+<meta name="theme-color" content="#08111d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Dashboard login</title>
 <style>
 :root{
-  --bg:#06101c; --bg2:#0b1220; --text:#eff6ff; --muted:#9fb0c7;
-  --line:rgba(159,176,199,.14); --accent:#38bdf8; --accent2:#7dd3fc;
-  --danger:#ef4444; --good:#22c55e; --shadow:0 24px 64px rgba(0,0,0,.34);
+  --bg:#08111d; --bg2:#0b1625; --panel:#0f1b2d; --panel2:#0c1522; --text:#eef4fb; --muted:#9fb0c7;
+  --line:rgba(159,176,199,.14); --accent:#38bdf8; --accent2:#8be1ff; --shadow:0 24px 64px rgba(0,0,0,.36);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%;background:#08111d !important;color:var(--text);color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;overscroll-behavior:none}
+body{min-height:100dvh;min-height:100svh;display:flex;align-items:center;justify-content:center;padding:24px;padding-top:max(24px, env(safe-area-inset-top,0px));padding-bottom:max(24px, env(safe-area-inset-bottom,0px));background:#08111d !important;position:relative;overflow-x:hidden}
+.bg{position:fixed;inset:0;background:radial-gradient(circle at top left, rgba(139,225,255,.11), transparent 28%),radial-gradient(circle at top right, rgba(148,163,184,.08), transparent 24%),radial-gradient(circle at bottom center, rgba(56,189,248,.08), transparent 30%),linear-gradient(180deg, var(--bg), var(--bg2));z-index:-3}body::before{content:"";position:fixed;inset:0;background:#08111d;z-index:-4}.wrap{width:min(430px,100%)}.brand{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:18px}.brand-badge{width:46px;height:46px;border-radius:16px;display:grid;place-items:center;background:rgba(255,255,255,.05);border:1px solid var(--line);box-shadow:var(--shadow);font-size:18px}.brand-text{display:flex;flex-direction:column;align-items:flex-start}.brand-kicker{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}.brand-title{font-size:18px;font-weight:900;letter-spacing:-.03em}.card{background:linear-gradient(180deg, rgba(15,27,45,.96), rgba(10,19,31,.94));border:1px solid var(--line);border-radius:32px;padding:24px 22px 20px;box-shadow:var(--shadow);position:relative}.card::after{content:"";position:absolute;inset:0;border-radius:32px;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.head{text-align:center;margin-bottom:18px}.kicker{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;margin-bottom:14px;background:rgba(56,189,248,.10);border:1px solid rgba(139,225,255,.18);color:#cdefff;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.kicker::before{content:"";width:8px;height:8px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 5px rgba(56,189,248,.12)}h1{margin:0 0 10px;font-size:38px;line-height:1.02;letter-spacing:-.05em}p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}.msg{margin:14px 0 0;padding:12px 14px;border-radius:16px;font-size:14px;text-align:left}.msg.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd7d7}.msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#d4ffe3}.dots{display:flex;justify-content:center;gap:12px;margin:24px 0 20px}.dot{width:16px;height:16px;border-radius:999px;border:1px solid rgba(159,176,199,.25);background:rgba(255,255,255,.04);box-shadow:inset 0 1px 1px rgba(255,255,255,.04)}.dot.filled{background:linear-gradient(180deg,var(--accent2),var(--accent));border-color:rgba(139,225,255,.42)}.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.key{min-height:60px;border:none;border-radius:20px;cursor:pointer;color:var(--text);font-size:22px;font-weight:900;background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025));border:1px solid rgba(159,176,199,.12);box-shadow:0 12px 24px rgba(0,0,0,.18)}.key:active{transform:scale(.985)}.key.small{font-size:14px}.key.action{background:linear-gradient(180deg,#8be1ff,#38bdf8);color:#08263a}.toolbar{display:flex;justify-content:center;align-items:center;margin-top:16px;text-align:center}.help{color:var(--muted);font-size:13px;max-width:260px}.gear{position:absolute;right:14px;bottom:14px;width:42px;height:42px;border-radius:15px;border:1px solid rgba(159,176,199,.12);background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:18px}.sheet{position:fixed;inset:0;background:rgba(0,0,0,.60);display:none;align-items:flex-end;justify-content:center;padding:14px;z-index:30}.sheet.open{display:flex}.sheet-card{width:min(430px,100%);background:linear-gradient(180deg, rgba(15,27,45,.98), rgba(10,19,31,.96));border:1px solid var(--line);border-radius:28px;padding:18px;box-shadow:var(--shadow)}.sheet-card h2{margin:0 0 8px;font-size:24px;letter-spacing:-.03em}.sheet-card p{margin:0 0 14px}.field{display:grid;gap:6px;margin-bottom:10px}.field label{font-size:13px;color:var(--muted)}.field input{width:100%;min-height:50px;border-radius:15px;border:1px solid rgba(159,176,199,.15);background:rgba(255,255,255,.04);color:var(--text);padding:0 14px;font-size:14px;outline:none}.row{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}.btn{min-height:46px;border:none;border-radius:15px;padding:0 16px;font-weight:900;cursor:pointer}.btn.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(159,176,199,.12)}.btn.primary{background:linear-gradient(180deg,#8be1ff,#38bdf8);color:#08263a}.hidden{display:none}
+@media (max-width:480px){body{padding-left:18px;padding-right:18px}.card{padding:22px 18px 18px}h1{font-size:34px}.key{min-height:56px}}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="wrap">
+  <div class="brand"><div class="brand-badge">⌂</div><div class="brand-text"><div class="brand-kicker">Beveiligde toegang</div><div class="brand-title">Dashboard</div></div></div>
+  <div class="card">
+    <div class="head">
+      <div class="kicker">Pincode login</div>
+      <h1>Welkom terug</h1>
+      <p>Voer je code in om door te gaan naar je dashboard en tools.</p>
+      {% if message %}<div class="msg {{ 'error' if not success else 'ok' }}">{{ message }}</div>{% endif %}
+    </div>
+    <form id="loginForm" method="post" action="/login">
+      <input id="access_code" class="hidden" type="password" name="access_code" inputmode="numeric" autocomplete="one-time-code">
+      <div class="dots" id="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      <div class="pad"><button class="key" type="button" onclick="pressKey('1')">1</button><button class="key" type="button" onclick="pressKey('2')">2</button><button class="key" type="button" onclick="pressKey('3')">3</button><button class="key" type="button" onclick="pressKey('4')">4</button><button class="key" type="button" onclick="pressKey('5')">5</button><button class="key" type="button" onclick="pressKey('6')">6</button><button class="key" type="button" onclick="pressKey('7')">7</button><button class="key" type="button" onclick="pressKey('8')">8</button><button class="key" type="button" onclick="pressKey('9')">9</button><button class="key small" type="button" onclick="backspaceKey()">⌫</button><button class="key" type="button" onclick="pressKey('0')">0</button><button class="key action small" type="submit">Open</button></div>
+    </form>
+    <div class="toolbar"><div class="help">Na 2 minuten inactiviteit log je automatisch uit.</div></div>
+    <button class="gear" type="button" aria-label="Code instellen" onclick="openSheet()">⚙️</button>
+  </div>
+</div>
+<div class="sheet" id="sheet" onclick="if(event.target.id==='sheet')closeSheet()"><div class="sheet-card"><h2>Code instellen</h2><p>Maak of wijzig je toegangscode met het hoofdwachtwoord.</p><form method="post" action="/setup-code"><div class="field"><label>Hoofdwachtwoord</label><input type="password" name="master_password" required></div><div class="field"><label>Nieuwe code</label><input type="password" name="new_access_code" inputmode="numeric" required></div><div class="row"><button class="btn secondary" type="button" onclick="closeSheet()">Sluiten</button><button class="btn primary" type="submit">Opslaan</button></div></form>{% if code_exists %}<div class="msg ok">Er is al een code ingesteld. Je kunt die hier altijd overschrijven.</div>{% else %}<div class="msg ok">Er is nog geen code ingesteld. Maak hier je eerste code aan.</div>{% endif %}</div></div>
+<script>const codeInput=document.getElementById('access_code');const dots=Array.from(document.querySelectorAll('.dot'));function renderDots(){const len=(codeInput.value||'').length;dots.forEach((dot,i)=>dot.classList.toggle('filled',i<len));}function pressKey(value){if((codeInput.value||'').length>=4)return;codeInput.value=(codeInput.value||'')+value;renderDots();}function backspaceKey(){codeInput.value=(codeInput.value||'').slice(0,-1);renderDots();}function openSheet(){document.getElementById('sheet').classList.add('open');}function closeSheet(){document.getElementById('sheet').classList.remove('open');}renderDots();</script>
+</body>
+</html>
+"""
+
+CASA_LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#070b12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Casa Cara login</title>
+<style>
+:root{
+  --bg:#070b12; --bg2:#0b111a; --text:#eef4fb; --muted:#9fb0c7;
+  --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.14);
+  --accent:#d4b06a; --accent2:#f3dfb2; --shadow:0 24px 64px rgba(0,0,0,.38);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{
-  margin:0; min-height:100%;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
-    linear-gradient(180deg, var(--bg), var(--bg2));
-  color:var(--text);
+  margin:0; min-height:100%; background:#070b12 !important; color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+  color-scheme:dark; overscroll-behavior:none;
 }
-body{display:flex;align-items:center;justify-content:center;min-height:100dvh;background:#0b1a2b;padding:24px}
-.wrap{
-    background:transparent;width:min(390px,100%)}
+body{
+  display:flex; align-items:center; justify-content:center;
+  min-height:100dvh; min-height:100svh;
+  padding:24px; padding-top:max(24px, env(safe-area-inset-top,0px));
+  padding-bottom:max(24px, env(safe-area-inset-bottom,0px));
+  background:#070b12 !important; position:relative; overflow-x:hidden;
+}
+body::before{
+  content:""; position:fixed; inset:0; z-index:-4; background:#070b12;
+}
+.bg{
+  position:fixed; inset:0; z-index:-3;
+  background:
+    radial-gradient(circle at top left, rgba(212,176,106,.10), transparent 28%),
+    radial-gradient(circle at top right, rgba(112,154,255,.07), transparent 24%),
+    radial-gradient(circle at bottom center, rgba(212,176,106,.06), transparent 30%),
+    linear-gradient(180deg, var(--bg), var(--bg2));
+}
+.wrap{width:min(390px,100%)}
 .card{
-  background:linear-gradient(180deg, rgba(16,27,48,.9), rgba(12,20,36,.84));
-  border:1px solid var(--line);
-  border-radius:30px;
-  padding:26px 22px 22px;
-  box-shadow:var(--shadow);
-  position:relative;
+  background:linear-gradient(180deg, rgba(17,26,40,.97), rgba(12,19,30,.95));
+  border:1px solid var(--line); border-radius:30px; padding:26px 22px 22px;
+  box-shadow:var(--shadow); position:relative;
 }
 .head{text-align:center;margin-bottom:16px}
 .kicker{
   color:var(--muted); font-size:13px; letter-spacing:.08em;
-  text-transform:uppercase; margin-bottom:8px
+  text-transform:uppercase; margin-bottom:8px;
 }
-h1{margin:0 0 10px;font-size:32px;letter-spacing:-.04em}
+h1{margin:0 0 10px;font-size:32px;letter-spacing:-.04em;line-height:1}
 p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}
-.msg{margin:14px 0 0;padding:12px 14px;border-radius:14px;font-size:14px}
+.msg{margin:14px 0 0;padding:12px 14px;border-radius:14px;font-size:14px;text-align:left}
 .msg.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd7d7}
 .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#d4ffe3}
 .dots{display:flex;justify-content:center;gap:12px;margin:22px 0 20px}
 .dot{
   width:16px;height:16px;border-radius:999px;
-  border:1px solid rgba(159,176,199,.25);
+  border:1px solid rgba(255,255,255,.16);
   background:rgba(255,255,255,.04);
   box-shadow:inset 0 1px 1px rgba(255,255,255,.04);
 }
-.dot.filled{background:linear-gradient(180deg,var(--accent2),var(--accent));border-color:rgba(125,211,252,.45)}
+.dot.filled{background:linear-gradient(180deg,var(--accent2),var(--accent));border-color:rgba(212,176,106,.42)}
 .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .key{
   min-height:58px;border:none;border-radius:18px;cursor:pointer;
   color:var(--text);font-size:22px;font-weight:800;
   background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.025));
-  border:1px solid rgba(159,176,199,.12);
+  border:1px solid rgba(255,255,255,.10);
   box-shadow:0 10px 22px rgba(0,0,0,.16);
 }
 .key:active{transform:scale(.985)}
 .key.small{font-size:14px}
-.key.action{
-  background:linear-gradient(180deg,#8ae3ff,#38bdf8);
-  color:#08263a;
-}
-.toolbar{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
-.help{color:var(--muted);font-size:13px}
+.key.action{background:linear-gradient(180deg,#f3dfb2,#d4b06a);color:#3a2a10}
+.toolbar{display:flex;justify-content:center;align-items:center;margin-top:16px;text-align:center}
+.help{color:var(--muted);font-size:13px;max-width:280px}
 .gear{
   position:absolute;right:14px;bottom:14px;
-  width:40px;height:40px;border-radius:14px;border:1px solid rgba(159,176,199,.12);
-  background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:18px
+  width:40px;height:40px;border-radius:14px;border:1px solid rgba(255,255,255,.10);
+  background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:18px;
 }
 .sheet{
-  position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
-  align-items:flex-end;justify-content:center;padding:14px;z-index:30
+  position:fixed;inset:0;background:rgba(0,0,0,.60);display:none;
+  align-items:flex-end;justify-content:center;padding:14px;z-index:30;
 }
 .sheet.open{display:flex}
 .sheet-card{
-  width:min(420px,100%);background:linear-gradient(180deg, rgba(16,27,48,.96), rgba(12,20,36,.94));
-  border:1px solid var(--line);border-radius:26px;padding:18px;box-shadow:var(--shadow)
+  width:min(420px,100%);background:linear-gradient(180deg, rgba(17,26,40,.98), rgba(12,19,30,.97));
+  border:1px solid var(--line);border-radius:26px;padding:18px;box-shadow:var(--shadow);
 }
-.sheet-card h2{margin:0 0 8px;font-size:22px}
+.sheet-card h2{margin:0 0 8px;font-size:22px;letter-spacing:-.03em}
 .sheet-card p{margin:0 0 14px}
 .field{display:grid;gap:6px;margin-bottom:10px}
 .field label{font-size:13px;color:var(--muted)}
 .field input{
-  width:100%;min-height:48px;border-radius:14px;border:1px solid rgba(159,176,199,.15);
-  background:rgba(255,255,255,.04);color:var(--text);padding:0 14px;font-size:14px;outline:none
+  width:100%;min-height:48px;border-radius:14px;border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.04);color:var(--text);padding:0 14px;font-size:14px;outline:none;
 }
 .row{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
-.btn{
-  min-height:44px;border:none;border-radius:14px;padding:0 16px;font-weight:800;cursor:pointer
-}
-.btn.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(159,176,199,.12)}
-.btn.primary{background:linear-gradient(180deg,#8ae3ff,#38bdf8);color:#08263a}
+.btn{min-height:44px;border:none;border-radius:14px;padding:0 16px;font-weight:800;cursor:pointer}
+.btn.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(255,255,255,.10)}
+.btn.primary{background:linear-gradient(180deg,#f3dfb2,#d4b06a);color:#3a2a10}
 .hidden{display:none}
-
+.back-link{
+  display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);
+  margin-bottom:14px;padding:11px 14px;border-radius:16px;
+  background:rgba(255,255,255,.04);border:1px solid var(--line);
+}
+.back-link:hover{border-color:var(--line-strong)}
 @media (max-width: 480px){
   body{padding:20px}
   .card{padding:24px 18px 18px}
@@ -417,43 +535,28 @@ p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}
   .key{min-height:54px;font-size:21px}
   .toolbar{margin-top:14px}
 }
-
-
-html{
-  background:#0b1a2b !important;
-}
-body{
-  background:#0b1a2b !important;
-  min-height:100dvh;
-  min-height:100svh;
-  margin:0;
-  padding-top:env(safe-area-inset-top,0px);
-  padding-bottom:env(safe-area-inset-bottom,0px);
-}
-*{
-  -webkit-tap-highlight-color:transparent;
-}
+html{background:#070b12 !important}
+body{background:#070b12 !important}
 @supports (-webkit-touch-callout: none){
-  html, body{
-    background:#0b1a2b !important;
-  }
+  html, body{background:#070b12 !important}
 }
-
 </style>
 </head>
 <body>
+<div class="bg"></div>
 <div class="wrap">
+  <a class="back-link" href="/">← Terug naar home</a>
   <div class="card">
     <div class="head">
-      <div class="kicker">Pincode login</div>
-      <h1>Dashboard</h1>
-      <p>Voer je code in om door te gaan.</p>
+      <div class="kicker">Casa Cara login</div>
+      <h1>Welkom terug</h1>
+      <p>Voer je Casa Cara code in om door te gaan.</p>
       {% if message %}
         <div class="msg {{ 'error' if not success else 'ok' }}">{{ message }}</div>
       {% endif %}
     </div>
 
-    <form id="loginForm" method="post" action="/login">
+    <form id="loginForm" method="post" action="/casa-cara-login">
       <input id="access_code" class="hidden" type="password" name="access_code" inputmode="numeric" autocomplete="one-time-code">
       <div class="dots" id="dots">
         <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
@@ -471,26 +574,30 @@ body{
         <button class="key" type="button" onclick="pressKey('9')">9</button>
         <button class="key small" type="button" onclick="backspaceKey()">⌫</button>
         <button class="key" type="button" onclick="pressKey('0')">0</button>
-        <button class="key action small" type="submit">OK</button>
+        <button class="key action small" type="submit">Open</button>
       </div>
     </form>
 
     <div class="toolbar">
-      <div class="help">Na 2 minuten inactiviteit log je automatisch uit.</div>
+      <div class="help">Alleen Casa Cara gebruikers kunnen hier door.</div>
     </div>
 
-    <button class="gear" type="button" aria-label="Code instellen" onclick="openSheet()">⚙️</button>
+    <button class="gear" type="button" aria-label="Casa Cara admin instellen" onclick="openSheet()">⚙️</button>
   </div>
 </div>
 
 <div class="sheet" id="sheet" onclick="if(event.target.id==='sheet')closeSheet()">
   <div class="sheet-card">
-    <h2>Code instellen</h2>
-    <p>Maak of wijzig je toegangscode met het hoofdwachtwoord.</p>
-    <form method="post" action="/setup-code">
+    <h2>Casa Cara admin instellen</h2>
+    <p>Als er nog geen Casa Cara gebruiker bestaat, kun je hier met het hoofdwachtwoord de eerste admin instellen.</p>
+    <form method="post" action="/casa-cara-setup">
       <div class="field">
         <label>Hoofdwachtwoord</label>
         <input type="password" name="master_password" required>
+      </div>
+      <div class="field">
+        <label>Naam admin</label>
+        <input type="text" name="admin_name" value="Admin" required>
       </div>
       <div class="field">
         <label>Nieuwe code</label>
@@ -501,10 +608,10 @@ body{
         <button class="btn primary" type="submit">Opslaan</button>
       </div>
     </form>
-    {% if code_exists %}
-      <div class="msg ok">Er is al een code ingesteld. Je kunt die hier altijd overschrijven.</div>
+    {% if casa_code_exists %}
+      <div class="msg error">Er bestaan al Casa Cara gebruikers. Nieuwe medewerkers voeg je straks alleen vanuit het admin-account toe.</div>
     {% else %}
-      <div class="msg ok">Er is nog geen code ingesteld. Maak hier je eerste code aan.</div>
+      <div class="msg ok">Er is nog geen Casa Cara gebruiker ingesteld. Maak hier de eerste admin aan.</div>
     {% endif %}
   </div>
 </div>
@@ -540,6 +647,9 @@ HOME_HTML = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0b1a2b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Dashboard</title>
 <link rel="icon" type="image/png" href="/static/gmail.png">
 <style>
@@ -558,10 +668,12 @@ html,body{
   min-height:100%;
   background:#0b1a2b !important;
   overscroll-behavior:none;
+  color-scheme:dark;
 }
 body{
   margin:0;
   min-height:100vh; min-height:100dvh; min-height:100dvh;
+  position:relative;
   color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
   background:
@@ -700,7 +812,7 @@ p{margin:0 auto;color:var(--muted);line-height:1.65;max-width:760px;font-size:16
           <div class="tag">Bestaande tool</div>
         </a>
 
-        <a class="card casa-card" href="/casa-cara">
+        <a class="card casa-card" href="/casa-cara-login">
           <div class="icon">
             <img src="/static/casa.png" alt="Casa Cara logo" onerror="this.style.display='none'; this.parentNode.innerHTML='🍽️'; this.parentNode.style.fontSize='30px';">
           </div>
@@ -736,6 +848,7 @@ html,body{
   min-height:100%;
   background:#0b1a2b !important;
   overscroll-behavior:none;
+  color-scheme:dark;
 }
 body{
   margin:0; min-height:100vh; color:var(--text);
@@ -2209,12 +2322,12 @@ refreshAll();setInterval(refreshAll,2500);
 def require_login():
     import time
     allowed_paths = {"/login", "/setup-code", "/logout"}
+    casa_allowed_paths = {"/casa-cara-login", "/casa-cara-setup", "/casa-cara-logout"}
     if request.path.startswith("/static/"):
         return None
     if request.path in allowed_paths:
         return None
-
-    if session.get("is_logged_in"):
+    if session.get("dashboard_logged_in"):
         last_activity = float(session.get("last_activity", 0) or 0)
         now = time.time()
         if last_activity and (now - last_activity) > 120:
@@ -2222,15 +2335,15 @@ def require_login():
             session["login_message"] = "Je sessie is verlopen. Log opnieuw in."
             session["login_success"] = False
             if request.path.startswith("/api/"):
-                return jsonify({"ok": False, "message": "Sessieverlopen. Log opnieuw in."}), 401
+                return jsonify({"ok": False, "message": "Sessie verlopen. Log opnieuw in."}), 401
             return redirect(url_for("login_page"))
         session["last_activity"] = now
+        if request.path in casa_allowed_paths:
+            return None
         return None
-
     if request.path.startswith("/api/"):
         return jsonify({"ok": False, "message": "Niet ingelogd."}), 401
     return redirect(url_for("login_page"))
-
 
 @app.route("/login", methods=["GET"])
 def login_page():
@@ -2244,7 +2357,7 @@ def login_submit():
     auth = load_auth()
     if access_code and access_code == (auth.get("access_code") or "").strip():
         import time
-        session["is_logged_in"] = True
+        session["dashboard_logged_in"] = True
         session["last_activity"] = time.time()
         return redirect(url_for("home"))
     session["login_message"] = "Onjuiste code."
@@ -2268,6 +2381,56 @@ def setup_code():
     session["login_success"] = True
     return redirect(url_for("login_page"))
 
+@app.route("/casa-cara-login", methods=["GET"])
+def casa_login_page():
+    message = session.pop("casa_login_message", "")
+    success = session.pop("casa_login_success", False)
+    return render_template_string(CASA_LOGIN_HTML, message=message, success=success, casa_code_exists=casa_users_exist())
+
+@app.route("/casa-cara-login", methods=["POST"])
+def casa_login_submit():
+    import time
+    access_code = (request.form.get("access_code") or "").strip()
+    user = find_casa_user_by_pin(access_code)
+    if user:
+        session["casa_logged_in"] = True
+        session["casa_last_activity"] = time.time()
+        session["casa_user_pin"] = user.get("pin")
+        session["casa_user_name"] = user.get("name")
+        session["casa_user_role"] = user.get("role")
+        return redirect("/casa-cara")
+    session["casa_login_message"] = "Onjuiste Casa Cara code."
+    session["casa_login_success"] = False
+    return redirect(url_for("home"))
+
+@app.route("/casa-cara-setup", methods=["POST"])
+def casa_setup_code():
+    master_password = (request.form.get("master_password") or "").strip()
+    admin_name = (request.form.get("admin_name") or "Admin").strip() or "Admin"
+    new_access_code = (request.form.get("new_access_code") or "").strip()
+    if casa_users_exist():
+        session["casa_login_message"] = "Er bestaat al een Casa Cara admin. Nieuwe medewerkers voeg je in de tool toe."
+        session["casa_login_success"] = False
+        return redirect(url_for("casa_login_page"))
+    if master_password != MASTER_PASSWORD:
+        session["casa_login_message"] = "Hoofdwachtwoord onjuist."
+        session["casa_login_success"] = False
+        return redirect(url_for("casa_login_page"))
+    if not new_access_code:
+        session["casa_login_message"] = "Vul een nieuwe code in."
+        session["casa_login_success"] = False
+        return redirect(url_for("casa_login_page"))
+    save_casa_auth({"users": [{"name": admin_name, "pin": new_access_code, "role": "admin", "active": True}]})
+    session["casa_login_message"] = "Casa Cara admin aangemaakt. Je kunt nu inloggen."
+    session["casa_login_success"] = True
+    return redirect(url_for("casa_login_page"))
+
+@app.route("/casa-cara-logout")
+def casa_logout():
+    for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
+        session.pop(key, None)
+    return redirect(url_for("home"))
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -2278,8 +2441,6 @@ def home():
     ensure_files()
     normalize_bar_data()
     return render_template_string(HOME_HTML)
-
-
 
 @app.route("/gmail")
 def gmail():
