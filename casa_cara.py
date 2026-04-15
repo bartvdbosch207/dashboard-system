@@ -1,12 +1,14 @@
 
 from flask import Blueprint, render_template_string, jsonify, request, session, redirect
 import json
+from datetime import datetime, date
 from pathlib import Path
 
 casa_cara = Blueprint("casa_cara", __name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data" / "casa_cara"
+IS_RENDER = bool(__import__("os").environ.get("RENDER")) or bool(__import__("os").environ.get("PORT"))
+DATA_DIR = (BASE_DIR / "data" / "casa_cara") if IS_RENDER else (BASE_DIR / "Data" / "Casa Cara")
 
 BAR_FILE = DATA_DIR / "bar_koelingen.json"
 GENERAL_FILE = DATA_DIR / "algemeen.json"
@@ -27,6 +29,67 @@ def save_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
+DEFAULT_PERMISSIONS = {
+    "access_general": True,
+    "access_bar": True,
+    "access_kitchen": True,
+    "manage_diensten": True,
+    "manage_tips": True,
+    "view_bijvullen": True,
+    "view_oplijst": True,
+    "adjust_stock": True,
+    "view_recipes": True,
+    "use_tasklists": True,
+    "manage_dienst_types": False,
+    "manage_users": False,
+    "manage_products": False,
+    "manage_types": False,
+    "manage_locations": False,
+    "manage_recipes": False,
+    "manage_tasklists": False,
+    "manage_coolers": False,
+}
+
+
+def default_permissions_for_role(role: str):
+    role = (role or "").strip().lower()
+    if role == "admin":
+        return {key: True for key in DEFAULT_PERMISSIONS}
+    return dict(DEFAULT_PERMISSIONS)
+
+
+def normalize_permissions(role: str, permissions=None):
+    base = default_permissions_for_role(role)
+    if isinstance(permissions, dict):
+        for key in base:
+            if key in permissions:
+                base[key] = bool(permissions.get(key))
+    return base
+
+
+def permission_labels():
+    return {
+        "access_general": "Algemeen zichtbaar",
+        "access_bar": "Bar zichtbaar",
+        "access_kitchen": "Keuken zichtbaar",
+        "manage_diensten": "Diensten gebruiken",
+        "manage_tips": "Fooienpot aanpassen",
+        "view_bijvullen": "Bijvuloverzicht gebruiken",
+        "view_oplijst": "OP-lijst gebruiken",
+        "adjust_stock": "Koelingvoorraad aanpassen",
+        "view_recipes": "Recepten openen",
+        "use_tasklists": "Takenlijsten openen en afvinken",
+        "manage_dienst_types": "Dienstsoorten beheren",
+        "manage_users": "Medewerkers beheren",
+        "manage_products": "Producten toevoegen en bewerken",
+        "manage_types": "Productsoorten beheren",
+        "manage_locations": "Locaties beheren",
+        "manage_recipes": "Recepten beheren",
+        "manage_tasklists": "Takenlijsten beheren",
+        "manage_coolers": "Koelingen beheren",
+    }
+
+
 def load_casa_auth_data():
     data = load_json(CASA_AUTH_FILE, {"users": []})
     if not isinstance(data, dict):
@@ -38,9 +101,17 @@ def load_casa_auth_data():
         pin = str(item.get("pin") or "").strip()
         if not pin:
             continue
-        users.append({"name": (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker", "pin": pin, "role": "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker", "active": bool(item.get("active", True))})
+        role = "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker"
+        users.append({
+            "name": (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker",
+            "pin": pin,
+            "role": role,
+            "active": bool(item.get("active", True)),
+            "permissions": normalize_permissions(role, item.get("permissions")),
+        })
     data["users"] = users
     return data
+
 
 def save_casa_auth_data(data):
     users = []
@@ -50,8 +121,16 @@ def save_casa_auth_data(data):
         pin = str(item.get("pin") or "").strip()
         if not pin:
             continue
-        users.append({"name": (item.get("name") or "Gebruiker").strip() or "Gebruiker", "pin": pin, "role": "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker", "active": bool(item.get("active", True))})
+        role = "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker"
+        users.append({
+            "name": (item.get("name") or "Gebruiker").strip() or "Gebruiker",
+            "pin": pin,
+            "role": role,
+            "active": bool(item.get("active", True)),
+            "permissions": normalize_permissions(role, item.get("permissions")),
+        })
     save_json(CASA_AUTH_FILE, {"users": users})
+
 
 def get_casa_user_by_pin(pin: str):
     pin = (pin or "").strip()
@@ -59,6 +138,7 @@ def get_casa_user_by_pin(pin: str):
         if user.get("active", True) and user.get("pin") == pin:
             return user
     return None
+
 
 def get_current_casa_user():
     pin = session.get("casa_user_pin")
@@ -70,9 +150,23 @@ def get_current_casa_user():
         session["casa_user_role"] = user.get("role")
     return user
 
+
+def current_permissions():
+    user = get_current_casa_user() or {}
+    role = user.get("role", "medewerker")
+    return normalize_permissions(role, user.get("permissions"))
+
+
+def has_casa_permission(key: str):
+    if is_casa_admin():
+        return True
+    return bool(current_permissions().get(key))
+
+
 def is_casa_admin():
     user = get_current_casa_user()
     return bool(user and user.get("role") == "admin")
+
 
 def get_tip_context():
     user = get_current_casa_user() or {}
@@ -95,6 +189,10 @@ def get_tip_context():
 
 def admin_only_response():
     return jsonify({"ok": False, "message": "Alleen een admin mag dit doen."}), 403
+
+
+def permission_denied_response(message="Je hebt geen rechten voor deze actie."):
+    return jsonify({"ok": False, "message": message}), 403
 
 @casa_cara.before_request
 def require_casa_login():
@@ -257,6 +355,26 @@ def get_kitchen_data():
     if not isinstance(data, dict):
         data = {"lists": []}
     data.setdefault("lists", [])
+    changed = False
+    for item in data.get("lists", []):
+        item.setdefault("tasks", [])
+        for task in item.get("tasks", []):
+            if "last_checked_by" not in task:
+                task["last_checked_by"] = ""
+                changed = True
+            if "last_checked_at" not in task:
+                task["last_checked_at"] = ""
+                changed = True
+            task.setdefault("subtasks", [])
+            for sub in task.get("subtasks", []):
+                if "last_checked_by" not in sub:
+                    sub["last_checked_by"] = ""
+                    changed = True
+                if "last_checked_at" not in sub:
+                    sub["last_checked_at"] = ""
+                    changed = True
+    if changed:
+        save_json(KITCHEN_FILE, data)
     return data
 
 def save_kitchen_data(data):
@@ -315,6 +433,8 @@ def serialize_app_data():
     general_view["fooienpot"] = tip_context["amount"]
     general_view["fooienpot_label"] = tip_context["label"]
     general_view["fooienpot_is_personal"] = tip_context["is_personal"]
+    user = get_current_casa_user() or {}
+    permissions = current_permissions()
     return {
         "bar": {
             "koelingen": bar_data.get("koelingen", []),
@@ -326,7 +446,14 @@ def serialize_app_data():
         "dienst_types": get_dienst_types(),
         "kitchen": get_kitchen_data(),
         "recipes": get_recipes_data(),
-        "auth": {"user_name": (get_current_casa_user() or {}).get("name", ""), "role": (get_current_casa_user() or {}).get("role", ""), "is_admin": is_casa_admin(), "users": load_casa_auth_data().get("users", []) if is_casa_admin() else []},
+        "auth": {
+            "user_name": user.get("name", ""),
+            "role": user.get("role", ""),
+            "is_admin": is_casa_admin(),
+            "permissions": permissions,
+            "permission_labels": permission_labels(),
+            "users": load_casa_auth_data().get("users", []) if is_casa_admin() else [],
+        },
     }
 
 HTML = r"""
@@ -535,6 +662,34 @@ HTML = r"""
       min-height:28px;display:inline-flex;align-items:center;padding:0 10px;border-radius:999px;
       border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);font-size:12px;
     }
+    .permission-grid{display:grid;grid-template-columns:1fr;gap:10px}.permission-panel{border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.02)}.permission-kicker{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800}.permission-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.05)}.permission-row:first-child{border-top:none;padding-top:0}.permission-row:last-child{padding-bottom:0}.permission-inline-label{font-size:13px;line-height:1.25;color:var(--text)}.permission-grid select{width:100%;min-height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}.permission-grid input[type='checkbox']{width:16px;height:16px;accent-color:#d4b06a;flex:0 0 auto}
+    .perm-item{display:flex;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
+    .perm-item input{margin-top:1px;width:15px;height:15px}
+    .perm-label{font-size:12px;color:var(--text);line-height:1.3}
+    .overview-grid{display:grid;grid-template-columns:1fr;gap:12px}.overview-card{border:1px solid var(--line);border-radius:18px;padding:15px;background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));box-shadow:0 12px 24px rgba(0,0,0,.14)}.overview-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px}.overview-kicker{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800;margin-bottom:6px}.overview-title{font-size:18px;font-weight:900;letter-spacing:-.02em;color:var(--text);margin:0 0 4px}.overview-sub{font-size:13px;color:var(--muted);line-height:1.45}.overview-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.mini-list{display:grid;gap:8px}.mini-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:12px;background:rgba(255,255,255,.02)}.mini-row strong{display:block;font-size:14px;color:var(--text)}.mini-row span{font-size:12px;color:var(--muted);line-height:1.35}.overview-note{padding:12px 14px;border:1px dashed var(--line-strong);border-radius:14px;color:var(--muted);font-size:13px;line-height:1.5;background:rgba(255,255,255,.02)}
+    .bot-panel{margin:16px 0 18px;border:1px solid var(--line);background:linear-gradient(180deg, rgba(18,27,40,.98), rgba(12,19,30,.98));border-radius:22px;padding:16px;box-shadow:var(--shadow);display:grid;gap:12px}
+    .bot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+    .bot-title{margin:0;font-size:18px;font-weight:900;letter-spacing:-.02em;color:var(--text)}
+    .bot-sub{margin-top:4px;color:var(--muted);font-size:13px;line-height:1.45}
+    .bot-shell{border:1px solid rgba(255,255,255,.06);border-radius:18px;background:rgba(255,255,255,.02);overflow:hidden}
+    .bot-chat{display:grid;gap:10px;max-height:320px;overflow:auto;padding:14px}
+    .bot-chat::-webkit-scrollbar{width:8px}.bot-chat::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:999px}
+    .bot-msg{max-width:92%;padding:12px 14px;border-radius:16px;border:1px solid var(--line);font-size:14px;line-height:1.55;word-break:break-word;white-space:pre-wrap}
+    .bot-msg.bot{justify-self:start;background:rgba(255,255,255,.025);color:var(--text)}
+    .bot-msg.user{justify-self:end;background:rgba(212,176,106,.12);border-color:rgba(212,176,106,.24);color:#f5dfb5}
+    .bot-msg.muted{color:var(--muted)}
+    .bot-composer{padding:12px 14px 14px;border-top:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg, rgba(10,16,24,.98), rgba(12,19,30,.98));position:sticky;bottom:0}
+    .bot-row{display:flex;gap:8px;align-items:center}
+    .bot-row input{flex:1;min-height:46px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 14px;outline:none}
+    .bot-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .bot-chips.hidden{display:none}
+    .bot-chip{min-height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;font-size:12px}
+    .bot-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .bot-action{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(212,176,106,.22);background:rgba(212,176,106,.10);color:#f5dfb5;cursor:pointer}
+    .bot-status{margin-top:10px;color:var(--muted);font-size:13px;display:none}
+    .bot-status.visible{display:block}
+
+    .audit-note{margin-top:8px;color:var(--muted);font-size:12px;line-height:1.45}
     .item-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
     .empty{
       padding:18px 14px;border-radius:16px;border:1px dashed var(--line-strong);
@@ -996,6 +1151,30 @@ HTML = r"""
         <p>Fijn dat je er bent. Hieronder vind je meteen het dashboard voor vandaag.</p>
       </div>
 
+
+      <div class="bot-panel">
+        <div class="bot-head">
+          <div>
+            <h3 class="bot-title">🤖 Casa Bot</h3>
+            <div class="bot-sub">Vraag iets over bijvullen, recepten, takenlijsten, diensten of de fooienpot.</div>
+          </div>
+          <span class="badge accent">Nieuw</span>
+        </div>
+        <div class="bot-shell">
+          <div class="bot-chat" id="botChat">
+            <div class="bot-msg bot muted">Ik help je graag op weg. Stel hieronder een vraag over Casa Cara.</div>
+          </div>
+          <div class="bot-composer">
+            <div class="bot-row">
+              <input id="botInput" placeholder="Wat wil je vragen?" onkeydown="if(event.key==='Enter'){event.preventDefault(); askBot();}">
+              <button class="btn accent" onclick="askBot()">Vraag</button>
+            </div>
+            <div class="bot-actions" id="botActions"></div>
+            <div class="bot-status" id="botStatus"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="hero">
         <h1>📊 Dashboard</h1>
         <p>Een rustige startpagina met de belangrijkste info van vandaag. Tik op een blok om direct door te gaan naar de juiste pagina.</p>
@@ -1032,28 +1211,7 @@ HTML = r"""
           <h2 class="section-title">Snelle ingangen</h2>
           <div class="section-kicker">Direct door naar de juiste plek</div>
         </div>
-        <div class="stats-grid">
-          <button class="stat-card" onclick="openPage('bar-koelingen')">
-            <div class="stat-label">Bar</div>
-            <div class="stat-value" style="font-size:22px">Koelingen</div>
-            <div class="stat-sub">Overzicht per koeling en status</div>
-          </button>
-          <button class="stat-card" onclick="openPage('bar-productsoorten')">
-            <div class="stat-label">Bar</div>
-            <div class="stat-value" style="font-size:22px">Productsoorten</div>
-            <div class="stat-sub">Geordend per soort en locatie</div>
-          </button>
-          <button class="stat-card" onclick="openPage('bar-locaties')">
-            <div class="stat-label">Bar</div>
-            <div class="stat-value" style="font-size:22px">Locaties</div>
-            <div class="stat-sub">Opslagplekken en indeling</div>
-          </button>
-          <button class="stat-card" onclick="openPage('bar-bijvullen')">
-            <div class="stat-label">Bar</div>
-            <div class="stat-value" style="font-size:22px">Bijvullen</div>
-            <div class="stat-sub">Wat direct aandacht nodig heeft</div>
-          </button>
-        </div>
+        <div class="stats-grid" id="dashboardQuickGrid"></div>
       </div>
     </section>
 
@@ -1063,31 +1221,13 @@ HTML = r"""
         <p>Alles wat niet specifiek bij keuken of bar hoort, op één rustige plek.</p>
       </div>
       <div class="stack">
+        <div class="overview-grid" id="generalOverviewGrid"></div>
         <div class="panel">
           <div class="panel-head">
-            <div style="display:flex;align-items:center;gap:10px">
-              <div class="stat-icon">€</div>
-              <h3 class="panel-title" id="tipsPanelTitle">Fooienpot</h3>
-            </div>
-            <div class="actions">
-              <span class="badge accent" id="tipsBadge">€ 0,00</span>
-              <button class="btn accent" onclick="openTipsModal()">Aanpassen</button>
-            </div>
+            <h3 class="panel-title">Vandaag in beeld</h3>
+            <span class="badge" id="generalTodayBadge">Rustig</span>
           </div>
-          <div class="item-sub" id="tipsPanelSub">Huidige stand van de fooienpot op basis van je bestaande data.</div>
-        </div>
-        <div class="panel">
-          <div class="panel-head">
-            <div style="display:flex;align-items:center;gap:10px">
-              <div class="stat-icon">👥</div>
-              <h3 class="panel-title">Diensten</h3>
-            </div>
-            <div class="actions">
-              <span class="badge" id="dienstenBadge">0 gepland</span>
-              <button class="btn accent" onclick="openDienstModal()">Dienst toevoegen</button>
-            </div>
-          </div>
-          <div class="item-sub">Gebruik dit als rustige verzamelplek voor de dag- en weekindeling.</div>
+          <div class="mini-list" id="generalTodayList"></div>
         </div>
       </div>
     </section>
@@ -1100,7 +1240,7 @@ HTML = r"""
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Geplande diensten</h3>
-          <button class="btn accent" onclick="openDienstModal()">Nieuwe dienst</button>
+          <button class="btn accent" id="newDienstBtn" onclick="openDienstModal()">Nieuwe dienst</button>
         </div>
         <div class="list" id="dienstenList"></div>
       </div>
@@ -1150,25 +1290,15 @@ HTML = r"""
         <h1>🍳 Keuken</h1>
         <p>De keuken krijgt dezelfde rustige structuur als Bar. Je takenlijsten en recepten krijgen een eigen vaste plek, zodat alles overzichtelijk blijft.</p>
       </div>
-      <div class="stats-grid">
-        <button class="stat-card" onclick="openPage('keuken-takenlijsten')">
-          <div class="stat-icon">☑</div>
-          <div class="stat-label">Keuken</div>
-          <div class="stat-value" id="kitchenListCount">0</div>
-          <div class="stat-sub">Takenlijsten</div>
-        </button>
-        <button class="stat-card" onclick="openPage('keuken-takenlijsten')">
-          <div class="stat-icon">✓</div>
-          <div class="stat-label">Vandaag</div>
-          <div class="stat-value" id="kitchenTaskCount">0</div>
-          <div class="stat-sub">Taken in totaal</div>
-        </button>
-        <button class="stat-card" onclick="openPage('keuken-recepten')">
-          <div class="stat-icon">🍝</div>
-          <div class="stat-label">Keuken</div>
-          <div class="stat-value" id="recipeCount">0</div>
-          <div class="stat-sub">Recepten</div>
-        </button>
+      <div class="stack">
+        <div class="overview-grid" id="kitchenOverviewGrid"></div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">Laatste activiteit</h3>
+            <span class="badge accent" id="kitchenActivityBadge">0 items</span>
+          </div>
+          <div class="mini-list" id="kitchenActivityList"></div>
+        </div>
       </div>
     </section>
 
@@ -1240,27 +1370,15 @@ HTML = r"""
         <h1>🍸 Bar overzicht</h1>
         <p>De bar-sectie is nu opgesplitst in losse pagina’s met beheeracties op de juiste plek.</p>
       </div>
-      <div class="stats-grid">
-        <button class="stat-card" onclick="openPage('bar-koelingen')">
-          <div class="stat-icon">❄</div><div class="stat-label">Bar</div>
-          <div class="stat-value" id="barOverviewCoolers">0</div>
-          <div class="stat-sub">Koelingen</div>
-        </button>
-        <button class="stat-card" onclick="openPage('bar-productsoorten')">
-          <div class="stat-icon">◫</div><div class="stat-label">Bar</div>
-          <div class="stat-value" id="barOverviewTypes">0</div>
-          <div class="stat-sub">Productsoorten</div>
-        </button>
-        <button class="stat-card" onclick="openPage('bar-locaties')">
-          <div class="stat-icon">⌖</div><div class="stat-label">Bar</div>
-          <div class="stat-value" id="barOverviewLocations">0</div>
-          <div class="stat-sub">Locaties</div>
-        </button>
-        <button class="stat-card" onclick="openPage('bar-bijvullen')">
-          <div class="stat-icon">!</div><div class="stat-label">Bar</div>
-          <div class="stat-value" id="barOverviewFill">0</div>
-          <div class="stat-sub">Bijvullen nodig</div>
-        </button>
+      <div class="stack">
+        <div class="overview-grid" id="barOverviewGrid"></div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">Actuele focus</h3>
+            <span class="badge warn" id="barFocusBadge">0 acties</span>
+          </div>
+          <div class="mini-list" id="barFocusList"></div>
+        </div>
       </div>
     </section>
 
@@ -1384,6 +1502,12 @@ HTML = r"""
     const num = Number(value || 0);
     return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(num);
   }
+
+  function setChecked(id, value){
+    const el = document.getElementById(id);
+    if (el) el.checked = !!value;
+  }
+
   function setText(id, value){
     const el = document.getElementById(id);
     if (el) el.textContent = value;
@@ -1393,7 +1517,32 @@ HTML = r"""
   function currentRole(){ return appData?.auth?.role || ''; }
   function isAdmin(){ return currentRole() === 'admin'; }
   function adminOnly(html){ return isAdmin() ? html : ''; }
+  function hasPermission(key){ return isAdmin() ? true : !!(appData?.auth?.permissions || {})[key]; }
   function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','keuken-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
+  function pageAllowed(page){
+    if (isAdmin()) return true;
+    const map = {
+      'dashboard': true,
+      'algemeen-dashboard': hasPermission('access_general'),
+      'diensten': hasPermission('access_general') && hasPermission('manage_diensten'),
+      'dienstsoorten': hasPermission('manage_dienst_types'),
+      'fooienpot': hasPermission('access_general') && hasPermission('manage_tips'),
+      'gebruikers': hasPermission('manage_users'),
+      'keuken-overzicht': hasPermission('access_kitchen'),
+      'keuken-takenlijsten': hasPermission('access_kitchen') && hasPermission('use_tasklists'),
+      'keuken-takenlijst-detail': hasPermission('access_kitchen') && hasPermission('use_tasklists'),
+      'keuken-takenlijst-beheer': hasPermission('access_kitchen') && hasPermission('manage_tasklists'),
+      'keuken-recepten': hasPermission('access_kitchen') && hasPermission('view_recipes'),
+      'bar-overzicht': hasPermission('access_bar'),
+      'bar-koelingen': hasPermission('access_bar') && (hasPermission('adjust_stock') || hasPermission('manage_products') || hasPermission('manage_coolers')),
+      'bar-productsoorten': hasPermission('manage_types'),
+      'bar-locaties': hasPermission('manage_locations'),
+      'bar-oplijst': hasPermission('access_bar') && hasPermission('view_oplijst'),
+      'bar-bijvullen': hasPermission('access_bar') && hasPermission('view_bijvullen'),
+      'bar-koeling-detail': hasPermission('access_bar') && (hasPermission('adjust_stock') || hasPermission('manage_products') || hasPermission('manage_coolers')),
+    };
+    return !!map[page];
+  }
 
   function toast(message, kind='success'){
     const wrap = document.getElementById('toastWrap');
@@ -1433,7 +1582,29 @@ HTML = r"""
 
   function applyPermissions(){
     document.querySelectorAll('.admin-only, .admin-only-page, .admin-only-action').forEach(el => { el.style.display = isAdmin() ? '' : 'none'; });
-    if (!isAdmin() && employeeForbiddenPages().includes(currentPage)) currentPage = 'dashboard';
+    document.querySelectorAll('.nav-btn[data-page], .sub-btn[data-page]').forEach(btn => {
+      btn.style.display = pageAllowed(btn.dataset.page) ? '' : 'none';
+    });
+    const sectionVisibility = {
+      algemeen: isAdmin() || hasPermission('access_general'),
+      keuken: isAdmin() || hasPermission('access_kitchen'),
+      bar: isAdmin() || hasPermission('access_bar'),
+    };
+    Object.entries(sectionVisibility).forEach(([key, visible]) => {
+      const toggle = document.getElementById('toggle-' + key);
+      const group = document.getElementById('group-' + key);
+      if (toggle) toggle.style.display = visible ? '' : 'none';
+      if (group) group.style.display = visible ? (group.classList.contains('open') ? 'grid' : '') : 'none';
+      if (!visible && group) group.classList.remove('open');
+      if (!visible && toggle) toggle.classList.remove('expanded');
+    });
+    document.querySelectorAll('.page').forEach(el => {
+      const pageName = (el.id || '').replace('page-', '');
+      el.style.display = pageAllowed(pageName) ? '' : 'none';
+    });
+    const employeeBtn = document.querySelector('.home-btn');
+    if (employeeBtn) employeeBtn.style.display = hasPermission('manage_users') ? '' : 'none';
+    if (!pageAllowed(currentPage)) currentPage = 'dashboard';
   }
 
   function pageMeta(page){
@@ -1684,6 +1855,96 @@ HTML = r"""
     );
   }
 
+
+
+  const botState = {
+    lastAction: null,
+    awaitingChoice: false,
+    askedOnce: false,
+  };
+
+  function appendBotMessage(text, role='bot', muted=false){
+    const chat = document.getElementById('botChat');
+    if (!chat) return;
+    const el = document.createElement('div');
+    el.className = `bot-msg ${role}${muted ? ' muted' : ''}`;
+    el.textContent = text;
+    chat.appendChild(el);
+    requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+  }
+
+  function hideBotChips(){
+    const chips = document.getElementById('botChips');
+    if (chips) chips.classList.add('hidden');
+  }
+
+  function setBotStatus(text=''){
+    const status = document.getElementById('botStatus');
+    if (!status) return;
+    status.textContent = text || '';
+    status.classList.toggle('visible', !!text);
+  }
+
+  function renderBotActions(actions=[]){
+    const wrap = document.getElementById('botActions');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    actions.forEach(action => {
+      const btn = document.createElement('button');
+      btn.className = 'bot-action';
+      btn.textContent = action.label || action.value || 'Ga verder';
+      btn.onclick = () => {
+        if (action.type === 'send_text') {
+          askBot(action.value || action.label || 'Ja');
+          return;
+        }
+        if (action.type === 'open_page') {
+          if (action.page) openPage(action.page);
+          appendBotMessage(action.after_text || 'Ik heb die pagina voor je geopend.', 'bot');
+          wrap.innerHTML = '';
+        }
+      };
+      wrap.appendChild(btn);
+    });
+  }
+
+  async function askBot(prefill){
+    const input = document.getElementById('botInput');
+    const question = (typeof prefill === 'string' && prefill) ? prefill : (input?.value || '').trim();
+    if (!question){
+      setBotStatus('Typ eerst iets, bijvoorbeeld: hoi, wat moet ik bijvullen of welke takenlijsten zijn er?');
+      input?.focus();
+      return;
+    }
+    if (input) input.value = '';
+    botState.askedOnce = true;
+    hideBotChips();
+    setBotStatus('Casa Bot kijkt even mee…');
+    appendBotMessage(question, 'user');
+    renderBotActions([]);
+    try{
+      const res = await fetch('/api/bot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, last_action: botState.lastAction })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || 'Er ging iets mis met Casa Bot.');
+      appendBotMessage(data.answer || 'Ik heb nu even geen antwoord gevonden.', 'bot');
+      botState.lastAction = data.pending_action || null;
+      botState.awaitingChoice = !!data.pending_action;
+      renderBotActions(Array.isArray(data.actions) ? data.actions : []);
+      setBotStatus(data.hint || '');
+      if (data.open_page){
+        openPage(data.open_page);
+      }
+    }catch(err){
+      appendBotMessage(err?.message || 'Er ging iets mis met Casa Bot.', 'bot');
+      setBotStatus('');
+    }
+  }
+
+
   function renderDashboard(){
     const koelingen = safeArray(appData.bar.koelingen);
     const fill = safeArray(appData.bar.fill_items);
@@ -1694,7 +1955,7 @@ HTML = r"""
     const tipLabel = appData.general.fooienpot_label || 'Fooienpot';
     const currentUserName = appData?.auth?.user_name || '';
 
-    setText('dashboardWelcome', currentUserName ? `Welkom! ${currentUserName}` : 'Welkom!');
+    setText('dashboardWelcome', currentUserName ? `Welkom ${currentUserName}!` : 'Welkom!');
     setText('statLowStock', String(fill.length));
     setText('statCoolers', String(koelingen.length));
     setText('statTips', euro(tips));
@@ -1713,6 +1974,26 @@ HTML = r"""
     setText('barOverviewTypes', String(types.length));
     setText('barOverviewLocations', String(locations.length));
     setText('barOverviewFill', String(fill.length));
+
+    const quickCards = [];
+    if (pageAllowed('bar-koelingen')) quickCards.push({label:'Bar', title:'Koelingen', sub:'Overzicht per koeling en status', page:'bar-koelingen'});
+    if (pageAllowed('bar-productsoorten')) quickCards.push({label:'Bar', title:'Productsoorten', sub:'Geordend per soort en locatie', page:'bar-productsoorten'});
+    if (pageAllowed('bar-locaties')) quickCards.push({label:'Bar', title:'Locaties', sub:'Opslagplekken en indeling', page:'bar-locaties'});
+    if (pageAllowed('bar-bijvullen')) quickCards.push({label:'Bar', title:'Bijvullen', sub:'Wat direct aandacht nodig heeft', page:'bar-bijvullen'});
+    if (pageAllowed('diensten')) quickCards.push({label:'Algemeen', title:'Diensten', sub:'Bekijk en plan je diensten', page:'diensten'});
+    if (pageAllowed('fooienpot')) quickCards.push({label:'Algemeen', title:'Fooienpot', sub:'Huidige stand en snelle aanpassing', page:'fooienpot'});
+    if (pageAllowed('keuken-takenlijsten')) quickCards.push({label:'Keuken', title:'Takenlijsten', sub:'Open lijsten en vink taken af', page:'keuken-takenlijsten'});
+    if (pageAllowed('keuken-recepten')) quickCards.push({label:'Keuken', title:'Recepten', sub:'Open receptkaarten en ingrediënten', page:'keuken-recepten'});
+    const quickGrid = document.getElementById('dashboardQuickGrid');
+    if (quickGrid){
+      quickGrid.innerHTML = quickCards.map(card => `
+        <button class="stat-card" onclick="openPage('${card.page}')">
+          <div class="stat-label">${card.label}</div>
+          <div class="stat-value" style="font-size:22px">${card.title}</div>
+          <div class="stat-sub">${card.sub}</div>
+        </button>
+      `).join('') || '<div class="empty">Er zijn nog geen snelle ingangen voor jouw rechten ingesteld.</div>';
+    }
   }
 
   function renderCoolers(){
@@ -1743,7 +2024,7 @@ HTML = r"""
               <span class="badge ${low > 0 ? 'warn' : 'good'}">${low > 0 ? `${low} alert${low === 1 ? '' : 's'}` : 'In orde'}</span>
             </div>            <div class="item-actions">
               <button class="btn accent" onclick="openKoelingDetail('${koeling.id}')">Open koeling</button>
-              ${adminOnly(`<button class=\"btn accent\" onclick=\"openKoelingModal('${koeling.id}')\">Bewerken</button><button class=\"btn\" onclick=\"openProductModal('${koeling.id}')\">Product toevoegen</button><button class=\"btn danger\" onclick=\"confirmAction('Koeling verwijderen','Weet je zeker dat je deze koeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKoeling','${koeling.id}')&quot;)\">Verwijderen</button>`)}
+              ${hasPermission('manage_coolers') || hasPermission('manage_products') ? `${hasPermission('manage_coolers') ? `<button class=\"btn accent\" onclick=\"openKoelingModal('${koeling.id}')\">Bewerken</button>` : ''}${hasPermission('manage_products') ? `<button class=\"btn\" onclick=\"openProductModal('${koeling.id}')\">Product toevoegen</button>` : ''}${hasPermission('manage_coolers') ? `<button class=\"btn danger\" onclick=\"confirmAction('Koeling verwijderen','Weet je zeker dat je deze koeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKoeling','${koeling.id}')&quot;)\">Verwijderen</button>` : ''}` : ''}
             </div>
           </div>
         `;
@@ -1766,10 +2047,7 @@ HTML = r"""
             </div>
             <span class="badge accent">Soort</span>
           </div>
-          <div class="item-actions">
-            <button class="btn accent" onclick="openTypeModal('${encodeURIComponent(type.naam)}')">Bewerken</button>
-            <button class="btn danger" onclick="confirmAction('Productsoort verwijderen','Weet je zeker dat je deze productsoort wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteType','${encodeURIComponent(type.naam)}')&quot;)">Verwijderen</button>
-          </div>
+          ${hasPermission('manage_types') ? `<div class="item-actions"><button class="btn accent" onclick="openTypeModal('${encodeURIComponent(type.naam)}')">Bewerken</button><button class="btn danger" onclick="confirmAction('Productsoort verwijderen','Weet je zeker dat je deze productsoort wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteType','${encodeURIComponent(type.naam)}')&quot;)">Verwijderen</button></div>` : ''}
         </div>
       `,
       'Nog geen productsoorten gevonden.'
@@ -1791,10 +2069,7 @@ HTML = r"""
             <span class="badge">Locatie</span>
           </div>
           ${location === '-' ? '' : `
-            <div class="item-actions">
-              <button class="btn accent" onclick="openLocationModal('${encodeURIComponent(location)}')">Bewerken</button>
-              <button class="btn danger" onclick="confirmAction('Locatie verwijderen','Weet je zeker dat je deze locatie wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteLocation','${encodeURIComponent(location)}')&quot;)">Verwijderen</button>
-            </div>
+            ${hasPermission('manage_locations') ? `<div class="item-actions"><button class="btn accent" onclick="openLocationModal('${encodeURIComponent(location)}')">Bewerken</button><button class="btn danger" onclick="confirmAction('Locatie verwijderen','Weet je zeker dat je deze locatie wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteLocation','${encodeURIComponent(location)}')&quot;)">Verwijderen</button></div>` : ''}
           `}
         </div>
       `,
@@ -1839,7 +2114,7 @@ HTML = r"""
           </div>
           <div class="item-actions">
             <button class="btn good" onclick="markProductAvailable('${item.koeling_id}','${item.id}')">Weer op voorraad</button>
-            ${adminOnly(`<button class=\"btn accent\" onclick=\"openProductModal('${item.koeling_id}','${item.id}')\">Bewerken</button>`)}
+            ${hasPermission('manage_products') ? `<button class=\"btn accent\" onclick=\"openProductModal('${item.koeling_id}','${item.id}')\">Bewerken</button>` : ''}
           </div>
         </div>
       `,
@@ -1880,7 +2155,7 @@ HTML = r"""
           </div>
           <div class="item-actions">
             <button class="btn good" onclick="quickFill('${item.koeling_id}','${item.product_id}', ${item.minimum})">Zet op minimum</button>
-            ${adminOnly(`<button class="btn accent" onclick="openProductModal('${item.koeling_id}','${item.product_id}')">Bewerken</button>`)}
+            ${hasPermission('manage_products') ? `<button class="btn accent" onclick="openProductModal('${item.koeling_id}','${item.product_id}')">Bewerken</button>` : ''}
             <button class="btn danger" onclick="confirmAction('Product markeren als OP','Weet je zeker dat dit product op is?','Markeer als OP', &quot;doConfirmed('markProductOp','${item.koeling_id}','${item.product_id}')&quot;)">Markeer als OP</button>
           </div>
         </div>
@@ -1913,7 +2188,150 @@ HTML = r"""
     renderFill();
   }
 
+  function renderOverviewCards(targetId, cards, emptyText){
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    if (!cards.length){
+      el.innerHTML = `<div class="overview-note">${emptyText}</div>`;
+      return;
+    }
+    el.innerHTML = cards.map(card => `
+      <div class="overview-card">
+        <div class="overview-top">
+          <div>
+            <div class="overview-kicker">${card.kicker || 'Overzicht'}</div>
+            <div class="overview-title">${card.title || '-'}</div>
+            <div class="overview-sub">${card.sub || ''}</div>
+          </div>
+          ${card.badge ? `<span class="badge ${card.badgeClass || ''}">${card.badge}</span>` : ''}
+        </div>
+        ${card.meta && card.meta.length ? `<div class="meta-row">${card.meta.map(item => `<span class="meta-chip">${item}</span>`).join('')}</div>` : ''}
+        <div class="overview-actions">
+          ${(card.actions || []).map(action => `<button class="btn ${action.kind || ''}" onclick="${action.onclick}">${action.label}</button>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
 
+  function renderMiniRows(targetId, rows, emptyText){
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    if (!rows.length){
+      el.innerHTML = `<div class="overview-note">${emptyText}</div>`;
+      return;
+    }
+    el.innerHTML = rows.map(row => `
+      <div class="mini-row">
+        <div>
+          <strong>${row.title || '-'}</strong>
+          <span>${row.sub || ''}</span>
+        </div>
+        ${row.badge ? `<span class="badge ${row.badgeClass || ''}">${row.badge}</span>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function renderGeneralOverview(){
+    const diensten = safeArray(appData.general?.diensten);
+    const cards = [];
+    if (pageAllowed('fooienpot')){
+      cards.push({
+        kicker:'Algemeen',
+        title: appData.general?.fooienpot_label || 'Fooienpot',
+        sub: isAdmin() ? 'Bekijk en pas de algemene stand direct aan.' : 'Jouw persoonlijke fooienpot binnen Casa Cara.',
+        badge: euro(appData.general?.fooienpot || 0),
+        badgeClass:'accent',
+        meta:[isAdmin() ? 'Teambreed overzicht' : 'Alleen zichtbaar voor jou'],
+        actions:[{ label:'Open fooienpot', kind:'accent', onclick:`openPage('fooienpot')` }, { label:'Aanpassen', onclick:'openTipsModal()' }]
+      });
+    }
+    if (pageAllowed('diensten')){
+      const upcoming = diensten.slice().sort((a,b)=> String(a.datum||'').localeCompare(String(b.datum||'')) || String(a.tijd||'').localeCompare(String(b.tijd||''))).slice(0,3);
+      cards.push({
+        kicker:'Algemeen',
+        title:'Diensten',
+        sub: upcoming.length ? 'Je eerstvolgende diensten staan direct klaar.' : 'Plan hier diensten voor de komende dagen.',
+        badge:`${diensten.length} gepland`,
+        meta: upcoming.map(item => `${item.datum || 'Geen datum'}${item.tijd ? ' · ' + item.tijd : ''}`),
+        actions:[{ label:'Open diensten', kind:'accent', onclick:`openPage('diensten')` }, { label:'Dienst toevoegen', onclick:'openDienstModal()' }]
+      });
+    }
+    renderOverviewCards('generalOverviewGrid', cards, 'Je hebt binnen Algemeen nu alleen toegang tot onderdelen die voor jouw werkdag relevant zijn.');
+
+    const rows = [];
+    const sorted = diensten.slice().sort((a,b)=> String(a.datum||'').localeCompare(String(b.datum||'')) || String(a.tijd||'').localeCompare(String(b.tijd||'')));
+    sorted.slice(0,4).forEach(item => rows.push({ title:item.naam || item.medewerker || 'Dienst', sub:`${item.datum || 'Geen datum'}${item.tijd ? ' · ' + item.tijd : ''}`, badge:item.rol || 'Dienst' }));
+    if (pageAllowed('fooienpot')) rows.unshift({ title: appData.general?.fooienpot_label || 'Fooienpot', sub: isAdmin() ? 'Algemene stand voor het team.' : 'Jouw persoonlijke stand van vandaag.', badge: euro(appData.general?.fooienpot || 0), badgeClass:'accent' });
+    setText('generalTodayBadge', rows.length ? `${rows.length} items` : 'Rustig');
+    renderMiniRows('generalTodayList', rows.slice(0,4), 'Hier kun je snel diensten en je fooienpot volgen zonder naar losse pagina’s te hoeven springen.');
+  }
+
+  function renderKitchenOverview(){
+    const lists = safeArray(appData.kitchen?.lists);
+    const recipes = safeArray(appData.recipes?.items);
+    const tasks = lists.flatMap(list => safeArray(list.tasks));
+    const doneToday = tasks.filter(task => kitchenTaskIsChecked(task)).length;
+    const cards = [];
+    if (pageAllowed('keuken-takenlijsten')){
+      cards.push({
+        kicker:'Keuken',
+        title:'Takenlijsten',
+        sub:'Open snel je checklist en zie meteen wat vandaag al gedaan is.',
+        badge:`${lists.length} lijsten`,
+        badgeClass:'accent',
+        meta:[`${doneToday} taken vandaag afgevinkt`, `${tasks.length} taken totaal`],
+        actions:[{ label:'Open takenlijsten', kind:'accent', onclick:`openPage('keuken-takenlijsten')` }]
+      });
+    }
+    if (pageAllowed('keuken-recepten')){
+      cards.push({
+        kicker:'Keuken',
+        title:'Recepten',
+        sub:'Snel naar receptkaarten, ingrediënten en bereidingsstappen.',
+        badge:`${recipes.length} recepten`,
+        meta:[recipes[0]?.name ? `Laatste: ${recipes[0].name}` : 'Receptenbank beschikbaar'],
+        actions:[{ label:'Open recepten', kind:'accent', onclick:`openPage('keuken-recepten')` }]
+      });
+    }
+    renderOverviewCards('kitchenOverviewGrid', cards, 'Je hebt nu alleen toegang tot de keukendelen die voor jouw rol relevant zijn.');
+
+    const activity = [];
+    lists.forEach(list => {
+      safeArray(list.tasks).forEach(task => {
+        if (task.last_checked_by && task.last_checked_at){
+          activity.push({ title: task.title || 'Taak', sub: `${list.name || 'Takenlijst'} · ${formatAuditLine(task)}`, badge:'Taak' });
+        }
+        safeArray(task.subtasks).forEach(sub => {
+          if (sub.last_checked_by && sub.last_checked_at){
+            activity.push({ title: sub.title || 'Subtaak', sub: `${list.name || 'Takenlijst'} · ${formatAuditLine(sub)}`, badge:'Subtaak', badgeClass:'accent' });
+          }
+        });
+      });
+    });
+    activity.sort((a,b)=> (b.sub||'').localeCompare(a.sub||''));
+    setText('kitchenActivityBadge', activity.length ? `${activity.length} items` : '0 items');
+    renderMiniRows('kitchenActivityList', activity.slice(0,4), 'Zodra er taken worden afgevinkt, zie je hier direct door wie en wanneer.');
+  }
+
+  function renderBarOverview(){
+    const koelingen = safeArray(appData.bar?.koelingen);
+    const fill = safeArray(appData.bar?.fill_items);
+    const lowCount = koelingen.reduce((total, koeling) => total + safeArray(koeling.producten).filter(product => !product.op && Number(product.voorraad || 0) < Number(product.minimum || 0)).length, 0);
+    const opCount = koelingen.reduce((total, koeling) => total + safeArray(koeling.producten).filter(product => !!product.op).length, 0);
+    const cards = [];
+    if (pageAllowed('bar-koelingen')) cards.push({ kicker:'Bar', title:'Koelingen', sub:'Bekijk koelingen en pas voorraad direct aan.', badge:`${koelingen.length} koelingen`, badgeClass:'accent', meta:[`${lowCount} lage voorraad`, `${opCount} producten op`], actions:[{ label:'Open koelingen', kind:'accent', onclick:`openPage('bar-koelingen')` }] });
+    if (pageAllowed('bar-bijvullen')) cards.push({ kicker:'Bar', title:'Bijvuloverzicht', sub:'Zie meteen wat vandaag aandacht nodig heeft.', badge:`${fill.length} acties`, badgeClass: fill.length ? 'warn' : 'good', meta: fill.slice(0,2).map(item => `${item.product} · ${item.bijvullen} bijvullen`), actions:[{ label:'Open bijvullen', kind:'accent', onclick:`openPage('bar-bijvullen')` }] });
+    if (pageAllowed('bar-oplijst')) cards.push({ kicker:'Bar', title:'Op-lijst', sub:'Alles wat op is of weer terug op voorraad moet.', badge:`${opCount} op`, badgeClass: opCount ? 'warn' : 'good', actions:[{ label:'Open op-lijst', kind:'accent', onclick:`openPage('bar-oplijst')` }] });
+    if (pageAllowed('bar-productsoorten')) cards.push({ kicker:'Bar', title:'Productsoorten', sub:'Beheer soorten en indeling per locatie.', badge:`${safeArray(appData.types).length} soorten`, actions:[{ label:'Open soorten', kind:'accent', onclick:`openPage('bar-productsoorten')` }] });
+    if (pageAllowed('bar-locaties')) cards.push({ kicker:'Bar', title:'Locaties', sub:'Overzicht van opslagplekken en logische looproutes.', badge:`${safeArray(appData.locations).filter(Boolean).length} locaties`, actions:[{ label:'Open locaties', kind:'accent', onclick:`openPage('bar-locaties')` }] });
+    renderOverviewCards('barOverviewGrid', cards, 'Je ziet hier alleen de bar-onderdelen waar jij echt iets mee kunt.');
+
+    const rows = [];
+    fill.slice(0,4).forEach(item => rows.push({ title:item.product, sub:`${item.koeling} · ${item.locatie || '-'} · nu ${item.voorraad}`, badge:`+${item.bijvullen}`, badgeClass:'warn' }));
+    if (!rows.length && pageAllowed('bar-koelingen')) rows.push({ title:'Koelingen in beeld', sub:`${koelingen.length} koelingen beschikbaar voor jouw rol.`, badge: lowCount ? `${lowCount} alerts` : 'In orde', badgeClass: lowCount ? 'warn' : 'good' });
+    setText('barFocusBadge', rows.length ? `${rows.length} acties` : '0 acties');
+    renderMiniRows('barFocusList', rows, 'Geen directe focuspunten. De bar is op dit moment netjes op orde.');
+  }
 
 
   function getTodayString(){
@@ -1937,10 +2355,25 @@ HTML = r"""
     renderKitchenListDetail();
   }
 
+  function formatAuditLine(item){
+    if (!item || !item.last_checked_by || !item.last_checked_at) return '';
+    let when = item.last_checked_at;
+    try{
+      when = new Date(item.last_checked_at).toLocaleString('nl-NL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    }catch(err){}
+    return `Afgevinkt door ${item.last_checked_by} om ${when}`;
+  }
+
+  function getTaskStatusMeta(task){
+    const audit = formatAuditLine(task);
+    return audit || `${safeArray(task.subtasks).length} subtaken`;
+  }
+
   function renderKitchen(){
     const kitchen = appData.kitchen || { lists: [] };
     const lists = safeArray(kitchen.lists);
     const taskCount = lists.reduce((total, lst) => total + safeArray(lst.tasks).length, 0);
+    const canManageTasklists = hasPermission('manage_tasklists');
 
     setText('kitchenListCount', String(lists.length));
     setText('kitchenTaskCount', String(taskCount));
@@ -1972,7 +2405,7 @@ HTML = r"""
             </div>
             <div class="klist-actions">
               <button class="btn" onclick="openKitchenListDetail('${list.id}')">Open lijst</button>
-              <button class="btn danger" onclick="confirmAction('Takenlijst verwijderen','Weet je zeker dat je deze takenlijst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenList','${list.id}')&quot;)">Verwijderen</button>
+              ${canManageTasklists ? `<button class="btn danger" onclick="confirmAction('Takenlijst verwijderen','Weet je zeker dat je deze takenlijst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteKitchenList','${list.id}')&quot;)">Verwijderen</button>` : ''}
             </div>
           </div>
         `;
@@ -2014,7 +2447,7 @@ HTML = r"""
             <div class="kcheck ${kitchenTaskIsChecked(task) ? 'done' : ''}">${kitchenTaskIsChecked(task) ? '✓' : ''}</div>
             <div style="min-width:0;flex:1">
               <div class="ktask-title ${kitchenTaskIsChecked(task) ? 'done' : ''}">${task.name || 'Taak'}</div>
-              <div class="ktask-meta">${safeArray(task.subtasks).length} subtaken</div>
+              <div class="ktask-meta">${getTaskStatusMeta(task)}</div>
             </div>
             <span class="badge ${kitchenTaskIsChecked(task) ? 'good' : 'warn'}">${kitchenTaskIsChecked(task) ? 'Gedaan' : 'Open'}</span>
           </div>
@@ -2026,6 +2459,7 @@ HTML = r"""
                     <div class="kcheck ${kitchenSubtaskIsChecked(sub) ? 'done' : ''}" style="width:24px;height:24px;min-width:24px;font-size:12px">${kitchenSubtaskIsChecked(sub) ? '✓' : ''}</div>
                     <div style="min-width:0;flex:1">
                       <div class="ksub-title ${kitchenSubtaskIsChecked(sub) ? 'done' : ''}">${sub.name || 'Subtaak'}</div>
+                      ${formatAuditLine(sub) ? `<div class="audit-note">${formatAuditLine(sub)}</div>` : ''}
                     </div>
                     <span class="badge ${kitchenSubtaskIsChecked(sub) ? 'good' : ''}">${kitchenSubtaskIsChecked(sub) ? 'Gedaan' : 'Open'}</span>
                   </div>
@@ -2052,6 +2486,7 @@ HTML = r"""
 
 
   function openKitchenManagePage(listId){
+    if (!hasPermission('manage_tasklists')) return;
     currentKitchenListId = listId;
     window.currentKitchenListId = listId;
     const list = safeArray(appData.kitchen?.lists).find(item => item.id === listId) || {};
@@ -2376,24 +2811,177 @@ HTML = r"""
     );
   }
 
+
+  function derivePermissionPreset(user){
+    if ((user?.role || 'medewerker') === 'admin') return 'admin';
+    const p = user?.permissions || {};
+    const general = !!p.access_general || !!p.manage_diensten || !!p.manage_tips;
+    const bar = !!p.access_bar || !!p.adjust_stock || !!p.view_bijvullen || !!p.view_oplijst;
+    const kitchen = !!p.access_kitchen || !!p.view_recipes || !!p.use_tasklists;
+    if (bar && !general && !kitchen) return 'bar';
+    if (kitchen && !general && !bar) return 'keuken';
+    return 'medewerker';
+  }
+
+  function basePermissionsForPreset(preset){
+    const empty = {
+      access_general:false, access_bar:false, access_kitchen:false,
+      manage_diensten:false, manage_tips:false, view_bijvullen:false, view_oplijst:false,
+      adjust_stock:false, view_recipes:false, use_tasklists:false,
+      manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false,
+      manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_coolers:false
+    };
+    if (preset === 'medewerker'){
+      return { ...empty,
+        access_general:true, access_bar:true, access_kitchen:true,
+        manage_diensten:true, manage_tips:true,
+        view_bijvullen:true, view_oplijst:true, adjust_stock:true,
+        view_recipes:true, use_tasklists:true
+      };
+    }
+    if (preset === 'bar'){
+      return { ...empty,
+        access_general:true,
+        manage_diensten:true, manage_tips:true,
+        access_bar:true,
+        view_bijvullen:true, view_oplijst:true, adjust_stock:true
+      };
+    }
+    if (preset === 'keuken'){
+      return { ...empty,
+        access_general:true,
+        manage_diensten:true, manage_tips:true,
+        access_kitchen:true,
+        view_recipes:true, use_tasklists:true
+      };
+    }
+    return { ...empty };
+  }
+
+  function applyVisibilityOverrides(base, general, bar, kitchen){
+    const result = { ...base };
+    if (general){
+      result.access_general = true;
+      result.manage_diensten = true;
+      result.manage_tips = true;
+    } else {
+      result.access_general = false;
+      result.manage_diensten = false;
+      result.manage_tips = false;
+    }
+    if (bar){
+      result.access_bar = true;
+      result.view_bijvullen = true;
+      result.view_oplijst = true;
+      result.adjust_stock = true;
+    } else {
+      result.access_bar = false;
+      result.view_bijvullen = false;
+      result.view_oplijst = false;
+      result.adjust_stock = false;
+    }
+    if (kitchen){
+      result.access_kitchen = true;
+      result.view_recipes = true;
+      result.use_tasklists = true;
+    } else {
+      result.access_kitchen = false;
+      result.view_recipes = false;
+      result.use_tasklists = false;
+    }
+    return result;
+  }
+
+  function permissionCheckboxes(user){
+    const preset = derivePermissionPreset(user);
+    const p = user?.permissions || {};
+    const general = !!p.access_general || !!p.manage_diensten || !!p.manage_tips;
+    const bar = !!p.access_bar || !!p.adjust_stock || !!p.view_bijvullen || !!p.view_oplijst;
+    const kitchen = !!p.access_kitchen || !!p.view_recipes || !!p.use_tasklists;
+    return `
+      <div class="permission-panel">
+        <div class="permission-kicker">Snelle rechten</div>
+        <div class="field" style="margin-bottom:8px">
+          <label>Kies een basisprofiel</label>
+          <select id="permissionPreset" onchange="syncPermissionPresetInfo()">
+            <option value="medewerker" ${preset === 'medewerker' ? 'selected' : ''}>Medewerker · alles voor dagelijks gebruik</option>
+            <option value="bar" ${preset === 'bar' ? 'selected' : ''}>Bar medewerker · alleen bar</option>
+            <option value="keuken" ${preset === 'keuken' ? 'selected' : ''}>Keuken medewerker · alleen keuken</option>
+          </select>
+        </div>
+        <div class="permission-kicker" style="margin-top:4px">Zichtbaarheid</div>
+        <div class="permission-row"><span class="permission-inline-label">Algemeen</span><input type="checkbox" id="perm_access_general" ${general ? 'checked' : ''}></div>
+        <div class="permission-row"><span class="permission-inline-label">Bar</span><input type="checkbox" id="perm_access_bar" ${bar ? 'checked' : ''}></div>
+        <div class="permission-row"><span class="permission-inline-label">Keuken</span><input type="checkbox" id="perm_access_kitchen" ${kitchen ? 'checked' : ''}></div>
+      </div>
+    `;
+  }
+
+  function syncPermissionPresetInfo(){
+    const preset = document.getElementById('permissionPreset')?.value || 'medewerker';
+    if (preset === 'medewerker'){
+      setChecked('perm_access_general', true);
+      setChecked('perm_access_bar', true);
+      setChecked('perm_access_kitchen', true);
+    } else if (preset === 'bar'){
+      setChecked('perm_access_general', true);
+      setChecked('perm_access_bar', true);
+      setChecked('perm_access_kitchen', false);
+    } else if (preset === 'keuken'){
+      setChecked('perm_access_general', true);
+      setChecked('perm_access_bar', false);
+      setChecked('perm_access_kitchen', true);
+    }
+  }
+
+  function collectUserPermissions(){
+    const preset = document.getElementById('permissionPreset')?.value || 'medewerker';
+    const general = !!document.getElementById('perm_access_general')?.checked;
+    const bar = !!document.getElementById('perm_access_bar')?.checked;
+    const kitchen = !!document.getElementById('perm_access_kitchen')?.checked;
+    const base = basePermissionsForPreset(preset);
+    return applyVisibilityOverrides(base, general, bar, kitchen);
+  }
+
+  function permissionSummary(user){
+    const preset = derivePermissionPreset(user);
+    const labels = {
+      admin: 'Admin',
+      medewerker: 'Dagelijks gebruik',
+      bar: 'Bar medewerker',
+      keuken: 'Keuken medewerker'
+    };
+    const p = user?.permissions || {};
+    const extra = [];
+    if ((preset === 'bar' || preset === 'keuken') && (p.access_general || p.manage_diensten || p.manage_tips)) extra.push('Algemeen');
+    if (preset === 'keuken' && (p.access_bar || p.adjust_stock || p.view_bijvullen || p.view_oplijst)) extra.push('Bar');
+    if (preset === 'bar' && (p.access_kitchen || p.view_recipes || p.use_tasklists)) extra.push('Keuken');
+    return extra.length ? `${labels[preset]} · + ${extra.join(' + ')}` : labels[preset];
+  }
+
   function openUserModal(index=null){
     if (!isAdmin()) return;
-    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : {};
-    openModal(index === null ? 'Medewerker toevoegen' : 'Medewerker bewerken', 'Alleen admin kan Casa Cara gebruikers beheren.', `
+    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : { role: 'medewerker', permissions: { access_general:true, access_bar:true, access_kitchen:true, manage_diensten:true, manage_tips:true, view_bijvullen:true, view_oplijst:true, adjust_stock:true, view_recipes:true, use_tasklists:true, manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false, manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_coolers:false } };
+    openModal(index === null ? 'Medewerker toevoegen' : 'Medewerker bewerken', 'Alleen admin kan Casa Cara medewerkers en rechten beheren.', `
       <div class="form-grid">
         <div class="field"><label>Naam</label><input id="userName" value="${user.name || ''}" placeholder="Bijv. Lisa"></div>
-        <div class="field"><label>Rol</label><select id="userRole"><option value="medewerker" ${user.role === 'medewerker' ? 'selected' : ''}>Medewerker</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option></select></div>
+        <div class="field"><label>Rol</label><select id="userRole" onchange="togglePermissionFields()"><option value="medewerker" ${user.role === 'medewerker' ? 'selected' : ''}>Medewerker</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option></select></div>
         <div class="field"><label>Code</label><input id="userPin" value="${user.pin || ''}" inputmode="numeric" placeholder="4 cijfers"></div>
+        <div id="userPermissionsWrap" class="field" style="display:${user.role === 'admin' ? 'none' : ''}">
+          <label>Rechten medewerker</label>
+          <div class="permission-grid">${permissionCheckboxes(user)}</div>
+        </div>
         <div class="form-actions"><button class="btn" onclick="closeModal()">Annuleren</button><button class="btn accent" onclick="saveUser(${index === null ? 'null' : index})">Opslaan</button></div>
       </div>`);
   }
-  async function saveUser(index){ try{ await postJSON('/api/manage/user-save', { index, name: document.getElementById('userName').value, role: document.getElementById('userRole').value, pin: document.getElementById('userPin').value }); closeModal(); await loadData(); toast('Medewerker opgeslagen'); }catch(err){ toast(err.message, 'error'); } }
+  async function saveUser(index){ try{ await postJSON('/api/manage/user-save', { index, name: document.getElementById('userName').value, role: document.getElementById('userRole').value, pin: document.getElementById('userPin').value, permissions: collectUserPermissions() }); closeModal(); await loadData(); toast('Medewerker opgeslagen'); }catch(err){ toast(err.message, 'error'); } }
   async function deleteUser(index){ try{ await postJSON('/api/manage/user-delete', { index }); await loadData(); toast('Medewerker verwijderd'); }catch(err){ toast(err.message, 'error'); } }
   function renderUsers(){ const items = safeArray(appData.auth?.users); renderList('usersList', items, (user, index) => `
-    <div class="list-item"><div class="item-top"><div><div class="item-title">${user.name || 'Medewerker'}</div><div class="item-sub">Rol: ${user.role || 'medewerker'}</div></div><span class="badge accent">${user.role || 'medewerker'}</span></div><div class="meta-row"><span class="meta-chip">Code: ${user.pin || '-'}</span></div><div class="item-actions"><button class="btn accent" onclick="openUserModal(${index})">Bewerken</button><button class="btn danger" onclick="confirmAction('Medewerker verwijderen','Weet je zeker dat je deze medewerker wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteUser',${index})&quot;)">Verwijderen</button></div></div>`, 'Nog geen gebruikers gevonden.'); }
+    <div class="list-item"><div class="item-top"><div><div class="item-title">${user.name || 'Medewerker'}</div><div class="item-sub">Rol: ${user.role || 'medewerker'}</div></div><span class="badge accent">${user.role || 'medewerker'}</span></div><div class="meta-row"><span class="meta-chip">Code: ${user.pin || '-'}</span><span class="meta-chip">${permissionSummary(user)}</span></div><div class="item-actions"><button class="btn accent" onclick="openUserModal(${index})">Bewerken</button><button class="btn danger" onclick="confirmAction('Medewerker verwijderen','Weet je zeker dat je deze medewerker wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteUser',${index})&quot;)">Verwijderen</button></div></div>`, 'Nog geen gebruikers gevonden.'); }
 
   function renderDiensten(){
     const diensten = safeArray(appData.general.diensten);
+    const canManageDiensten = hasPermission('manage_diensten');
     renderList(
       'dienstenList',
       diensten,
@@ -2406,20 +2994,19 @@ HTML = r"""
             </div>
             <span class="badge">${item.rol || 'Dienst'}</span>
           </div>
-          <div class="item-actions">
-            <button class="btn accent" onclick="openDienstModal(${index})">Bewerken</button>
-            <button class="btn danger" onclick="confirmAction('Dienst verwijderen','Weet je zeker dat je deze dienst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteDienst',${index})&quot;)">Verwijderen</button>
-          </div>
+          ${canManageDiensten ? `<div class="item-actions"><button class="btn accent" onclick="openDienstModal(${index})">Bewerken</button><button class="btn danger" onclick="confirmAction('Dienst verwijderen','Weet je zeker dat je deze dienst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteDienst',${index})&quot;)">Verwijderen</button></div>` : ''}
         </div>
       `,
       'Nog geen diensten gevonden.'
     );
   }
-
-  function renderAll(){
+    function renderAll(){
     applyPermissions();
+    const newDienstBtn = document.getElementById('newDienstBtn');
+    if (newDienstBtn) newDienstBtn.style.display = hasPermission('manage_diensten') ? '' : 'none';
     initFilters();
     renderDashboard();
+    renderGeneralOverview();
     renderCoolers();
     renderTypes();
     renderLocations();
@@ -2429,8 +3016,10 @@ HTML = r"""
     renderDienstTypes();
     renderUsers();
     renderKitchen();
+    renderKitchenOverview();
     renderKitchenManagePage();
     renderRecipes();
+    renderBarOverview();
     if (currentPage === 'bar-koeling-detail' && currentKoelingId){
       renderKoelingDetail();
     }
@@ -2557,10 +3146,7 @@ HTML = r"""
           </div>
           <div class="field"><label>Datum</label><input id="dienstDatum" type="date" value="${item.datum || ''}"></div>
           <div class="field"><label>Notitie</label><input id="dienstRol" value="${item.rol || ''}" placeholder="Bijv. Floor / Extra druk"></div>
-          ${isAdmin() ? `<div class="actions">
-            <button class="btn" onclick="openDienstTypeModal()">Dienstsoort toevoegen</button>
-            <button class="btn" onclick="openPage('dienstsoorten'); closeModal()">Beheer dienstsoorten</button>
-          </div>` : ''}
+          ${hasPermission('manage_dienst_types') ? `<div class="actions"><button class="btn" onclick="openDienstTypeModal()">Dienstsoort toevoegen</button><button class="btn" onclick="openPage('dienstsoorten'); closeModal()">Beheer dienstsoorten</button></div>` : ''}
           <div class="form-actions">
             <button class="btn" onclick="closeModal()">Annuleren</button>
             <button class="btn accent" onclick="saveDienst(${index === null ? 'null' : index})">Opslaan</button>
@@ -2814,6 +3400,198 @@ HTML = r"""
 def casa():
     return render_template_string(HTML)
 
+
+@casa_cara.route("/api/bot", methods=["POST"])
+def casa_bot():
+    data = request.get_json(silent=True) or {}
+    question_raw = (data.get("question") or "").strip()
+    if not question_raw:
+        return jsonify({"ok": False, "message": "Stel eerst een vraag."}), 400
+
+    question = question_raw.lower().strip()
+    user = get_current_casa_user() or {}
+    user_name = (user.get("name") or "").strip()
+    first_name = user_name.split()[0] if user_name else ""
+    bar_data = get_bar_data()
+    general_data = get_general_data()
+    kitchen_data = get_kitchen_data()
+    recipes_data = get_recipes_data()
+    fill_items = build_fill_items(bar_data)
+    tip_context = get_tip_context()
+
+    affirmatives = {"ja", "ja graag", "graag", "isgoed", "is goed", "zeker", "ok", "oke", "prima", "doe maar", "top", "yes", "yess", "helemaal goed"}
+    negatives = {"nee", "nee hoor", "laat maar", "hoeft niet", "niet nodig", "nu even niet"}
+    pending = session.get("casa_bot_pending") or {}
+
+    def contains(*terms):
+        return any(term in question for term in terms)
+
+    def contains_all(*terms):
+        return all(term in question for term in terms)
+
+    def normalize_compact(value: str):
+        return ''.join(ch for ch in value.lower() if ch.isalnum())
+
+    compact_question = normalize_compact(question)
+
+    def compact_contains(*terms):
+        return any(normalize_compact(term) in compact_question for term in terms)
+
+    def tip_amount_text():
+        amount = float(tip_context.get("amount", 0) or 0)
+        return f"€ {amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    if pending:
+        intent = pending.get("intent")
+        if question in affirmatives or contains("ja", "zeker", "is goed", "open maar", "graag", "prima", "doe maar"):
+            session.pop("casa_bot_pending", None)
+            if intent == "open_bijvuloverzicht":
+                return jsonify({
+                    "ok": True,
+                    "answer": "Top, ik open meteen het bijvuloverzicht voor je.",
+                    "open_page": "bar-bijvullen",
+                    "actions": []
+                })
+            if intent == "open_takenlijsten":
+                return jsonify({
+                    "ok": True,
+                    "answer": "Helemaal goed, ik stuur je door naar de takenlijsten.",
+                    "open_page": "keuken-takenlijsten",
+                    "actions": []
+                })
+            if intent == "open_diensten":
+                return jsonify({
+                    "ok": True,
+                    "answer": "Komt voor elkaar, ik open de dienstenpagina.",
+                    "open_page": "diensten",
+                    "actions": []
+                })
+        if question in negatives or contains("nee", "laat maar", "hoeft niet", "nu even niet"):
+            session.pop("casa_bot_pending", None)
+            return jsonify({
+                "ok": True,
+                "answer": "Is goed 😄 Dan blijf je gewoon hier. Vraag maar raak als je iets anders wilt weten.",
+                "actions": []
+            })
+
+    if contains("hoi", "hallo", "hey", "hee", "goedemorgen", "goedemiddag", "goedenavond") or compact_contains("hi", "hii", "heyy"):
+        name_part = f" {first_name}" if first_name else ""
+        return jsonify({
+            "ok": True,
+            "answer": f"Hoi{name_part}! 😄 Waar kan ik je mee helpen? Je kunt me bijvoorbeeld iets vragen over bijvullen, takenlijsten, recepten, diensten of de fooienpot.",
+            "actions": []
+        })
+
+    if (
+        contains("bijvullen", "lage voorraad", "wat moet ik vullen", "bijvul", "is er iets om bij te vullen", "moet er iets bijgevuld worden", "moet ik iets bijvullen")
+        or contains_all("bij", "vullen")
+        or compact_contains("bijtevullen", "bijte vullen", "bijvullen", "bijgevuld", "navullen", "aanvullen")
+        or (contains("voorraad") and contains("vullen", "aanvullen", "bijvullen"))
+    ):
+        if not fill_items:
+            session.pop("casa_bot_pending", None)
+            return jsonify({
+                "ok": True,
+                "answer": "Er staat nu niets open om bijgevuld te worden 👍",
+                "actions": []
+            })
+        total = len(fill_items)
+        first = fill_items[0]
+        focus = first.get("product") or "een product"
+        session["casa_bot_pending"] = {"intent": "open_bijvuloverzicht"}
+        return jsonify({
+            "ok": True,
+            "answer": f"Ja, er moeten zeker wat producten worden bijgevuld. Ik zie nu {total} producten die aandacht vragen. {focus} springt er in ieder geval uit. Wil je dat ik je naar het bijvuloverzicht stuur?",
+            "pending_action": "open_bijvuloverzicht",
+            "actions": [
+                {"type": "send_text", "label": "Ja graag", "value": "Ja graag"},
+                {"type": "send_text", "label": "Nee", "value": "Nee"}
+            ],
+            "hint": "Typ ook gerust ja, is goed, zeker of nee."
+        })
+
+    if contains("fooien", "fooienpot", "tips", "tipjar", "fooi"):
+        label = tip_context.get("label", "Fooienpot")
+        owner = f" van {user_name}" if user_name and tip_context.get("is_personal") else ""
+        return jsonify({
+            "ok": True,
+            "answer": f"{label}{owner} staat nu op {tip_amount_text()}.",
+            "actions": []
+        })
+
+    if contains("dienst", "diensten", "rooster") or compact_contains("wanneerwerkik", "mijndiensten"):
+        diensten = general_data.get("diensten", []) or []
+        if not diensten:
+            session.pop("casa_bot_pending", None)
+            return jsonify({"ok": True, "answer": "Er staan nu nog geen diensten in Casa Cara.", "actions": []})
+        first = diensten[0]
+        naam = (first.get("naam") or first.get("medewerker") or first.get("persoon") or "Dienst").strip()
+        datum = (first.get("datum") or first.get("date") or "onbekende datum").strip()
+        session["casa_bot_pending"] = {"intent": "open_diensten"}
+        return jsonify({
+            "ok": True,
+            "answer": f"Er staan op dit moment {len(diensten)} diensten in het systeem. De eerstvolgende die ik zie is {naam} op {datum}. Wil je dat ik de dienstenpagina voor je open?",
+            "pending_action": "open_diensten",
+            "actions": [
+                {"type": "send_text", "label": "Ja", "value": "Ja"},
+                {"type": "send_text", "label": "Nee", "value": "Nee"}
+            ]
+        })
+
+    if contains("taken", "takenlijst", "takenlijsten", "afgevinkt") or compact_contains("watmoetikdoen", "welketaken"):
+        lists = kitchen_data.get("lists", []) or []
+        if not lists:
+            session.pop("casa_bot_pending", None)
+            return jsonify({"ok": True, "answer": "Er zijn nog geen takenlijsten beschikbaar.", "actions": []})
+        open_count = 0
+        for lst in lists:
+            tasks = lst.get("tasks", []) or []
+            if any(not t.get("done") for t in tasks):
+                open_count += 1
+        session["casa_bot_pending"] = {"intent": "open_takenlijsten"}
+        return jsonify({
+            "ok": True,
+            "answer": f"Je hebt nu {len(lists)} takenlijsten. Daarvan hebben er {open_count} nog openstaande taken. Wil je dat ik de takenlijsten voor je open?",
+            "pending_action": "open_takenlijsten",
+            "actions": [
+                {"type": "send_text", "label": "Zeker", "value": "Zeker"},
+                {"type": "send_text", "label": "Nee", "value": "Nee"}
+            ]
+        })
+
+    if contains("recept", "cocktail", "maken", "ingrediënten", "ingredienten") or compact_contains("hoemaakik", "hoemaakje", "hoemaak", "hoemaakik"):
+        items = recipes_data.get("items", []) or []
+        if not items:
+            return jsonify({"ok": True, "answer": "Er staan nog geen recepten in Casa Cara.", "actions": []})
+        for recipe in items:
+            name = (recipe.get("naam") or "").strip()
+            if name and name.lower() in question:
+                ingrediënten = recipe.get("ingredienten") or recipe.get("ingredients") or []
+                if isinstance(ingrediënten, list):
+                    ingrediënten_text = ", ".join(str(x) for x in ingrediënten[:5] if str(x).strip())
+                else:
+                    ingrediënten_text = str(ingrediënten).strip()
+                return jsonify({
+                    "ok": True,
+                    "answer": f"Ik heb het recept voor {name} gevonden." + (f" De belangrijkste ingrediënten zijn: {ingrediënten_text}." if ingrediënten_text else ""),
+                    "actions": []
+                })
+        matches = [r.get("naam") for r in items if (r.get("naam") or "").strip()]
+        suggesties = ", ".join(matches[:4]) if matches else "geen"
+        return jsonify({
+            "ok": True,
+            "answer": f"Ik kon dat recept niet exact vinden. Probeer bijvoorbeeld: {suggesties}.",
+            "actions": []
+        })
+
+    session.pop("casa_bot_pending", None)
+    return jsonify({
+        "ok": True,
+        "answer": "Ik help je graag met bijvullen, fooienpot, diensten, takenlijsten en recepten. Begin bijvoorbeeld met: hoi, is er iets om bij te vullen, of hoe staat de fooienpot ervoor?",
+        "actions": []
+    })
+
+
 @casa_cara.route("/api/casa-data")
 def api_casa_data():
     return jsonify(serialize_app_data())
@@ -2840,6 +3618,8 @@ def api_locations():
 
 @casa_cara.route("/api/manage/tips-adjust", methods=["POST"])
 def manage_tips_adjust():
+    if not has_casa_permission("manage_tips"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     amount = payload.get("amount", 0)
     mode = (payload.get("mode") or "add").strip()
@@ -2876,6 +3656,8 @@ def manage_tips_adjust():
 
 @casa_cara.route("/api/manage/dienst-save", methods=["POST"])
 def manage_dienst_save():
+    if not has_casa_permission("manage_diensten"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     naam = (payload.get("naam") or "").strip()
     datum = (payload.get("datum") or "").strip()
@@ -2902,6 +3684,8 @@ def manage_dienst_save():
 
 @casa_cara.route("/api/manage/dienst-delete", methods=["POST"])
 def manage_dienst_delete():
+    if not has_casa_permission("manage_diensten"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     try:
         index = int(payload.get("index"))
@@ -2918,8 +3702,8 @@ def manage_dienst_delete():
 
 @casa_cara.route("/api/manage/location-save", methods=["POST"])
 def manage_location_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_locations"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     original = (payload.get("original") or "").strip()
     name = (payload.get("name") or "").strip()
@@ -2945,8 +3729,8 @@ def manage_location_save():
 
 @casa_cara.route("/api/manage/location-delete", methods=["POST"])
 def manage_location_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_locations"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -2966,8 +3750,8 @@ def manage_location_delete():
 
 @casa_cara.route("/api/manage/type-save", methods=["POST"])
 def manage_type_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_types"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     original = (payload.get("original") or "").strip()
     naam = (payload.get("naam") or "").strip()
@@ -3001,8 +3785,8 @@ def manage_type_save():
 
 @casa_cara.route("/api/manage/type-delete", methods=["POST"])
 def manage_type_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_types"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -3020,8 +3804,8 @@ def manage_type_delete():
 
 @casa_cara.route("/api/manage/koeling-save", methods=["POST"])
 def manage_koeling_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_coolers"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("id")
     naam = (payload.get("naam") or "").strip()
@@ -3051,8 +3835,8 @@ def manage_koeling_save():
 
 @casa_cara.route("/api/manage/koeling-delete", methods=["POST"])
 def manage_koeling_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_coolers"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("id")
     if not koeling_id:
@@ -3081,8 +3865,8 @@ def manage_product_save():
     if not koeling_id or not naam:
         return jsonify({"ok": False, "message": "Koeling en productnaam zijn verplicht."}), 400
 
-    if not is_casa_admin() and not product_id:
-        return admin_only_response()
+    if not is_casa_admin() and not product_id and not has_casa_permission("manage_products"):
+        return permission_denied_response()
 
     bar = get_bar_data()
     koeling = next((k for k in bar.get("koelingen", []) if k.get("id") == koeling_id), None)
@@ -3094,8 +3878,11 @@ def manage_product_save():
         for product in koeling["producten"]:
             if product.get("id") == product_id:
                 if not is_casa_admin():
-                    if (product.get("naam") != naam) or ((product.get("soort") or "Overig") != soort) or int(product.get("minimum", 0) or 0) != minimum:
-                        return admin_only_response()
+                    immutable_changed = (product.get("naam") != naam) or ((product.get("soort") or "Overig") != soort) or int(product.get("minimum", 0) or 0) != minimum
+                    if immutable_changed and not has_casa_permission("manage_products"):
+                        return permission_denied_response()
+                    if not has_casa_permission("adjust_stock"):
+                        return permission_denied_response("Je mag alleen voorraad aanpassen als je daar rechten voor hebt.")
                 product["naam"] = naam
                 product["voorraad"] = voorraad
                 product["minimum"] = minimum
@@ -3108,8 +3895,10 @@ def manage_product_save():
                 return jsonify({"ok": True})
         return jsonify({"ok": False, "message": "Product niet gevonden."}), 404
 
+    if not has_casa_permission("manage_products"):
+        return permission_denied_response()
     new_id = slugify(naam)
-    existing = {p.get("id") for p in koeling["producten"]}
+    existing = {p.get("id") for p in koeling.get("producten", [])}
     base = new_id
     count = 2
     while new_id in existing:
@@ -3128,8 +3917,8 @@ def manage_product_save():
 
 @casa_cara.route("/api/manage/product-delete", methods=["POST"])
 def manage_product_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_products"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("koeling_id")
     product_id = payload.get("product_id")
@@ -3152,6 +3941,8 @@ def manage_product_delete():
 
 @casa_cara.route("/api/manage/product-mark-op", methods=["POST"])
 def manage_product_mark_op():
+    if not has_casa_permission("adjust_stock"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("koeling_id")
     product_id = payload.get("product_id")
@@ -3174,6 +3965,8 @@ def manage_product_mark_op():
 
 @casa_cara.route("/api/manage/product-mark-available", methods=["POST"])
 def manage_product_mark_available():
+    if not has_casa_permission("adjust_stock"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     koeling_id = payload.get("koeling_id")
     product_id = payload.get("product_id")
@@ -3249,7 +4042,7 @@ def manage_dienst_type_delete():
 @casa_cara.route("/api/kitchen")
 def api_kitchen():
     data = get_kitchen_data()
-    today = __import__("datetime").date.today().isoformat()
+    today = date.today().isoformat()
     changed = False
     for item in data.get("lists", []):
         for task in item.get("tasks", []):
@@ -3266,8 +4059,8 @@ def api_kitchen():
 
 @casa_cara.route("/api/kitchen/list-save", methods=["POST"])
 def kitchen_list_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -3292,8 +4085,8 @@ def kitchen_list_save():
 
 @casa_cara.route("/api/kitchen/list-delete", methods=["POST"])
 def kitchen_list_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     data = get_kitchen_data()
@@ -3306,8 +4099,8 @@ def kitchen_list_delete():
 
 @casa_cara.route("/api/kitchen/task-save", methods=["POST"])
 def kitchen_task_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
@@ -3329,6 +4122,8 @@ def kitchen_task_save():
                 "name": name,
                 "checked": False,
                 "last_checked": "",
+                "last_checked_by": "",
+                "last_checked_at": "",
                 "subtasks": []
             })
             save_kitchen_data(data)
@@ -3337,8 +4132,8 @@ def kitchen_task_save():
 
 @casa_cara.route("/api/kitchen/task-delete", methods=["POST"])
 def kitchen_task_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -3355,10 +4150,14 @@ def kitchen_task_delete():
 
 @casa_cara.route("/api/kitchen/task-toggle", methods=["POST"])
 def kitchen_task_toggle():
+    if not has_casa_permission("use_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
-    today = __import__("datetime").date.today().isoformat()
+    today = date.today().isoformat()
+    checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
+    checked_at = datetime.now().isoformat(timespec="minutes")
     data = get_kitchen_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
@@ -3367,14 +4166,16 @@ def kitchen_task_toggle():
                     is_checked = bool(task.get("checked")) and task.get("last_checked") == today
                     task["checked"] = not is_checked
                     task["last_checked"] = today if not is_checked else ""
+                    task["last_checked_by"] = checked_by if not is_checked else ""
+                    task["last_checked_at"] = checked_at if not is_checked else ""
                     save_kitchen_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
 
 @casa_cara.route("/api/kitchen/subtask-save", methods=["POST"])
 def kitchen_subtask_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -3398,7 +4199,9 @@ def kitchen_subtask_save():
                         "id": new_id,
                         "name": name,
                         "checked": False,
-                        "last_checked": ""
+                        "last_checked": "",
+                        "last_checked_by": "",
+                        "last_checked_at": ""
                     })
                     save_kitchen_data(data)
                     return jsonify({"ok": True})
@@ -3406,8 +4209,8 @@ def kitchen_subtask_save():
 
 @casa_cara.route("/api/kitchen/subtask-delete", methods=["POST"])
 def kitchen_subtask_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -3427,11 +4230,15 @@ def kitchen_subtask_delete():
 
 @casa_cara.route("/api/kitchen/subtask-toggle", methods=["POST"])
 def kitchen_subtask_toggle():
+    if not has_casa_permission("use_tasklists"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
     subtask_id = payload.get("subtask_id")
-    today = __import__("datetime").date.today().isoformat()
+    today = date.today().isoformat()
+    checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
+    checked_at = datetime.now().isoformat(timespec="minutes")
     data = get_kitchen_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
@@ -3442,6 +4249,8 @@ def kitchen_subtask_toggle():
                             is_checked = bool(sub.get("checked")) and sub.get("last_checked") == today
                             sub["checked"] = not is_checked
                             sub["last_checked"] = today if not is_checked else ""
+                            sub["last_checked_by"] = checked_by if not is_checked else ""
+                            sub["last_checked_at"] = checked_at if not is_checked else ""
                             save_kitchen_data(data)
                             return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
@@ -3451,12 +4260,13 @@ def kitchen_subtask_toggle():
 
 @casa_cara.route("/api/manage/user-save", methods=["POST"])
 def manage_user_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_users"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     pin = "".join(ch for ch in str(payload.get("pin") or "") if ch.isdigit())
     role = "admin" if (payload.get("role") or "").strip().lower() == "admin" else "medewerker"
+    permissions = normalize_permissions(role, payload.get("permissions"))
 
     if not name:
         return jsonify({"ok": False, "message": "Vul een naam in."}), 400
@@ -3483,6 +4293,7 @@ def manage_user_save():
         "pin": pin,
         "role": role,
         "active": True,
+        "permissions": permissions,
     }
 
     if index is None:
@@ -3506,8 +4317,8 @@ def manage_user_save():
 
 @casa_cara.route("/api/manage/user-delete", methods=["POST"])
 def manage_user_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_users"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
 
     try:
@@ -3542,8 +4353,8 @@ def manage_user_delete():
 
 @casa_cara.route("/api/recipes/save", methods=["POST"])
 def recipe_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_recipes"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -3574,8 +4385,8 @@ def recipe_save():
 
 @casa_cara.route("/api/recipes/delete", methods=["POST"])
 def recipe_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_casa_permission("manage_recipes"):
+        return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     data = get_recipes_data()
     items = data.get("items", [])

@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import threading
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -48,6 +49,7 @@ app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 app.secret_key = os.environ.get("APP_SECRET_KEY", "casa-cara-dashboard-secret-key")
 app.register_blueprint(casa_cara)
 AUTH_FILE = DATA_ROOT / "auth.json"
+GMAIL_AUTH_FILE = DATA_ROOT / "gmail_auth.json"
 CASA_AUTH_FILE = Path(__file__).resolve().parent / "data" / "casa_cara" / "casa_auth.json"
 MASTER_PASSWORD = "Beeldaliba1*"
 
@@ -137,6 +139,9 @@ def ensure_files():
     if not AUTH_FILE.exists():
         AUTH_FILE.write_text(json.dumps({"access_code": ""}, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    if not GMAIL_AUTH_FILE.exists():
+        GMAIL_AUTH_FILE.write_text(json.dumps({"access_code": ""}, indent=2, ensure_ascii=False), encoding="utf-8")
+
     if not CASA_AUTH_FILE.exists():
         CASA_AUTH_FILE.write_text(json.dumps({"users": []}, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -158,6 +163,20 @@ def save_auth(data):
 def has_access_code():
     data = load_auth()
     return bool((data.get("access_code") or "").strip())
+
+def load_gmail_auth():
+    ensure_files()
+    return load_json(GMAIL_AUTH_FILE)
+
+def save_gmail_auth(data):
+    save_json(GMAIL_AUTH_FILE, data)
+
+def gmail_code_exists():
+    data = load_gmail_auth()
+    return bool((data.get("access_code") or "").strip())
+
+def gmail_logged_in():
+    return bool(session.get("gmail_logged_in"))
 
 def load_casa_auth():
     ensure_files()
@@ -388,7 +407,7 @@ LOGIN_HTML = """
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;min-height:100%;background:#08111d !important;color:var(--text);color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;overscroll-behavior:none}
 body{min-height:100dvh;min-height:100svh;display:flex;align-items:center;justify-content:center;padding:24px;padding-top:max(24px, env(safe-area-inset-top,0px));padding-bottom:max(24px, env(safe-area-inset-bottom,0px));background:#08111d !important;position:relative;overflow-x:hidden}
-.bg{position:fixed;inset:0;background:radial-gradient(circle at top left, rgba(139,225,255,.11), transparent 28%),radial-gradient(circle at top right, rgba(148,163,184,.08), transparent 24%),radial-gradient(circle at bottom center, rgba(56,189,248,.08), transparent 30%),linear-gradient(180deg, var(--bg), var(--bg2));z-index:-3}body::before{content:"";position:fixed;inset:0;background:#08111d;z-index:-4}.wrap{width:min(430px,100%)}.brand{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:18px}.brand-badge{width:46px;height:46px;border-radius:16px;display:grid;place-items:center;background:rgba(255,255,255,.05);border:1px solid var(--line);box-shadow:var(--shadow);font-size:18px}.brand-text{display:flex;flex-direction:column;align-items:flex-start}.brand-kicker{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}.brand-title{font-size:18px;font-weight:900;letter-spacing:-.03em}.card{background:linear-gradient(180deg, rgba(15,27,45,.96), rgba(10,19,31,.94));border:1px solid var(--line);border-radius:32px;padding:24px 22px 20px;box-shadow:var(--shadow);position:relative}.card::after{content:"";position:absolute;inset:0;border-radius:32px;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.head{text-align:center;margin-bottom:18px}.kicker{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;margin-bottom:14px;background:rgba(56,189,248,.10);border:1px solid rgba(139,225,255,.18);color:#cdefff;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.kicker::before{content:"";width:8px;height:8px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 5px rgba(56,189,248,.12)}h1{margin:0 0 10px;font-size:38px;line-height:1.02;letter-spacing:-.05em}p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}.msg{margin:14px 0 0;padding:12px 14px;border-radius:16px;font-size:14px;text-align:left}.msg.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd7d7}.msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#d4ffe3}.dots{display:flex;justify-content:center;gap:12px;margin:24px 0 20px}.dot{width:16px;height:16px;border-radius:999px;border:1px solid rgba(159,176,199,.25);background:rgba(255,255,255,.04);box-shadow:inset 0 1px 1px rgba(255,255,255,.04)}.dot.filled{background:linear-gradient(180deg,var(--accent2),var(--accent));border-color:rgba(139,225,255,.42)}.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.key{min-height:60px;border:none;border-radius:20px;cursor:pointer;color:var(--text);font-size:22px;font-weight:900;background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025));border:1px solid rgba(159,176,199,.12);box-shadow:0 12px 24px rgba(0,0,0,.18)}.key:active{transform:scale(.985)}.key.small{font-size:14px}.key.action{background:linear-gradient(180deg,#8be1ff,#38bdf8);color:#08263a}.toolbar{display:flex;justify-content:center;align-items:center;margin-top:16px;text-align:center}.help{color:var(--muted);font-size:13px;max-width:260px}.gear{position:absolute;right:14px;bottom:14px;width:42px;height:42px;border-radius:15px;border:1px solid rgba(159,176,199,.12);background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:18px}.sheet{position:fixed;inset:0;background:rgba(0,0,0,.60);display:none;align-items:flex-end;justify-content:center;padding:14px;z-index:30}.sheet.open{display:flex}.sheet-card{width:min(430px,100%);background:linear-gradient(180deg, rgba(15,27,45,.98), rgba(10,19,31,.96));border:1px solid var(--line);border-radius:28px;padding:18px;box-shadow:var(--shadow)}.sheet-card h2{margin:0 0 8px;font-size:24px;letter-spacing:-.03em}.sheet-card p{margin:0 0 14px}.field{display:grid;gap:6px;margin-bottom:10px}.field label{font-size:13px;color:var(--muted)}.field input{width:100%;min-height:50px;border-radius:15px;border:1px solid rgba(159,176,199,.15);background:rgba(255,255,255,.04);color:var(--text);padding:0 14px;font-size:14px;outline:none}.row{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}.btn{min-height:46px;border:none;border-radius:15px;padding:0 16px;font-weight:900;cursor:pointer}.btn.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(159,176,199,.12)}.btn.primary{background:linear-gradient(180deg,#8be1ff,#38bdf8);color:#08263a}.hidden{display:none}
+.bg{position:fixed;inset:0;background:radial-gradient(circle at top left, rgba(139,225,255,.11), transparent 28%),radial-gradient(circle at top right, rgba(148,163,184,.08), transparent 24%),radial-gradient(circle at bottom center, rgba(56,189,248,.08), transparent 30%),linear-gradient(180deg, var(--bg), var(--bg2));z-index:-3}body::before{content:"";position:fixed;inset:0;background:#08111d;z-index:-4}.wrap{width:min(430px,100%)}.brand{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:18px}.brand-badge{width:46px;height:46px;border-radius:16px;display:grid;place-items:center;background:rgba(255,255,255,.05);border:1px solid var(--line);box-shadow:var(--shadow);font-size:18px}.brand-text{display:flex;flex-direction:column;align-items:flex-start}.brand-kicker{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}.brand-title{font-size:18px;font-weight:900;letter-spacing:-.03em}.card{background:linear-gradient(180deg, rgba(15,27,45,.96), rgba(10,19,31,.94));border:1px solid var(--line);border-radius:32px;padding:24px 22px 20px;box-shadow:var(--shadow);position:relative}.card::after{content:"";position:absolute;inset:0;border-radius:32px;pointer-events:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.head{text-align:center;margin-bottom:18px}.kicker{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;margin-bottom:14px;background:rgba(56,189,248,.10);border:1px solid rgba(139,225,255,.18);color:#cdefff;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.kicker::before{content:"";width:8px;height:8px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 5px rgba(56,189,248,.12)}h1{margin:0 0 10px;font-size:38px;line-height:1.02;letter-spacing:-.05em}p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}.msg{margin:14px 0 0;padding:12px 14px;border-radius:16px;font-size:14px;text-align:left}.msg.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd7d7}.msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#d4ffe3}.dots{display:flex;justify-content:center;gap:12px;margin:24px 0 20px}.dot{width:16px;height:16px;border-radius:999px;border:1px solid rgba(159,176,199,.25);background:rgba(255,255,255,.04);box-shadow:inset 0 1px 1px rgba(255,255,255,.04)}.dot.filled{background:linear-gradient(180deg,var(--accent2),var(--accent));border-color:rgba(139,225,255,.42)}.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.key{min-height:60px;border:none;border-radius:20px;cursor:pointer;color:var(--text);font-size:22px;font-weight:900;background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025));border:1px solid rgba(159,176,199,.12);box-shadow:0 12px 24px rgba(0,0,0,.18)}.key:active{transform:scale(.985)}.key.small{font-size:14px}.key.action{background:linear-gradient(180deg,#8be1ff,#38bdf8);color:#08263a}.toolbar{display:flex;justify-content:center;align-items:center;margin-top:16px;text-align:center}.help{color:var(--muted);font-size:13px;max-width:260px}.gear{position:absolute;right:14px;bottom:14px;width:42px;height:42px;border-radius:15px;border:1px solid rgba(159,176,199,.12);background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:18px}.sheet{position:fixed;inset:0;background:rgba(0,0,0,.60);display:none;align-items:flex-end;justify-content:center;padding:14px;z-index:30}.sheet.open{display:flex}.sheet-card{width:min(430px,100%);background:linear-gradient(180deg, rgba(15,27,45,.98), rgba(10,19,31,.96));border:1px solid var(--line);border-radius:28px;padding:18px;box-shadow:var(--shadow)}.sheet-card h2{margin:0 0 8px;font-size:24px;letter-spacing:-.03em}.sheet-card p{margin:0 0 14px}.field{display:grid;gap:6px;margin-bottom:10px}.field label{font-size:13px;color:var(--muted)}.field input{width:100%;min-height:50px;border-radius:15px;border:1px solid rgba(159,176,199,.15);background:rgba(255,255,255,.04);color:var(--text);padding:0 14px;font-size:14px;outline:none}.row{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}.btn{min-height:46px;border:none;border-radius:15px;padding:0 16px;font-weight:900;cursor:pointer}.btn.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(159,176,199,.12)}.btn.primary{background:linear-gradient(180deg,#8be1ff,#38bdf8);color:#08263a}.hidden{display:none}
 @media (max-width:480px){body{padding-left:18px;padding-right:18px}.card{padding:22px 18px 18px}h1{font-size:34px}.key{min-height:56px}}
 </style>
 </head>
@@ -424,144 +443,145 @@ CASA_LOGIN_HTML = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#070b12">
+<meta name="theme-color" content="#071120">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Casa Cara login</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2064%2064%27%3E%0A%3Cdefs%3E%0A%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%271%27%20y2%3D%271%27%3E%0A%3Cstop%20offset%3D%270%25%27%20stop-color%3D%27%23ff8a2a%27/%3E%0A%3Cstop%20offset%3D%2755%25%27%20stop-color%3D%27%23ff5f72%27/%3E%0A%3Cstop%20offset%3D%27100%25%27%20stop-color%3D%27%23915dff%27/%3E%0A%3C/linearGradient%3E%0A%3C/defs%3E%0A%3Crect%20x%3D%274%27%20y%3D%274%27%20width%3D%2756%27%20height%3D%2756%27%20rx%3D%2718%27%20fill%3D%27%230d1422%27/%3E%0A%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%2752%27%20height%3D%2752%27%20rx%3D%2716%27%20fill%3D%27url%28%23g%29%27%20opacity%3D%270.98%27/%3E%0A%3Cpath%20d%3D%27M39%2018.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6%200-10.3%204.3-10.3%209.8s4.7%209.8%2010.3%209.8c3.4%200%206.5-1.4%208.3-3.8%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%275%27%20stroke-linecap%3D%27round%27/%3E%0A%3Cpath%20d%3D%27M43%2029.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7%200-8.5%203.6-8.5%208.1s3.8%208.1%208.5%208.1c2.6%200%204.9-1.1%206.4-2.9%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%275%27%20stroke-linecap%3D%27round%27%20opacity%3D%270.96%27/%3E%0A%3C/svg%3E">
 <style>
 :root{
-  --bg:#070b12; --bg2:#0b111a; --text:#eef4fb; --muted:#9fb0c7;
-  --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.14);
-  --accent:#d4b06a; --accent2:#f3dfb2; --shadow:0 24px 64px rgba(0,0,0,.38);
+  --page:#071120;
+  --page-2:#0d1729;
+  --card:#142238;
+  --card-2:#1a2b45;
+  --line:rgba(149,170,204,.18);
+  --line-strong:rgba(149,170,204,.28);
+  --text:#f4f7fb;
+  --muted:#8fa0bd;
+  --accent:#ff7f2f;
+  --accent-2:#ff9f5a;
+  --danger:#ff7a7a;
+  --shadow:0 28px 70px rgba(0,0,0,.42);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{
-  margin:0; min-height:100%; background:#070b12 !important; color:var(--text);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
-  color-scheme:dark; overscroll-behavior:none;
+  margin:0;min-height:100%;
+  background:#071120!important;color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  overscroll-behavior:none;
 }
 body{
-  display:flex; align-items:center; justify-content:center;
-  min-height:100dvh; min-height:100svh;
-  padding:24px; padding-top:max(24px, env(safe-area-inset-top,0px));
-  padding-bottom:max(24px, env(safe-area-inset-bottom,0px));
-  background:#070b12 !important; position:relative; overflow-x:hidden;
-}
-body::before{
-  content:""; position:fixed; inset:0; z-index:-4; background:#070b12;
-}
-.bg{
-  position:fixed; inset:0; z-index:-3;
+  min-height:100dvh;min-height:100svh;overflow:hidden;
   background:
-    radial-gradient(circle at top left, rgba(212,176,106,.10), transparent 28%),
-    radial-gradient(circle at top right, rgba(112,154,255,.07), transparent 24%),
-    radial-gradient(circle at bottom center, rgba(212,176,106,.06), transparent 30%),
-    linear-gradient(180deg, var(--bg), var(--bg2));
+    radial-gradient(circle at 15% 12%, rgba(255,127,47,.14), transparent 24%),
+    radial-gradient(circle at 88% 10%, rgba(122,171,255,.12), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(255,127,47,.08), transparent 30%),
+    linear-gradient(180deg, var(--page), var(--page-2))!important;
 }
-.wrap{width:min(390px,100%)}
+.backdrop-grid{position:fixed;inset:0;pointer-events:none;opacity:.08;background-image:linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);background-size:28px 28px;mask-image:linear-gradient(180deg, rgba(0,0,0,.92), transparent 100%)}
+.login-shell{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px 16px calc(22px + env(safe-area-inset-bottom,0px));position:relative}
 .card{
-  background:linear-gradient(180deg, rgba(17,26,40,.97), rgba(12,19,30,.95));
-  border:1px solid var(--line); border-radius:30px; padding:26px 22px 22px;
-  box-shadow:var(--shadow); position:relative;
+  width:min(390px,100%);
+  border-radius:28px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(21,34,54,.96), rgba(16,27,44,.96));
+  box-shadow:var(--shadow);
+  padding:20px 18px 18px;
+  position:relative;
+  overflow:hidden;
 }
-.head{text-align:center;margin-bottom:16px}
-.kicker{
-  color:var(--muted); font-size:13px; letter-spacing:.08em;
-  text-transform:uppercase; margin-bottom:8px;
-}
-h1{margin:0 0 10px;font-size:32px;letter-spacing:-.04em;line-height:1}
-p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}
-.msg{margin:14px 0 0;padding:12px 14px;border-radius:14px;font-size:14px;text-align:left}
-.msg.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);color:#ffd7d7}
-.msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.22);color:#d4ffe3}
-.dots{display:flex;justify-content:center;gap:12px;margin:22px 0 20px}
-.dot{
-  width:16px;height:16px;border-radius:999px;
-  border:1px solid rgba(255,255,255,.16);
-  background:rgba(255,255,255,.04);
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.04);
-}
-.dot.filled{background:linear-gradient(180deg,var(--accent2),var(--accent));border-color:rgba(212,176,106,.42)}
-.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.key{
-  min-height:58px;border:none;border-radius:18px;cursor:pointer;
-  color:var(--text);font-size:22px;font-weight:800;
-  background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.025));
-  border:1px solid rgba(255,255,255,.10);
-  box-shadow:0 10px 22px rgba(0,0,0,.16);
-}
+.card::before{content:"";position:absolute;inset:-30% auto auto -14%;width:180px;height:180px;border-radius:999px;background:radial-gradient(circle, rgba(255,127,47,.18), transparent 72%);filter:blur(12px);pointer-events:none}
+.card::after{content:"";position:absolute;inset:auto -16% -30% auto;width:180px;height:180px;border-radius:999px;background:radial-gradient(circle, rgba(116,170,255,.12), transparent 72%);filter:blur(12px);pointer-events:none}
+.brand{position:relative;z-index:1;text-align:center}
+.brand-mark{width:72px;height:72px;margin:0 auto 14px;border-radius:22px;background:linear-gradient(180deg,var(--accent-2),var(--accent));display:grid;place-items:center;box-shadow:0 16px 30px rgba(255,127,47,.25)}
+.brand-mark svg{width:42px;height:42px;display:block}
+.title{margin:0;font-size:30px;line-height:1;font-weight:800;letter-spacing:-.05em}
+.subtitle{margin:8px 0 18px;color:var(--muted);font-size:15px;line-height:1.35}
+.prompt{margin:0 0 14px;text-align:center;font-size:15px;font-weight:600;color:#d9e4f5}
+.dots{display:flex;justify-content:center;gap:10px;margin:0 0 14px}
+.dot{width:52px;height:52px;border-radius:16px;border:2px solid rgba(110,130,163,.42);background:rgba(16,26,42,.78);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.dot::after{content:"";width:8px;height:8px;border-radius:999px;background:#6d809f;opacity:.9}
+.dot.filled::after{background:#ffffff}
+.hidden-input{position:absolute;opacity:0;pointer-events:none}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.key{height:64px;border-radius:16px;border:1px solid rgba(116,133,164,.28);background:linear-gradient(180deg,#374761,#31425c);color:#fff;font-size:22px;font-weight:800;cursor:pointer;transition:transform .12s ease,filter .12s ease, border-color .12s ease;box-shadow:0 10px 24px rgba(0,0,0,.14)}
+.key:hover{filter:brightness(1.05);border-color:var(--line-strong)}
 .key:active{transform:scale(.985)}
-.key.small{font-size:14px}
-.key.action{background:linear-gradient(180deg,#f3dfb2,#d4b06a);color:#3a2a10}
-.toolbar{display:flex;justify-content:center;align-items:center;margin-top:16px;text-align:center}
-.help{color:var(--muted);font-size:13px;max-width:280px}
-.gear{
-  position:absolute;right:14px;bottom:14px;
-  width:40px;height:40px;border-radius:14px;border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:18px;
+.key.small{font-size:16px;color:#ff8f8f}
+.key.action{background:linear-gradient(180deg,#b1662f,#9f5b2e);color:#d7dce5}
+.key.action svg{width:22px;height:22px;opacity:.9}
+.message{margin:0 0 12px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);font-size:14px;line-height:1.45}
+.message.error{background:rgba(255,122,122,.08);border-color:rgba(255,122,122,.16);color:#ffd0d0}
+.message.ok{background:rgba(111,202,147,.10);border-color:rgba(111,202,147,.18);color:#d9ffe7}
+.meta{margin-top:12px;text-align:center;color:var(--muted);font-size:12px}
+.settings-trigger{
+  position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom,0px));
+  width:48px;height:48px;border-radius:16px;border:1px solid var(--line);
+  background:rgba(20,34,56,.9);color:var(--text);cursor:pointer;display:grid;place-items:center;
+  box-shadow:0 14px 30px rgba(0,0,0,.24);z-index:20;
 }
-.sheet{
-  position:fixed;inset:0;background:rgba(0,0,0,.60);display:none;
-  align-items:flex-end;justify-content:center;padding:14px;z-index:30;
-}
+.settings-trigger:hover{border-color:var(--line-strong)}
+.settings-trigger svg{width:22px;height:22px;opacity:.88}
+.sheet{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(4,8,14,.58);backdrop-filter:blur(8px);z-index:40}
 .sheet.open{display:flex}
-.sheet-card{
-  width:min(420px,100%);background:linear-gradient(180deg, rgba(17,26,40,.98), rgba(12,19,30,.97));
-  border:1px solid var(--line);border-radius:26px;padding:18px;box-shadow:var(--shadow);
-}
-.sheet-card h2{margin:0 0 8px;font-size:22px;letter-spacing:-.03em}
-.sheet-card p{margin:0 0 14px}
-.field{display:grid;gap:6px;margin-bottom:10px}
+.sheet-card{width:min(390px,100%);border-radius:24px;border:1px solid var(--line);background:linear-gradient(180deg, rgba(20,34,56,.98), rgba(15,27,44,.98));box-shadow:var(--shadow);padding:22px}
+.sheet-title{margin:0 0 6px;font-size:24px;font-weight:800;letter-spacing:-.03em}
+.sheet-sub{margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.5}
+.field{display:grid;gap:6px;margin-bottom:12px}
 .field label{font-size:13px;color:var(--muted)}
-.field input{
-  width:100%;min-height:48px;border-radius:14px;border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.04);color:var(--text);padding:0 14px;font-size:14px;outline:none;
-}
-.row{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
-.btn{min-height:44px;border:none;border-radius:14px;padding:0 16px;font-weight:800;cursor:pointer}
-.btn.secondary{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(255,255,255,.10)}
-.btn.primary{background:linear-gradient(180deg,#f3dfb2,#d4b06a);color:#3a2a10}
-.hidden{display:none}
-.back-link{
-  display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);
-  margin-bottom:14px;padding:11px 14px;border-radius:16px;
-  background:rgba(255,255,255,.04);border:1px solid var(--line);
-}
-.back-link:hover{border-color:var(--line-strong)}
-@media (max-width: 480px){
-  body{padding:20px}
-  .card{padding:24px 18px 18px}
-  .pad{gap:10px}
-  .key{min-height:54px;font-size:21px}
-  .toolbar{margin-top:14px}
-}
-html{background:#070b12 !important}
-body{background:#070b12 !important}
-@supports (-webkit-touch-callout: none){
-  html, body{background:#070b12 !important}
+.field input{width:100%;min-height:44px;border-radius:14px;border:1px solid rgba(116,133,164,.26);background:rgba(255,255,255,.03);color:var(--text);padding:0 14px;outline:none}
+.row{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+.btn{min-height:42px;padding:0 14px;border-radius:14px;border:none;font-weight:800;cursor:pointer}
+.btn.secondary{background:rgba(255,255,255,.04);color:var(--text);border:1px solid rgba(116,133,164,.18)}
+.btn.primary{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#1d130c}
+.top-link{position:fixed;top:14px;left:14px;min-height:38px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:rgba(18,30,48,.72);display:inline-flex;align-items:center;gap:8px;color:var(--text);text-decoration:none;backdrop-filter:blur(16px);z-index:20}
+.top-link:hover{border-color:var(--line-strong)}
+@media (max-width: 560px){
+  .login-shell{padding-top:18px}
+  .card{padding:18px 14px 16px;border-radius:22px}
+  .brand-mark{width:66px;height:66px;border-radius:20px}
+  .brand-mark svg{width:38px;height:38px}
+  .title{font-size:28px}
+  .subtitle{font-size:14px;margin-bottom:16px}
+  .prompt{font-size:14px}
+  .dots{gap:8px}
+  .dot{width:46px;height:46px;border-radius:14px}
+  .pad{gap:8px}
+  .key{height:58px;font-size:20px;border-radius:14px}
+  .settings-trigger{right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px))}
 }
 </style>
 </head>
 <body>
-<div class="bg"></div>
-<div class="wrap">
-  <a class="back-link" href="/">← Terug naar home</a>
+<div class="backdrop-grid"></div>
+<a class="top-link" href="/" aria-label="Terug naar home">← Home</a>
+<div class="login-shell">
   <div class="card">
-    <div class="head">
-      <div class="kicker">Casa Cara login</div>
-      <h1>Welkom terug</h1>
-      <p>Voer je Casa Cara code in om door te gaan.</p>
-      {% if message %}
-        <div class="msg {{ 'error' if not success else 'ok' }}">{{ message }}</div>
-      {% endif %}
+    <div class="brand">
+      <div class="brand-mark"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
+<defs>
+<linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+<stop offset='0%' stop-color='#ff8a2a'/>
+<stop offset='55%' stop-color='#ff5f72'/>
+<stop offset='100%' stop-color='#915dff'/>
+</linearGradient>
+</defs>
+<rect x='4' y='4' width='56' height='56' rx='18' fill='#0d1422'/>
+<rect x='6' y='6' width='52' height='52' rx='16' fill='url(#g)' opacity='0.98'/>
+<path d='M39 18.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6 0-10.3 4.3-10.3 9.8s4.7 9.8 10.3 9.8c3.4 0 6.5-1.4 8.3-3.8' fill='none' stroke='white' stroke-width='5' stroke-linecap='round'/>
+<path d='M43 29.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7 0-8.5 3.6-8.5 8.1s3.8 8.1 8.5 8.1c2.6 0 4.9-1.1 6.4-2.9' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' opacity='0.96'/>
+</svg></div>
+      <h1 class="title">Casa Cara</h1>
+      <p class="subtitle">Interne werkplek</p>
+      {% if message %}<div class="message {'ok' if success else 'error'}">{{ message }}</div>{% endif %}
+      <p class="prompt">Voer je 4-cijferige code in</p>
     </div>
 
-    <form id="loginForm" method="post" action="/casa-cara-login">
-      <input id="access_code" class="hidden" type="password" name="access_code" inputmode="numeric" autocomplete="one-time-code">
+    <form id="loginForm" method="post" action="">
+      <input id="access_code" class="hidden-input" type="password" name="access_code" inputmode="numeric" autocomplete="one-time-code">
       <div class="dots" id="dots">
         <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
       </div>
-
       <div class="pad">
         <button class="key" type="button" onclick="pressKey('1')">1</button>
         <button class="key" type="button" onclick="pressKey('2')">2</button>
@@ -574,44 +594,48 @@ body{background:#070b12 !important}
         <button class="key" type="button" onclick="pressKey('9')">9</button>
         <button class="key small" type="button" onclick="backspaceKey()">⌫</button>
         <button class="key" type="button" onclick="pressKey('0')">0</button>
-        <button class="key action small" type="submit">Open</button>
+        <button class="key action" type="submit" aria-label="Inloggen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.2 4.2L19 7"/></svg>
+        </button>
       </div>
     </form>
-
-    <div class="toolbar">
-      <div class="help">Alleen Casa Cara gebruikers kunnen hier door.</div>
-    </div>
-
-    <button class="gear" type="button" aria-label="Casa Cara admin instellen" onclick="openSheet()">⚙️</button>
+    <div class="meta">Voer je 4-cijferige code in. Na het 4e cijfer log je automatisch in.</div>
   </div>
 </div>
 
+<button class="settings-trigger" type="button" aria-label="Casa Cara code instellen" onclick="openSheet()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.5 2.6 3 .5-.8 2.9 2 2-2 2 .8 2.9-3 .5L12 21l-1.5-2.6-3-.5.8-2.9-2-2 2-2-.8-2.9 3-.5L12 3z"/><circle cx="12" cy="12" r="3.2"/></svg>
+</button>
+
 <div class="sheet" id="sheet" onclick="if(event.target.id==='sheet')closeSheet()">
   <div class="sheet-card">
-    <h2>Casa Cara admin instellen</h2>
-    <p>Als er nog geen Casa Cara gebruiker bestaat, kun je hier met het hoofdwachtwoord de eerste admin instellen.</p>
+    <h2 class="sheet-title">Casa Cara code instellen</h2>
+    <p class="sheet-sub">Maak of wijzig de toegangscode met het hoofdwachtwoord.</p>
     <form method="post" action="/casa-cara-setup">
       <div class="field">
         <label>Hoofdwachtwoord</label>
         <input type="password" name="master_password" required>
       </div>
+      {% if 'admin' in '/casa-cara-setup' or 'casa-cara' in '/casa-cara-setup' %}
       <div class="field">
-        <label>Naam admin</label>
-        <input type="text" name="admin_name" value="Admin" required>
+        <label>Admin naam</label>
+        <input type="text" name="admin_name" placeholder="Bijvoorbeeld Bart">
       </div>
+      {% endif %}
       <div class="field">
-        <label>Nieuwe code</label>
-        <input type="password" name="new_access_code" inputmode="numeric" required>
+        <label>Nieuwe 4-cijferige code</label>
+        <input type="password" name="new_access_code" inputmode="numeric" maxlength="4" required>
       </div>
       <div class="row">
         <button class="btn secondary" type="button" onclick="closeSheet()">Sluiten</button>
         <button class="btn primary" type="submit">Opslaan</button>
       </div>
     </form>
-    {% if casa_code_exists %}
-      <div class="msg error">Er bestaan al Casa Cara gebruikers. Nieuwe medewerkers voeg je straks alleen vanuit het admin-account toe.</div>
-    {% else %}
-      <div class="msg ok">Er is nog geen Casa Cara gebruiker ingesteld. Maak hier de eerste admin aan.</div>
+    {% if casa_code_exists is defined %}
+      {% if casa_code_exists %}<div class="message ok" style="margin-top:14px">Er is al een Casa Cara code ingesteld.</div>{% else %}<div class="message ok" style="margin-top:14px">Er is nog geen Casa Cara code ingesteld.</div>{% endif %}
+    {% endif %}
+    {% if gmail_code_exists is defined %}
+      {% if gmail_code_exists %}<div class="message ok" style="margin-top:14px">Er is al een Gmail Cleaner code ingesteld.</div>{% else %}<div class="message ok" style="margin-top:14px">Er is nog geen Gmail Cleaner code ingesteld.</div>{% endif %}
     {% endif %}
   </div>
 </div>
@@ -619,14 +643,257 @@ body{background:#070b12 !important}
 <script>
 const codeInput = document.getElementById('access_code');
 const dots = Array.from(document.querySelectorAll('.dot'));
+const form = document.getElementById('loginForm');
 function renderDots(){
   const len = (codeInput.value || '').length;
   dots.forEach((dot, i) => dot.classList.toggle('filled', i < len));
+}
+function submitIfReady(){
+  const value = (codeInput.value || '');
+  if(value.length === 4){
+    setTimeout(() => form.submit(), 100);
+  }
 }
 function pressKey(value){
   if ((codeInput.value || '').length >= 4) return;
   codeInput.value = (codeInput.value || '') + value;
   renderDots();
+  submitIfReady();
+}
+function backspaceKey(){
+  codeInput.value = (codeInput.value || '').slice(0, -1);
+  renderDots();
+}
+function openSheet(){ document.getElementById('sheet').classList.add('open'); }
+function closeSheet(){ document.getElementById('sheet').classList.remove('open'); }
+renderDots();
+</script>
+</body>
+</html>
+"""
+
+GMAIL_LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#071120">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Gmail Cleaner login</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2064%2064%27%3E%0A%3Cdefs%3E%0A%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%271%27%20y2%3D%271%27%3E%0A%3Cstop%20offset%3D%270%25%27%20stop-color%3D%27%23ff8a2a%27/%3E%0A%3Cstop%20offset%3D%2755%25%27%20stop-color%3D%27%23ff5f72%27/%3E%0A%3Cstop%20offset%3D%27100%25%27%20stop-color%3D%27%23915dff%27/%3E%0A%3C/linearGradient%3E%0A%3C/defs%3E%0A%3Crect%20x%3D%274%27%20y%3D%274%27%20width%3D%2756%27%20height%3D%2756%27%20rx%3D%2718%27%20fill%3D%27%230d1422%27/%3E%0A%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%2752%27%20height%3D%2752%27%20rx%3D%2716%27%20fill%3D%27url%28%23g%29%27%20opacity%3D%270.98%27/%3E%0A%3Cpath%20d%3D%27M39%2018.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6%200-10.3%204.3-10.3%209.8s4.7%209.8%2010.3%209.8c3.4%200%206.5-1.4%208.3-3.8%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%275%27%20stroke-linecap%3D%27round%27/%3E%0A%3Cpath%20d%3D%27M43%2029.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7%200-8.5%203.6-8.5%208.1s3.8%208.1%208.5%208.1c2.6%200%204.9-1.1%206.4-2.9%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%275%27%20stroke-linecap%3D%27round%27%20opacity%3D%270.96%27/%3E%0A%3C/svg%3E">
+<style>
+:root{
+  --page:#071120;
+  --page-2:#0d1729;
+  --card:#142238;
+  --card-2:#1a2b45;
+  --line:rgba(149,170,204,.18);
+  --line-strong:rgba(149,170,204,.28);
+  --text:#f4f7fb;
+  --muted:#8fa0bd;
+  --accent:#ff7f2f;
+  --accent-2:#ff9f5a;
+  --danger:#ff7a7a;
+  --shadow:0 28px 70px rgba(0,0,0,.42);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{
+  margin:0;min-height:100%;
+  background:#071120!important;color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  overscroll-behavior:none;
+}
+body{
+  min-height:100dvh;min-height:100svh;overflow:hidden;
+  background:
+    radial-gradient(circle at 15% 12%, rgba(255,127,47,.14), transparent 24%),
+    radial-gradient(circle at 88% 10%, rgba(122,171,255,.12), transparent 22%),
+    radial-gradient(circle at 50% 100%, rgba(255,127,47,.08), transparent 30%),
+    linear-gradient(180deg, var(--page), var(--page-2))!important;
+}
+.backdrop-grid{position:fixed;inset:0;pointer-events:none;opacity:.08;background-image:linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);background-size:28px 28px;mask-image:linear-gradient(180deg, rgba(0,0,0,.92), transparent 100%)}
+.login-shell{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px 16px calc(22px + env(safe-area-inset-bottom,0px));position:relative}
+.card{
+  width:min(390px,100%);
+  border-radius:28px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(21,34,54,.96), rgba(16,27,44,.96));
+  box-shadow:var(--shadow);
+  padding:20px 18px 18px;
+  position:relative;
+  overflow:hidden;
+}
+.card::before{content:"";position:absolute;inset:-30% auto auto -14%;width:180px;height:180px;border-radius:999px;background:radial-gradient(circle, rgba(255,127,47,.18), transparent 72%);filter:blur(12px);pointer-events:none}
+.card::after{content:"";position:absolute;inset:auto -16% -30% auto;width:180px;height:180px;border-radius:999px;background:radial-gradient(circle, rgba(116,170,255,.12), transparent 72%);filter:blur(12px);pointer-events:none}
+.brand{position:relative;z-index:1;text-align:center}
+.brand-mark{width:72px;height:72px;margin:0 auto 14px;border-radius:22px;background:linear-gradient(180deg,var(--accent-2),var(--accent));display:grid;place-items:center;box-shadow:0 16px 30px rgba(255,127,47,.25)}
+.brand-mark svg{width:42px;height:42px;display:block}
+.title{margin:0;font-size:30px;line-height:1;font-weight:800;letter-spacing:-.05em}
+.subtitle{margin:8px 0 18px;color:var(--muted);font-size:15px;line-height:1.35}
+.prompt{margin:0 0 14px;text-align:center;font-size:15px;font-weight:600;color:#d9e4f5}
+.dots{display:flex;justify-content:center;gap:10px;margin:0 0 14px}
+.dot{width:52px;height:52px;border-radius:16px;border:2px solid rgba(110,130,163,.42);background:rgba(16,26,42,.78);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.dot::after{content:"";width:8px;height:8px;border-radius:999px;background:#6d809f;opacity:.9}
+.dot.filled::after{background:#ffffff}
+.hidden-input{position:absolute;opacity:0;pointer-events:none}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.key{height:64px;border-radius:16px;border:1px solid rgba(116,133,164,.28);background:linear-gradient(180deg,#374761,#31425c);color:#fff;font-size:22px;font-weight:800;cursor:pointer;transition:transform .12s ease,filter .12s ease, border-color .12s ease;box-shadow:0 10px 24px rgba(0,0,0,.14)}
+.key:hover{filter:brightness(1.05);border-color:var(--line-strong)}
+.key:active{transform:scale(.985)}
+.key.small{font-size:16px;color:#ff8f8f}
+.key.action{background:linear-gradient(180deg,#b1662f,#9f5b2e);color:#d7dce5}
+.key.action svg{width:22px;height:22px;opacity:.9}
+.message{margin:0 0 12px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);font-size:14px;line-height:1.45}
+.message.error{background:rgba(255,122,122,.08);border-color:rgba(255,122,122,.16);color:#ffd0d0}
+.message.ok{background:rgba(111,202,147,.10);border-color:rgba(111,202,147,.18);color:#d9ffe7}
+.meta{margin-top:12px;text-align:center;color:var(--muted);font-size:12px}
+.settings-trigger{
+  position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom,0px));
+  width:48px;height:48px;border-radius:16px;border:1px solid var(--line);
+  background:rgba(20,34,56,.9);color:var(--text);cursor:pointer;display:grid;place-items:center;
+  box-shadow:0 14px 30px rgba(0,0,0,.24);z-index:20;
+}
+.settings-trigger:hover{border-color:var(--line-strong)}
+.settings-trigger svg{width:22px;height:22px;opacity:.88}
+.sheet{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(4,8,14,.58);backdrop-filter:blur(8px);z-index:40}
+.sheet.open{display:flex}
+.sheet-card{width:min(390px,100%);border-radius:24px;border:1px solid var(--line);background:linear-gradient(180deg, rgba(20,34,56,.98), rgba(15,27,44,.98));box-shadow:var(--shadow);padding:22px}
+.sheet-title{margin:0 0 6px;font-size:24px;font-weight:800;letter-spacing:-.03em}
+.sheet-sub{margin:0 0 16px;color:var(--muted);font-size:14px;line-height:1.5}
+.field{display:grid;gap:6px;margin-bottom:12px}
+.field label{font-size:13px;color:var(--muted)}
+.field input{width:100%;min-height:44px;border-radius:14px;border:1px solid rgba(116,133,164,.26);background:rgba(255,255,255,.03);color:var(--text);padding:0 14px;outline:none}
+.row{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+.btn{min-height:42px;padding:0 14px;border-radius:14px;border:none;font-weight:800;cursor:pointer}
+.btn.secondary{background:rgba(255,255,255,.04);color:var(--text);border:1px solid rgba(116,133,164,.18)}
+.btn.primary{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#1d130c}
+.top-link{position:fixed;top:14px;left:14px;min-height:38px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:rgba(18,30,48,.72);display:inline-flex;align-items:center;gap:8px;color:var(--text);text-decoration:none;backdrop-filter:blur(16px);z-index:20}
+.top-link:hover{border-color:var(--line-strong)}
+@media (max-width: 560px){
+  .login-shell{padding-top:18px}
+  .card{padding:18px 14px 16px;border-radius:22px}
+  .brand-mark{width:66px;height:66px;border-radius:20px}
+  .brand-mark svg{width:38px;height:38px}
+  .title{font-size:28px}
+  .subtitle{font-size:14px;margin-bottom:16px}
+  .prompt{font-size:14px}
+  .dots{gap:8px}
+  .dot{width:46px;height:46px;border-radius:14px}
+  .pad{gap:8px}
+  .key{height:58px;font-size:20px;border-radius:14px}
+  .settings-trigger{right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+}
+</style>
+</head>
+<body>
+<div class="backdrop-grid"></div>
+<a class="top-link" href="/" aria-label="Terug naar home">← Home</a>
+<div class="login-shell">
+  <div class="card">
+    <div class="brand">
+      <div class="brand-mark"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
+<defs>
+<linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+<stop offset='0%' stop-color='#ff8a2a'/>
+<stop offset='55%' stop-color='#ff5f72'/>
+<stop offset='100%' stop-color='#915dff'/>
+</linearGradient>
+</defs>
+<rect x='4' y='4' width='56' height='56' rx='18' fill='#0d1422'/>
+<rect x='6' y='6' width='52' height='52' rx='16' fill='url(#g)' opacity='0.98'/>
+<path d='M39 18.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6 0-10.3 4.3-10.3 9.8s4.7 9.8 10.3 9.8c3.4 0 6.5-1.4 8.3-3.8' fill='none' stroke='white' stroke-width='5' stroke-linecap='round'/>
+<path d='M43 29.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7 0-8.5 3.6-8.5 8.1s3.8 8.1 8.5 8.1c2.6 0 4.9-1.1 6.4-2.9' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' opacity='0.96'/>
+</svg></div>
+      <h1 class="title">Gmail Cleaner</h1>
+      <p class="subtitle">Interne werkplek</p>
+      {% if message %}<div class="message {'ok' if success else 'error'}">{{ message }}</div>{% endif %}
+      <p class="prompt">Voer je 4-cijferige code in</p>
+    </div>
+
+    <form id="loginForm" method="post" action="">
+      <input id="access_code" class="hidden-input" type="password" name="access_code" inputmode="numeric" autocomplete="one-time-code">
+      <div class="dots" id="dots">
+        <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      </div>
+      <div class="pad">
+        <button class="key" type="button" onclick="pressKey('1')">1</button>
+        <button class="key" type="button" onclick="pressKey('2')">2</button>
+        <button class="key" type="button" onclick="pressKey('3')">3</button>
+        <button class="key" type="button" onclick="pressKey('4')">4</button>
+        <button class="key" type="button" onclick="pressKey('5')">5</button>
+        <button class="key" type="button" onclick="pressKey('6')">6</button>
+        <button class="key" type="button" onclick="pressKey('7')">7</button>
+        <button class="key" type="button" onclick="pressKey('8')">8</button>
+        <button class="key" type="button" onclick="pressKey('9')">9</button>
+        <button class="key small" type="button" onclick="backspaceKey()">⌫</button>
+        <button class="key" type="button" onclick="pressKey('0')">0</button>
+        <button class="key action" type="submit" aria-label="Inloggen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.2 4.2L19 7"/></svg>
+        </button>
+      </div>
+    </form>
+    <div class="meta">Voer je 4-cijferige code in. Na het 4e cijfer log je automatisch in.</div>
+  </div>
+</div>
+
+<button class="settings-trigger" type="button" aria-label="Gmail Cleaner code instellen" onclick="openSheet()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.5 2.6 3 .5-.8 2.9 2 2-2 2 .8 2.9-3 .5L12 21l-1.5-2.6-3-.5.8-2.9-2-2 2-2-.8-2.9 3-.5L12 3z"/><circle cx="12" cy="12" r="3.2"/></svg>
+</button>
+
+<div class="sheet" id="sheet" onclick="if(event.target.id==='sheet')closeSheet()">
+  <div class="sheet-card">
+    <h2 class="sheet-title">Gmail Cleaner code instellen</h2>
+    <p class="sheet-sub">Maak of wijzig de toegangscode met het hoofdwachtwoord.</p>
+    <form method="post" action="/gmail-setup">
+      <div class="field">
+        <label>Hoofdwachtwoord</label>
+        <input type="password" name="master_password" required>
+      </div>
+      {% if 'admin' in '/gmail-setup' or 'casa-cara' in '/gmail-setup' %}
+      <div class="field">
+        <label>Admin naam</label>
+        <input type="text" name="admin_name" placeholder="Bijvoorbeeld Bart">
+      </div>
+      {% endif %}
+      <div class="field">
+        <label>Nieuwe 4-cijferige code</label>
+        <input type="password" name="new_access_code" inputmode="numeric" maxlength="4" required>
+      </div>
+      <div class="row">
+        <button class="btn secondary" type="button" onclick="closeSheet()">Sluiten</button>
+        <button class="btn primary" type="submit">Opslaan</button>
+      </div>
+    </form>
+    {% if casa_code_exists is defined %}
+      {% if casa_code_exists %}<div class="message ok" style="margin-top:14px">Er is al een Casa Cara code ingesteld.</div>{% else %}<div class="message ok" style="margin-top:14px">Er is nog geen Casa Cara code ingesteld.</div>{% endif %}
+    {% endif %}
+    {% if gmail_code_exists is defined %}
+      {% if gmail_code_exists %}<div class="message ok" style="margin-top:14px">Er is al een Gmail Cleaner code ingesteld.</div>{% else %}<div class="message ok" style="margin-top:14px">Er is nog geen Gmail Cleaner code ingesteld.</div>{% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<script>
+const codeInput = document.getElementById('access_code');
+const dots = Array.from(document.querySelectorAll('.dot'));
+const form = document.getElementById('loginForm');
+function renderDots(){
+  const len = (codeInput.value || '').length;
+  dots.forEach((dot, i) => dot.classList.toggle('filled', i < len));
+}
+function submitIfReady(){
+  const value = (codeInput.value || '');
+  if(value.length === 4){
+    setTimeout(() => form.submit(), 100);
+  }
+}
+function pressKey(value){
+  if ((codeInput.value || '').length >= 4) return;
+  codeInput.value = (codeInput.value || '') + value;
+  renderDots();
+  submitIfReady();
 }
 function backspaceKey(){
   codeInput.value = (codeInput.value || '').slice(0, -1);
@@ -641,1334 +908,336 @@ renderDots();
 """
 
 HOME_HTML = """
-
 <!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#0b1a2b">
+<meta name="theme-color" content="#04070d">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Dashboard</title>
-<link rel="icon" type="image/png" href="/static/gmail.png">
+<title>Welkom!</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2064%2064%27%3E%0A%3Cdefs%3E%0A%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%271%27%20y2%3D%271%27%3E%0A%3Cstop%20offset%3D%270%25%27%20stop-color%3D%27%23ff8a2a%27/%3E%0A%3Cstop%20offset%3D%2755%25%27%20stop-color%3D%27%23ff5f72%27/%3E%0A%3Cstop%20offset%3D%27100%25%27%20stop-color%3D%27%23915dff%27/%3E%0A%3C/linearGradient%3E%0A%3C/defs%3E%0A%3Crect%20x%3D%274%27%20y%3D%274%27%20width%3D%2756%27%20height%3D%2756%27%20rx%3D%2718%27%20fill%3D%27%230d1422%27/%3E%0A%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%2752%27%20height%3D%2752%27%20rx%3D%2716%27%20fill%3D%27url%28%23g%29%27%20opacity%3D%270.98%27/%3E%0A%3Cpath%20d%3D%27M39%2018.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6%200-10.3%204.3-10.3%209.8s4.7%209.8%2010.3%209.8c3.4%200%206.5-1.4%208.3-3.8%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%275%27%20stroke-linecap%3D%27round%27/%3E%0A%3Cpath%20d%3D%27M43%2029.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7%200-8.5%203.6-8.5%208.1s3.8%208.1%208.5%208.1c2.6%200%204.9-1.1%206.4-2.9%27%20fill%3D%27none%27%20stroke%3D%27white%27%20stroke-width%3D%275%27%20stroke-linecap%3D%27round%27%20opacity%3D%270.96%27/%3E%0A%3C/svg%3E">
 <style>
 :root{
-  --bg:#06101c;
-  --bg2:#0b1220;
-  --text:#eff6ff;
-  --muted:#9fb0c7;
-  --line:rgba(159,176,199,.14);
-  --accent:#334155;
-  --shadow:0 20px 50px rgba(0,0,0,.28);
+  --bg:#04070d; --bg-2:#09111b; --surface:rgba(12,18,29,.66); --surface-2:rgba(16,24,38,.84);
+  --line:rgba(255,255,255,.09); --line-strong:rgba(255,255,255,.18);
+  --text:#f7f9ff; --muted:#a2b2c9; --cyan:#7ae2ff; --blue:#74a4ff; --pink:#ff6cae; --gold:#ff9a52; --orange:#ff7f2f; --violet:#9d7cff;
+  --shadow:0 26px 80px rgba(0,0,0,.4);
 }
-*{box-sizing:border-box}
-html,body{
-  margin:0;
-  min-height:100%;
-  background:#0b1a2b !important;
-  overscroll-behavior:none;
-  color-scheme:dark;
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%;background:#04070d!important;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;overscroll-behavior:none;scroll-behavior:smooth}
+body{min-height:100dvh;min-height:100svh;overflow-x:hidden;background:#04070d!important}
+body::before{content:"";position:fixed;inset:0;z-index:-20;background:
+  radial-gradient(circle at 15% 10%, rgba(122,226,255,.16), transparent 23%),
+  radial-gradient(circle at 85% 14%, rgba(255,108,174,.13), transparent 19%),
+  radial-gradient(circle at 82% 68%, rgba(255,154,82,.12), transparent 22%),
+  radial-gradient(circle at 20% 78%, rgba(116,164,255,.14), transparent 20%),
+  linear-gradient(180deg, #04070d 0%, #09111b 45%, #04070d 100%);
 }
-body{
-  margin:0;
-  min-height:100vh; min-height:100dvh; min-height:100dvh;
-  position:relative;
-  color:var(--text);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
-    linear-gradient(180deg, var(--bg), var(--bg2));
-  display:flex;
-  align-items:center;
-  justify-content:center;
+.noise{position:fixed;inset:0;z-index:-19;pointer-events:none;opacity:.05;background-image:radial-gradient(circle at 18% 16%, rgba(255,255,255,.95) .65px, transparent .8px),radial-gradient(circle at 68% 34%, rgba(255,255,255,.9) .65px, transparent .8px),radial-gradient(circle at 44% 80%, rgba(255,255,255,.9) .65px, transparent .8px);background-size:160px 160px,220px 220px,260px 260px}
+.grid{position:fixed;inset:0;z-index:-18;pointer-events:none;opacity:.08;background-image:linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);background-size:36px 36px;mask-image:linear-gradient(180deg, rgba(0,0,0,.86), transparent 98%)}
+.orb,.orb2,.orb3,.orb4{position:fixed;border-radius:999px;filter:blur(22px);pointer-events:none;z-index:-17;mix-blend-mode:screen;opacity:.4}
+.orb{width:300px;height:300px;left:-70px;top:8%;background:radial-gradient(circle, rgba(122,226,255,.38), transparent 72%);animation:float1 22s ease-in-out infinite}
+.orb2{width:340px;height:340px;right:-90px;top:22%;background:radial-gradient(circle, rgba(255,108,174,.26), transparent 72%);animation:float2 24s ease-in-out infinite}
+.orb3{width:280px;height:280px;left:16%;top:62%;background:radial-gradient(circle, rgba(255,154,82,.22), transparent 72%);animation:float3 20s ease-in-out infinite}
+.orb4{width:260px;height:260px;right:12%;bottom:8%;background:radial-gradient(circle, rgba(116,164,255,.22), transparent 72%);animation:float4 21s ease-in-out infinite}
+.logo-float{position:fixed;left:20px;top:20px;width:68px;height:68px;border-radius:22px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.12);background:rgba(9,14,22,.7);backdrop-filter:blur(18px);box-shadow:0 16px 40px rgba(0,0,0,.24);z-index:42;transition:transform .28s ease,opacity .28s ease,filter .28s ease}
+.logo-float svg{width:42px;height:42px;display:block}
+.logo-float.hidden{opacity:0;transform:translateY(-18px) scale(.96);pointer-events:none}
+.logo-float.dim{opacity:.2;filter:blur(.5px)}
+.nav-shell{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:44;transition:transform .32s ease,opacity .32s ease}
+.nav-shell.hidden{opacity:0;transform:translate(-50%,-18px)}
+.nav-pill{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(8,13,22,.72);backdrop-filter:blur(18px);box-shadow:0 16px 40px rgba(0,0,0,.28)}
+.nav-toggle{width:44px;height:44px;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:var(--text);display:grid;place-items:center;cursor:pointer;transition:transform .14s ease, background .14s ease}
+.nav-toggle:hover{background:rgba(255,255,255,.08)}
+.nav-toggle:active{transform:scale(.98)}
+.nav-toggle span{display:block;width:18px;height:2px;background:#fff;border-radius:999px;position:relative}
+.nav-toggle span::before,.nav-toggle span::after{content:"";position:absolute;left:0;width:18px;height:2px;background:#fff;border-radius:999px}
+.nav-toggle span::before{top:-6px} .nav-toggle span::after{top:6px}
+.nav-label{font-weight:800;letter-spacing:-.02em;font-size:14px;color:#f6f8fd;white-space:nowrap}
+.nav-panel{position:absolute;left:50%;top:64px;transform:translateX(-50%) scale(.98);width:min(420px,calc(100vw - 24px));border-radius:26px;border:1px solid rgba(255,255,255,.12);background:rgba(8,13,22,.86);backdrop-filter:blur(22px);padding:12px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s ease, transform .2s ease}
+.nav-panel.open{opacity:1;pointer-events:auto;transform:translateX(-50%) scale(1)}
+.tool-link{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px;border-radius:20px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.03));text-decoration:none;color:var(--text);transition:transform .14s ease,border-color .14s ease,background .14s ease}
+.tool-link + .tool-link{margin-top:10px}
+.tool-link:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.16);background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04))}
+.tool-left{display:flex;align-items:flex-start;gap:12px}
+.tool-icon{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;background:rgba(255,255,255,.06);flex:0 0 auto}
+.tool-icon svg{width:24px;height:24px;display:block}
+.tool-title{font-size:15px;font-weight:800;letter-spacing:-.02em}
+.tool-copy{margin-top:3px;font-size:12px;color:var(--muted);line-height:1.4}
+.tool-arrow{color:#b8c5da;font-size:18px;line-height:1;margin-top:2px}
+.page{position:relative;z-index:1}
+.hero{min-height:112vh;display:grid;place-items:center;padding:120px 22px 80px;position:relative;overflow:hidden}
+.hero-content{max-width:1040px;width:100%;text-align:center;position:relative}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);backdrop-filter:blur(12px);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#dfe9fb}
+.eyebrow::before{content:"";width:8px;height:8px;border-radius:999px;background:linear-gradient(180deg,var(--gold),var(--pink));box-shadow:0 0 0 6px rgba(255,154,82,.12)}
+.hero-title{margin:22px 0 14px;font-size:clamp(66px,14vw,164px);line-height:.88;font-weight:900;letter-spacing:-.08em}
+.hero-title .gradient{display:block;background:linear-gradient(120deg,#ffffff 5%,#90dfff 32%,#ff9a52 62%,#ff6cae 88%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-copy{max-width:760px;margin:0 auto;color:var(--muted);font-size:clamp(16px,2.2vw,20px);line-height:1.7}
+.marquee{margin:34px auto 0;max-width:min(980px,100%);overflow:hidden;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);backdrop-filter:blur(14px)}
+.marquee-track{display:flex;gap:26px;white-space:nowrap;padding:12px 18px;min-width:max-content;animation:marquee 24s linear infinite}
+.marquee-track span{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#dfe8f7;opacity:.9}
+.hero-media{position:relative;max-width:1120px;margin:42px auto 0;height:360px}
+.stage{position:absolute;inset:0;border-radius:34px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(180deg, rgba(12,18,29,.56), rgba(12,18,29,.36));box-shadow:var(--shadow);overflow:hidden}
+.scanline{position:absolute;inset:-20% 0 auto 0;height:42%;background:linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.1), rgba(255,255,255,0));transform:translateY(-100%);animation:sweep 7s linear infinite;mix-blend-mode:screen;opacity:.4}
+.stage::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 20% 22%, rgba(122,226,255,.16), transparent 18%),radial-gradient(circle at 82% 28%, rgba(255,108,174,.12), transparent 18%),radial-gradient(circle at 50% 82%, rgba(255,154,82,.12), transparent 20%)}
+.float-card{position:absolute;border-radius:24px;border:1px solid rgba(255,255,255,.1);background:rgba(8,13,22,.64);backdrop-filter:blur(16px);box-shadow:0 18px 50px rgba(0,0,0,.28);padding:18px}
+.float-card strong{display:block;font-size:14px;letter-spacing:-.02em}
+.float-card small{display:block;margin-top:6px;color:var(--muted);line-height:1.5}
+.card-mail{left:5%;top:18%;width:290px;animation:float5 8s ease-in-out infinite}
+.card-restaurant{right:7%;bottom:14%;width:310px;animation:float6 9s ease-in-out infinite}
+.card-pulse{left:34%;top:12%;width:150px;text-align:center;animation:float7 7s ease-in-out infinite}
+.card-pulse .number{font-size:44px;font-weight:900;letter-spacing:-.05em;margin-top:10px;background:linear-gradient(120deg,#fff,#9fe5ff 45%,#ff9a52);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ribbon{position:absolute;left:-6%;right:-6%;bottom:18px;display:flex;gap:14px;transform:rotate(-2deg)}
+.ribbon-track{display:flex;gap:14px;min-width:max-content;animation:marquee2 20s linear infinite}
+.ribbon span{padding:12px 16px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.section{position:relative;padding:88px 22px 120px}
+.section-wrap{max-width:1160px;margin:0 auto;display:grid;grid-template-columns:1.02fr .98fr;gap:34px;align-items:center}
+.section-badge{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.section-title{margin:18px 0 14px;font-size:clamp(38px,7vw,84px);line-height:.93;letter-spacing:-.07em}
+.section-copy{max-width:560px;color:var(--muted);font-size:17px;line-height:1.8}
+.feature-list{display:grid;gap:12px;margin-top:22px}
+.feature{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:20px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03)}
+.feature-dot{width:12px;height:12px;border-radius:999px;background:linear-gradient(180deg,var(--cyan),var(--blue));box-shadow:0 0 0 6px rgba(116,164,255,.12);margin-top:5px;flex:0 0 auto}
+.feature strong{font-size:14px;display:block}
+.feature span{display:block;margin-top:4px;color:var(--muted);font-size:14px;line-height:1.55}
+.visual{position:relative;min-height:540px}
+.visual-panel{position:absolute;inset:0;border-radius:34px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(180deg, rgba(10,15,24,.72), rgba(10,15,24,.52));overflow:hidden;box-shadow:var(--shadow)}
+.visual-panel.gmail::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 22% 18%, rgba(122,226,255,.16), transparent 20%),radial-gradient(circle at 80% 30%, rgba(116,164,255,.16), transparent 18%),radial-gradient(circle at 50% 88%, rgba(122,226,255,.08), transparent 22%)}
+.visual-panel.restaurant::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 18% 22%, rgba(255,154,82,.18), transparent 20%),radial-gradient(circle at 82% 28%, rgba(255,108,174,.14), transparent 18%),radial-gradient(circle at 52% 86%, rgba(255,154,82,.08), transparent 24%)}
+.mock-window{position:absolute;left:24px;right:24px;top:24px;height:52px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;padding:0 16px 0 64px;color:#d7e2f4;font-size:13px;position:absolute}
+.mock-window::before{content:"";position:absolute;left:18px;top:50%;transform:translateY(-50%);width:9px;height:9px;border-radius:999px;background:#ff6b6b;box-shadow:16px 0 0 #ffcf55,32px 0 0 #54db74}
+.mail-list,.ticket-list{position:absolute;left:24px;right:24px;top:92px;display:grid;gap:12px}
+.mail{padding:16px 16px 14px;border-radius:22px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);box-shadow:0 12px 24px rgba(0,0,0,.12);animation:mailFloat 10s ease-in-out infinite}
+.mail:nth-child(2){animation-delay:-2.4s} .mail:nth-child(3){animation-delay:-4.6s}
+.mail strong,.ticket strong{display:block;margin-top:2px;font-size:15px;line-height:1.25;letter-spacing:-.02em}
+.mail p,.ticket p{margin:8px 0 0;color:var(--muted);line-height:1.55;font-size:13px}
+.ticket-list{grid-template-columns:repeat(2,minmax(0,1fr));top:104px}
+.ticket{padding:16px;border-radius:24px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);min-height:166px;box-shadow:0 12px 24px rgba(0,0,0,.12);animation:ticketFloat 11s ease-in-out infinite}
+.ticket:nth-child(2){animation-delay:-2.2s} .ticket:nth-child(3){animation-delay:-3.7s} .ticket:nth-child(4){animation-delay:-5.1s}
+.ticket .label{display:inline-flex;padding:7px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;margin-bottom:14px}
+.ticket .bar{height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:14px}
+.ticket .bar > span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--gold),var(--pink))}
+.footer-note{padding:0 22px 64px;text-align:center;color:var(--muted);font-size:13px}
+@keyframes float1{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(30px,22px,0)}}
+@keyframes float2{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(-26px,32px,0)}}
+@keyframes float3{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(18px,-24px,0)}}
+@keyframes float4{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(-18px,-20px,0)}}
+@keyframes float5{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-14px) rotate(-2deg)}}
+@keyframes float6{0%,100%{transform:translateY(0) rotate(3deg)}50%{transform:translateY(-16px) rotate(1deg)}}
+@keyframes float7{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+@keyframes mailFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+@keyframes ticketFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+@keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes marquee2{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes sweep{0%{transform:translateY(-120%)}100%{transform:translateY(260%)}}
+@media (max-width: 960px){
+  .section-wrap{grid-template-columns:1fr;gap:22px}
+  .visual{min-height:500px}
+  .hero-media{height:420px}
 }
-.wrap{
-    background:#0b1a2b;max-width:1200px;width:100%;padding:calc(36px + env(safe-area-inset-top,0px)) 20px calc(44px + env(safe-area-inset-bottom,0px))}
-.hero{
-  background:linear-gradient(180deg, rgba(15,23,42,.82), rgba(15,23,42,.58));
-  border:1px solid var(--line);
-  border-radius:34px;
-  padding:42px 30px 30px;
-  box-shadow:var(--shadow);
-  backdrop-filter:blur(16px);
-  text-align:center;
+@media (max-width: 640px){
+  .logo-float{left:14px;top:14px;width:58px;height:58px;border-radius:18px}
+  .logo-float svg{width:36px;height:36px}
+  .nav-shell{top:14px}
+  .nav-pill{padding:8px 10px}
+  .nav-toggle{width:40px;height:40px;border-radius:12px}
+  .nav-label{font-size:13px}
+  .hero{padding-top:118px}
+  .hero-title{font-size:22vw}
+  .hero-copy{font-size:15px}
+  .hero-media{height:440px}
+  .float-card{padding:14px}
+  .card-mail{left:4%;width:240px}
+  .card-restaurant{right:4%;width:246px}
+  .card-pulse{left:30%;top:10%;width:132px}
+  .section{padding:72px 16px 96px}
+  .section-copy{font-size:15px}
+  .visual{min-height:520px}
+  .ticket-list{grid-template-columns:1fr}
 }
-.eyebrow{
-  display:inline-flex;align-items:center;gap:8px;
-  font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
-  color:#bfe9ff;background:rgba(56,189,248,.10);border:1px solid rgba(99,213,255,.18);
-  padding:8px 12px;border-radius:999px;margin-bottom:16px;
-}
-.eyebrow::before{
-  content:"";
-  width:8px;height:8px;border-radius:999px;background:var(--accent);
-  box-shadow:0 0 0 6px rgba(56,189,248,.12);
-}
-h1{margin:0 0 12px;font-size:82px;letter-spacing:-.05em;line-height:1}
-p{margin:0 auto;color:var(--muted);line-height:1.65;max-width:760px;font-size:16px}
-.grid{
-  margin-top:34px;
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:18px;
-}
-.card{
-  display:block;
-  text-decoration:none;
-  color:inherit;
-  background:linear-gradient(180deg, rgba(22,22,22,.96), rgba(12,12,12,.94));
-  border:1px solid var(--line);
-  border-radius:30px;
-  padding:24px;
-  box-shadow:var(--shadow);
-  transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;
-  text-align:left;
-}
-.card:hover{
-  transform:translateY(-4px);
-  border-color:rgba(99,213,255,.30);
-  box-shadow:0 28px 60px rgba(0,0,0,.32);
-}
-.icon{
-  width:62px;
-  height:62px;
-  border-radius:18px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:white;
-  border:1px solid rgba(99,213,255,.18);
-  margin-bottom:16px;
-  overflow:hidden;
-}
-.icon img{
-  max-width:42px;
-  max-height:42px;
-  object-fit:contain;
-  display:block;
-}
-.card h2{margin:0 0 10px;font-size:28px;letter-spacing:-.02em}
-.card p{font-size:14px;max-width:none;margin:0}
-.tag{
-  display:inline-block;
-  margin-top:16px;
-  padding:8px 12px;
-  border-radius:999px;
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  background:rgba(255,255,255,.04);
-  border:1px solid rgba(159,176,199,.12);
-  color:#d7e8fb;
-}
-@media (max-width:800px){
-  h1{font-size:52px}
-  .grid{grid-template-columns:1fr}
-  .hero{padding:30px 20px}
-}
-
-@media (max-width: 480px){
-  body{padding:20px}
-  .card{padding:24px 18px 18px}
-  .pad{gap:10px}
-  .key{min-height:54px;font-size:21px}
-  .toolbar{margin-top:14px}
-}
-
-
-.bg-fixed{
-  position:fixed;
-  inset:0;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
-    linear-gradient(180deg, #06101c, #0b1220);
-  z-index:-1;
-}
-
 </style>
 </head>
 <body>
-<div class="bg-fixed"></div>
-  <div class="wrap">
-    <div class="hero">
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><a href="/logout" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);padding:10px 14px;border-radius:16px;background:rgba(16,27,48,.88);border:1px solid var(--line)">Uitloggen</a></div>
-      <div class="eyebrow">Welkom</div>
-      <h1>Welkom</h1>
-      <p>Kies welke tool je wilt openen. Zo blijven je Gmail automation en Casa Cara netjes van elkaar gescheiden en overzichtelijk.</p>
+<div class="noise"></div>
+<div class="grid"></div>
+<div class="orb"></div><div class="orb2"></div><div class="orb3"></div><div class="orb4"></div>
 
-      <div class="grid">
-        <a class="card" href="/gmail">
-          <div class="icon">
-            <img src="/static/gmail.png" alt="Gmail logo" onerror="this.style.display='none'; this.parentNode.innerHTML='📧'; this.parentNode.style.fontSize='30px';">
-          </div>
-          <h2>Gmail Cleaner</h2>
-          <p>Je Gmail cleaner met opruimen, PDF-downloads, statistieken, goedkeuringen en geschiedenis.</p>
-          <div class="tag">Bestaande tool</div>
-        </a>
+<div class="logo-float" id="floatingLogo" aria-hidden="true"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
+<defs>
+<linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+<stop offset='0%' stop-color='#ff8a2a'/>
+<stop offset='55%' stop-color='#ff5f72'/>
+<stop offset='100%' stop-color='#915dff'/>
+</linearGradient>
+</defs>
+<rect x='4' y='4' width='56' height='56' rx='18' fill='#0d1422'/>
+<rect x='6' y='6' width='52' height='52' rx='16' fill='url(#g)' opacity='0.98'/>
+<path d='M39 18.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6 0-10.3 4.3-10.3 9.8s4.7 9.8 10.3 9.8c3.4 0 6.5-1.4 8.3-3.8' fill='none' stroke='white' stroke-width='5' stroke-linecap='round'/>
+<path d='M43 29.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7 0-8.5 3.6-8.5 8.1s3.8 8.1 8.5 8.1c2.6 0 4.9-1.1 6.4-2.9' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' opacity='0.96'/>
+</svg></div>
 
-        <a class="card casa-card" href="/casa-cara-login">
-          <div class="icon">
-            <img src="/static/casa.png" alt="Casa Cara logo" onerror="this.style.display='none'; this.parentNode.innerHTML='🍽️'; this.parentNode.style.fontSize='30px';">
-          </div>
-          <h2>Casa Cara</h2>
-          <p>Je restaurant-tool voor koelingen, voorraden en straks een slim bijvuloverzicht voor op je telefoon.</p>
-          <div class="tag">Nieuwe tool</div>
-        </a>
-      </div>
-    </div>
+<div class="nav-shell" id="navShell">
+  <div class="nav-pill">
+    <button class="nav-toggle" id="navToggle" type="button" aria-label="Menu openen"><span></span></button>
+    <div class="nav-label">Menu</div>
   </div>
-</body>
-</html>
-
-"""
-
-CASA_HTML = """
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>Casa Cara</title>
-<link rel="icon" type="image/png" href="/static/casa.png">
-<style>
-:root{
-  --bg:#000000; --bg2:#050505; --text:#f6f1e7; --muted:#b4ab9a;
-  --line:rgba(201,170,112,.16); --accent:#d4b06a; --good:#d4b06a; --danger:#b84f4f;
-  --shadow:0 20px 50px rgba(0,0,0,.28);
-}
-*{box-sizing:border-box}
-html,body{
-  margin:0;
-  min-height:100%;
-  background:#0b1a2b !important;
-  overscroll-behavior:none;
-  color-scheme:dark;
-}
-body{
-  margin:0; min-height:100vh; color:var(--text);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(212,176,106,.04), transparent 22%),
-    radial-gradient(circle at 90% 0%, rgba(196,153,72,.03), transparent 20%),
-    linear-gradient(180deg, var(--bg), var(--bg2));
-}
-.wrap{
-    background:transparent;max-width:1260px;margin:0 auto;padding:24px 18px 42px}
-.topbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-.back{
-  display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);
-  padding:10px 14px;border-radius:16px;background:rgba(18,18,18,.95);border:1px solid var(--line)
-}
-.hero,.card{
-  background:linear-gradient(180deg, rgba(22,22,22,.96), rgba(12,12,12,.94));
-  border:1px solid var(--line); border-radius:28px; padding:20px; box-shadow:var(--shadow);
-}
-.hero h1{margin:0 0 8px;font-size:40px;letter-spacing:-.03em}
-.hero p{margin:0;color:var(--muted);line-height:1.6}
-.tabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 20px;padding:8px;border-radius:22px;background:rgba(14,14,14,.88);border:1px solid var(--line)}
-.tabbtn{
-  border:none;border-radius:16px;padding:12px 16px;font-size:14px;font-weight:800;cursor:pointer;
-  color:var(--text);background:transparent;
-}
-.tabbtn.active{background:linear-gradient(180deg,#f3e2bf,#d4b06a);color:#3a2a10}
-.tabpanel{display:none}.tabpanel.active{display:block}
-.section-title{margin:0 0 12px;font-size:20px}
-.muted{color:var(--muted);font-size:14px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.form-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;margin-top:12px}
-.form-row.type-row{grid-template-columns:1fr 1fr auto}
-.form-row.locations{grid-template-columns:1fr auto}
-.form-row.products{grid-template-columns:1.2fr .8fr 1fr auto}
-.form-row input,.form-row select{
-  width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
-  border-radius:14px;padding:12px 13px;font-size:14px;outline:none;
-}
-.btn{
-  border:none;border-radius:14px;padding:12px 16px;font-size:14px;font-weight:800;cursor:pointer;
-  background:rgba(212,176,106,.16);color:#f5e7c8;border:1px solid rgba(212,176,106,.28);
-}
-.btn.danger{background:linear-gradient(180deg,#df8a8a,#b84f4f);color:#fff4f4;border-color:rgba(184,79,79,.30)}
-.btn.good{background:linear-gradient(180deg,#f3dfb2,#d4b06a);color:#1b1307;border-color:rgba(212,176,106,.28)}
-.btn.small{padding:8px 12px;font-size:13px}
-.koeling-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.koeling{
-  background:rgba(20,20,20,.96);border:1px solid var(--line);border-radius:22px;padding:16px;cursor:pointer;
-}
-.koeling .title{font-weight:800;margin-bottom:6px}
-.koeling .meta{font-size:13px;color:var(--muted);line-height:1.45}
-.fill-list,.line-list{display:grid;gap:10px}
-.fill-item,.line{
-  background:rgba(18,18,18,.95);border:1px solid var(--line);border-radius:18px;padding:14px;
-}
-.fill-item.urgent{border-color:rgba(239,68,68,.28);background:rgba(239,68,68,.06)}
-.line-top,.fill-top{display:flex;justify-content:space-between;gap:12px;align-items:start}
-.line .name,.fill-item .title{font-weight:800}
-.line .meta,.fill-item .meta{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.45}
-.qty{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
-.qty button{
-  min-width:42px;height:38px;border:none;border-radius:12px;cursor:pointer;font-size:18px;font-weight:900;
-  background:rgba(212,176,106,.14);color:#f5e7c8;border:1px solid rgba(212,176,106,.28);
-}
-.qty input{
-  max-width:110px;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
-  border-radius:12px;padding:10px 12px;font-size:14px;
-}
-.pill-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.pill{
-  display:inline-flex;align-items:center;gap:8px;
-  padding:8px 12px;border-radius:999px;background:rgba(20,20,20,.98);border:1px solid var(--line);font-size:13px
-}
-.empty{padding:16px;border-radius:18px;background:rgba(255,255,255,.03);border:1px dashed var(--line);color:var(--muted)}
-.modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.76);display:none;align-items:center;justify-content:center;z-index:9999}
-.modal-backdrop.active{display:flex}
-.modal{width:min(460px,calc(100vw - 24px));background:#0d1628;border:1px solid rgba(159,176,199,.22);border-radius:24px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.40)}
-.modal h3{margin:0 0 8px;font-size:22px}
-.modal p{margin:0;color:var(--muted);line-height:1.6}
-.modal .field{margin-top:12px}
-.modal .field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
-.modal input,.modal select{
-  width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);
-  border-radius:14px;padding:12px 13px;font-size:14px;outline:none;
-}
-.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
-.toast-wrap{position:fixed;top:18px;right:18px;z-index:10000;display:grid;gap:10px}
-.toast{
-  min-width:280px;max-width:380px;background:rgba(9,15,28,.96);border:1px solid rgba(201,170,112,.16);
-  color:var(--text);border-radius:18px;padding:14px 16px;box-shadow:0 18px 40px rgba(0,0,0,.32)
-}
-.toast .title{font-weight:900;margin-bottom:4px}
-.toast.success{border-color:rgba(34,197,94,.35)}
-.toast.info{border-color:rgba(56,189,248,.35)}
-@media (max-width:980px){
-  .grid,.form-row,.koeling-grid{grid-template-columns:1fr}
-  .form-row.products,.form-row.type-row{grid-template-columns:1fr}
-}
-@media (max-width:640px){
-  .wrap{
-    background:transparent;padding:16px 12px 28px}
-  .hero,.card{padding:16px}
-  .hero h1{font-size:32px}
-  .tabs{gap:8px;padding:6px}
-  .tabbtn{width:100%;text-align:center}
-  .line-top,.fill-top{flex-direction:column;align-items:stretch}
-  .qty{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
-  .qty input{grid-column:1 / -1;max-width:none}
-  .btn{width:100%}
-  .pill{width:100%;justify-content:space-between}
-}
-
-@media (max-width: 480px){
-  body{padding:20px}
-  .card{padding:24px 18px 18px}
-  .pad{gap:10px}
-  .key{min-height:54px;font-size:21px}
-  .toolbar{margin-top:14px}
-}
-
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="topbar">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="back" href="/">← Terug naar home</a><a class="back" href="/logout">Uitloggen</a></div>
-  </div>
-
-  <div class="hero">
-    <div style="display:flex;align-items:center;gap:14px;justify-content:center;margin-bottom:8px;"><img src="/static/casa.png" alt="Casa Cara" onerror="this.style.display='none'" style="width:54px;height:54px;object-fit:contain;border-radius:14px;background:rgba(255,255,255,.04);padding:6px;"><h1 style="margin:0;">Casa Cara</h1></div>
-    <p>Casa Cara in eigen stijl, met warme kleuren en dezelfde slimme workflow.</p>
-  </div>
-
-  <div class="tabs">
-    <button class="tabbtn active" onclick="showTab('algemeen', this)">Algemeen</button>
-    <button class="tabbtn" onclick="showTab('keuken', this)">Keuken</button>
-    <button class="tabbtn" onclick="showTab('bar', this)">Bar</button>
-  </div>
-
-  <div id="tab-algemeen" class="tabpanel active">
-    <div class="grid">
-      <div class="card">
-        <h2 class="section-title">Fooienpot</h2>
-        <div class="muted">Houd voor jezelf bij hoeveel fooi je hebt opgespaard.</div>
-        <div style="font-size:42px;font-weight:900;margin:14px 0;" id="fooiTotaal">€ 0,00</div>
-        <div class="form-row" style="grid-template-columns:1fr auto auto;">
-          <input id="fooiBedrag" type="number" step="0.01" placeholder="Bedrag">
-          <button class="btn good" onclick="adjustTips('add')">Toevoegen</button>
-          <button class="btn danger" onclick="adjustTips('subtract')">Afhalen</button>
+  <div class="nav-panel" id="navPanel">
+    <a class="tool-link" href="/casa-cara-login">
+      <div class="tool-left">
+        <div class="tool-icon"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
+<defs>
+<linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+<stop offset='0%' stop-color='#ff8a2a'/>
+<stop offset='55%' stop-color='#ff5f72'/>
+<stop offset='100%' stop-color='#915dff'/>
+</linearGradient>
+</defs>
+<rect x='4' y='4' width='56' height='56' rx='18' fill='#0d1422'/>
+<rect x='6' y='6' width='52' height='52' rx='16' fill='url(#g)' opacity='0.98'/>
+<path d='M39 18.5c-1.8-2.3-4.9-3.7-8.3-3.7-5.6 0-10.3 4.3-10.3 9.8s4.7 9.8 10.3 9.8c3.4 0 6.5-1.4 8.3-3.8' fill='none' stroke='white' stroke-width='5' stroke-linecap='round'/>
+<path d='M43 29.6c-1.5-1.8-3.8-2.9-6.4-2.9-4.7 0-8.5 3.6-8.5 8.1s3.8 8.1 8.5 8.1c2.6 0 4.9-1.1 6.4-2.9' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' opacity='0.96'/>
+</svg></div>
+        <div>
+          <div class="tool-title">Restaurant-tool</div>
+          <div class="tool-copy">Ga naar je eigen gebouwde restaurant tool</div>
         </div>
       </div>
-
-      <div class="card">
-        <h2 class="section-title">Diensten</h2>
-        <div class="muted">Datum wordt automatisch als dag weergegeven in je overzicht.</div>
-        <div id="dienstenList" class="line-list" style="margin-top:12px;"></div>
-        <div class="form-row">
-          <input id="dienstDatum" type="date">
-          <input id="dienstTijd" placeholder="Tijd, bijv. 12:00 - 21:00">
-          <input id="dienstNotitie" placeholder="Notitie">
-          <button type="button" class="btn" onclick="addDienst()">Toevoegen</button>
+      <div class="tool-arrow">↗</div>
+    </a>
+    <a class="tool-link" href="/gmail-login">
+      <div class="tool-left">
+        <div class="tool-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.6A2.6 2.6 0 0 1 5.6 4h12.8A2.6 2.6 0 0 1 21 6.6v10.8a2.6 2.6 0 0 1-2.6 2.6H5.6A2.6 2.6 0 0 1 3 17.4Z"/><path d="m4 7 8 6 8-6"/></svg>
+        </div>
+        <div>
+          <div class="tool-title">Gmail Cleaner</div>
+          <div class="tool-copy">Open je cleaner, statistieken en automatiseringen</div>
         </div>
       </div>
-    </div>
-  </div>
-
-  <div id="tab-keuken" class="tabpanel">
-    <div class="card">
-      <h2 class="section-title">Keuken</h2>
-      <div class="empty">Deze pagina bewaren we nog even voor later.</div>
-    </div>
-  </div>
-
-  <div id="tab-bar" class="tabpanel">
-    <div id="barHome">
-      <div class="grid">
-        <div class="card">
-          <h2 class="section-title">Koelingen</h2>
-          <div class="muted">Klik op een koeling om producten te bekijken en aan te passen.</div>
-          <div id="koelingGrid" class="koeling-grid" style="margin-top:12px;"></div>
-          <div class="form-row locations">
-            <input id="newCoolingName" placeholder="Nieuwe koeling naam">
-            <button type="button" class="btn" onclick="addCooling()">Koeling toevoegen</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2 class="section-title">Bijvuloverzicht</h2>
-          <div class="muted">Gesorteerd op locatie zodat je minder hoeft te lopen.</div>
-          <div id="fillSummaryCard" class="line-list" style="margin-top:12px;"></div>
-          <div style="margin-top:12px;">
-            <button id="fillOverviewBtn" class="btn good" onclick="openFillOverview()">Naar bijvuloverzicht</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid" style="margin-top:18px;">
-
-        <div class="card">
-          <h2 class="section-title">Locaties</h2>
-          <div class="muted">Beheer hier de locaties die je koppelt aan productsoorten.</div>
-          <div id="locationsList" class="pill-list"></div>
-          <div class="form-row locations">
-            <input id="newLocationName" placeholder="Nieuwe locatie">
-            <button class="btn" onclick="addLocation()">Locatie toevoegen</button>
-          </div>
-        </div>
-        <div class="card">
-          <h2 class="section-title">Productsoorten</h2>
-          <div class="muted">Elke productsoort heeft nu een vaste locatie. Nieuwe producten nemen die automatisch over.</div>
-          <div id="typesList" class="pill-list"></div>
-          <div class="form-row type-row">
-            <input id="newTypeName" placeholder="Nieuwe productsoort">
-            <select id="newTypeLocation"></select>
-            <button type="button" class="btn" onclick="addProductType()">Toevoegen</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2 class="section-title">Op / niet op voorraad</h2>
-          <div class="muted">Items die je niet kon bijvullen blijven hier zichtbaar totdat ze weer beschikbaar zijn.</div>
-          <div id="opList" class="line-list" style="margin-top:12px;"></div>
-        </div>
-      </div>
-
-      <div class="card" style="margin-top:18px;">
-        <h2 class="section-title">Bar overzicht</h2>
-        <div class="muted">Snel overzicht van koelingen, producten, open bijvulitems en producten die op zijn.</div>
-        <div id="barSummary" class="line-list" style="margin-top:12px;"></div>
-      </div>
-    </div>
-
-    <div id="fillOverview" style="display:none;">
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
-          <div>
-            <h2 class="section-title">Bijvuloverzicht</h2>
-            <div class="muted">Gesorteerd op locatie zodat je sneller kunt lopen en overzicht houdt.</div>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <select class="styled-select" id="fillSortMode" class="styled-select" onchange="renderFillOverviewOnly()" style="min-width:180px;">
-              <option value="locatie">Sorteren op locatie</option>
-              <option value="soort">Sorteren op productsoort</option>
-            </select>
-            <button class="btn" onclick="backToBarHomeFromFill()">← Terug</button>
-            <button class="btn good" onclick="markAllFilled()">Alles bijgevuld 🥳</button>
-          </div>
-        </div>
-        <div id="fillList" class="fill-list" style="margin-top:16px;"></div>
-      </div>
-    </div>
-
-    <div id="coolingDetail" style="display:none;">
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
-          <div>
-            <h2 class="section-title" id="detailTitle">Koeling</h2>
-            <div class="muted">Nieuw product toevoegen staat bovenaan. Vul hier direct in tot welk aantal je wilt aanvullen.</div>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <select class="styled-select" id="coolingSortMode" class="styled-select" onchange="renderCoolingDetail()" style="min-width:220px;">
-              <option value="soort">Sorteren op productsoort</option>
-              <option value="locatie">Sorteren op locatie</option>
-            </select>
-            <button class="btn" onclick="backToBarHome()">← Terug</button>
-            <button class="btn danger" onclick="deleteCurrentCooling()">Koeling verwijderen</button>
-          </div>
-        </div>
-
-        <h3 style="margin:18px 0 8px;">Nieuw product toevoegen</h3>
-        <div class="form-row products">
-          <input id="newProductName" placeholder="Productnaam">
-          <input id="newProductMinimum" type="number" placeholder="Aanvullen tot">
-          <select id="newProductType"></select>
-          <button type="button" class="btn" onclick="addProduct()">Toevoegen</button>
-        </div>
-
-        <div id="productList" class="line-list" style="margin-top:16px;"></div>
-      </div>
-    </div>
+      <div class="tool-arrow">↗</div>
+    </a>
   </div>
 </div>
 
-<div id="confirmBackdrop" class="modal-backdrop">
-  <div class="modal">
-    <h3>Weet je het zeker?</h3>
-    <p id="confirmText">Deze actie kan niet ongedaan worden gemaakt.</p>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeConfirm()">Annuleren</button>
-      <button class="btn danger" onclick="runConfirm()">Verwijderen</button>
-    </div>
-  </div>
-</div>
-
-<div id="editBackdrop" class="modal-backdrop">
-  <div class="modal">
-    <h3 id="editTitle">Aanpassen</h3>
-    <div id="editBody"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeEdit()">Annuleren</button>
-      <button class="btn good" onclick="runEditSave()">Opslaan</button>
-    </div>
-  </div>
-</div>
-
-<div id="productBackdrop" class="modal-backdrop">
-  <div class="modal">
-    <h3 id="productModalTitle">Productinfo</h3>
-    <div id="productModalBody"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeProductModal()">Sluiten</button>
-    </div>
-  </div>
-</div>
-
-<div id="toastWrap" class="toast-wrap"></div>
-
-<script>
-let generalData = null;
-let barData = null;
-let productTypesData = [];
-let locationsData = [];
-let opData = [];
-let selectedCoolingId = null;
-let confirmAction = null;
-let editSaveAction = null;
-let activeProductModal = null;
-
-const esc = v => (v ?? '').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-
-function showToast(title, message, type='info'){
-  const wrap = document.getElementById('toastWrap');
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.innerHTML = `<div class="title">${esc(title)}</div><div>${esc(message)}</div>`;
-  wrap.appendChild(el);
-  setTimeout(() => { el.style.opacity='0'; setTimeout(()=>el.remove(), 220); }, 2800);
-}
-
-function showTab(name, btn){
-  document.querySelectorAll('.tabpanel').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.tabbtn').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + name).classList.add('active');
-  btn.classList.add('active');
-}
-
-function openConfirm(text){
-  document.getElementById('confirmText').textContent = text;
-  document.getElementById('confirmBackdrop').classList.add('active');
-}
-function closeConfirm(){
-  document.getElementById('confirmBackdrop').classList.remove('active');
-  confirmAction = null;
-}
-function runConfirm(){
-  if(confirmAction){ confirmAction(); }
-  closeConfirm();
-}
-function openEdit(title, html, onSave){
-  document.getElementById('editTitle').textContent = title;
-  document.getElementById('editBody').innerHTML = html;
-  editSaveAction = onSave;
-  document.getElementById('editBackdrop').classList.add('active');
-}
-function closeEdit(){
-  document.getElementById('editBackdrop').classList.remove('active');
-  editSaveAction = null;
-}
-function runEditSave(){
-  if(editSaveAction){ editSaveAction(); }
-}
-
-function openProductModal(coolingId, productId){
-  const cooling = (barData.koelingen || []).find(k => k.id === coolingId);
-  const product = (cooling?.producten || []).find(p => p.id === productId);
-  if(!product) return;
-
-  const locatie = productTypesData.find(t => t.naam === (product.soort || 'Overig'))?.locatie || '-';
-  document.getElementById('productModalTitle').textContent = product.naam;
-  document.getElementById('productModalBody').innerHTML = `
-    <div class="field"><label>Productsoort</label><div class="muted">${esc(product.soort || 'Overig')}</div></div>
-    <div class="field"><label>Locatie</label><div class="muted">${esc(locatie)}</div></div>
-    <div class="field"><label>Aanvullen tot</label><div class="muted">${esc(product.minimum)}</div></div>
-    <div class="field"><label>Moet bijgevuld worden</label><div class="muted">${esc(product.voorraad || 0)}</div></div>
-  `;
-  document.getElementById('productBackdrop').classList.add('active');
-}
-function closeProductModal(){
-  document.getElementById('productBackdrop').classList.remove('active');
-  activeProductModal = null;
-}
-
-
-function confirmDeleteDienst(id){
-  confirmAction = () => deleteDienst(id);
-  openConfirm('Weet je zeker dat je deze dienst wilt verwijderen?');
-}
-
-async function loadAll(){
-  await Promise.all([loadGeneral(), loadBar(), loadProductTypes(), loadLocations(), loadOpItems()]);
-  renderGeneral();
-  renderBarHome();
-  if(selectedCoolingId){ renderCoolingDetail(); }
-}
-
-async function loadGeneral(){
-  const res = await fetch('/api/general');
-  generalData = await res.json();
-}
-
-async function loadBar(){
-  const res = await fetch('/api/bar');
-  barData = await res.json();
-}
-
-async function loadProductTypes(){
-  const res = await fetch('/api/product-types');
-  productTypesData = await res.json();
-}
-async function loadLocations(){
-  const res = await fetch('/api/locations');
-  locationsData = await res.json();
-}
-async function loadOpItems(){
-  const res = await fetch('/api/op-items');
-  opData = await res.json();
-}
-
-function renderGeneral(){
-  document.getElementById('fooiTotaal').textContent = new Intl.NumberFormat('nl-NL', {style:'currency', currency:'EUR'}).format(Number(generalData.fooienpot || 0));
-  const list = document.getElementById('dienstenList');
-  list.innerHTML = '';
-  const diensten = generalData.diensten || [];
-  if(!diensten.length){
-    list.innerHTML = '<div class="empty">Nog geen diensten toegevoegd.</div>';
-  } else {
-    diensten.forEach(item => {
-      const el = document.createElement('div');
-      el.className = 'line';
-      el.innerHTML = `
-        <div class="line-top">
-          <div>
-            <div class="name">${esc(item.day_label || item.date)}</div>
-            <div class="meta">${esc(item.time || '-')}<br>${esc(item.note || '')}</div>
-          </div>
-          <button class="btn danger small" onclick="confirmDeleteDienst('${item.id}')">Verwijderen</button>
+<main class="page">
+  <section class="hero">
+    <div class="hero-content">
+      <div class="eyebrow">Nieuwe launch experience</div>
+      <h1 class="hero-title"><span class="gradient">Welkom!</span></h1>
+      <p class="hero-copy">Eén plek voor je restaurant-tool en je Gmail Cleaner. Donker, snel, levendig en gebouwd om op telefoon net zo hard te werken als op desktop.</p>
+      <div class="marquee">
+        <div class="marquee-track">
+          <span>Restaurant workflow</span><span>Gmail automations</span><span>Live op mobiel</span><span>Eigen toolstack</span><span>Casa Cara</span><span>Cleaner</span><span>Restaurant workflow</span><span>Gmail automations</span><span>Live op mobiel</span><span>Eigen toolstack</span><span>Casa Cara</span><span>Cleaner</span>
         </div>
-      `;
-      list.appendChild(el);
-    });
-  }
-}
+      </div>
 
-async function adjustTips(mode){
-  const input = document.getElementById('fooiBedrag');
-  const amount = Number(input.value || 0);
-  if(!amount){ showToast('Fooienpot', 'Vul eerst een bedrag in.'); return; }
-  const res = await fetch('/api/tips', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({mode, amount})
-  });
-  generalData = await res.json();
-  input.value = '';
-  renderGeneral();
-  showToast('Diensten', 'Dienst verwijderd.', 'success');
-}
-
-async function addDienst(){
-  const date = document.getElementById('dienstDatum').value;
-  const time = document.getElementById('dienstTijd').value.trim();
-  const note = document.getElementById('dienstNotitie').value.trim();
-  if(!date || !time){ showToast('Diensten', 'Vul een datum en tijd in.'); return; }
-  const res = await fetch('/api/dienst', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({date, time, note})
-  });
-  generalData = await res.json();
-  document.getElementById('dienstDatum').value = '';
-  document.getElementById('dienstTijd').value = '';
-  document.getElementById('dienstNotitie').value = '';
-  renderGeneral();
-}
-
-async function deleteDienst(id){
-  const res = await fetch('/api/dienst-delete', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({id})
-  });
-  generalData = await res.json();
-  renderGeneral();
-}
-
-function renderBarHome(){
-  const koelingen = barData.koelingen || [];
-  const grid = document.getElementById('koelingGrid');
-  grid.innerHTML = '';
-  if(!koelingen.length){
-    grid.innerHTML = '<div class="empty">Nog geen koelingen toegevoegd.</div>';
-  } else {
-    koelingen.forEach(cooling => {
-      const low = cooling.producten.filter(p => Number(p.voorraad) < Number(p.minimum)).length;
-      const el = document.createElement('div');
-      el.className = 'koeling';
-      el.onclick = () => openCooling(cooling.id);
-      el.innerHTML = `<div class="title">${esc(cooling.naam)}</div><div class="meta">${cooling.producten.length} producten<br>${low} item(s) onder minimum</div>`;
-      grid.appendChild(el);
-    });
-  }
-  renderLocations();
-  renderProductTypes();
-  renderFillSummary();
-  renderOpList();
-  renderBarSummary();
-}
-
-function renderFillOverviewOnly(){
-  const fillItems = barData.fill_items || [];
-  const fillList = document.getElementById('fillList');
-  const mode = document.getElementById('fillSortMode')?.value || 'locatie';
-  fillList.innerHTML = '';
-
-  if(!fillItems.length){
-    fillList.innerHTML = '<div class="empty">Alles ziet er goed uit. Er hoeft nu niets bijgevuld te worden.</div>';
-    return;
-  }
-
-  groupedItems(fillItems, mode).forEach(([groupName, items]) => {
-    const header = document.createElement('div');
-    header.className = 'line';
-    header.innerHTML = `<div class="name">${esc(mode === 'soort' ? 'Productsoort' : 'Locatie')}: ${esc(groupName)}</div><div class="meta">${items.length} item(s)</div>`;
-    fillList.appendChild(header);
-
-    items.forEach(item => {
-      const urgent = Number(item.voorraad) === 0 || Number(item.voorraad) < Math.ceil(Number(item.minimum) / 2);
-      const el = document.createElement('div');
-      el.className = 'fill-item' + (urgent ? ' urgent' : '');
-      el.innerHTML = `
-        <div class="fill-top">
-          <div>
-            <div class="title">${esc(item.product)}</div>
-            <div class="meta">
-              Locatie: ${esc(item.locatie)} · Soort: ${esc(item.soort)} · ${esc(item.koeling)}<br>
-              Aanvullen tot: ${item.minimum}<br>
-              <strong style="font-size:18px;color:#f5deb0;">Moet bijgevuld worden: ${item.bijvullen}</strong>
+      <div class="hero-media">
+        <div class="stage">
+          <div class="scanline"></div>
+          <div class="float-card card-mail">
+            <strong>Inbox in control</strong>
+            <small>Statistieken, opruimen en workflows bewegen mee in hetzelfde systeem.</small>
+          </div>
+          <div class="float-card card-pulse">
+            <div style="font-size:12px;color:var(--muted);font-weight:800;letter-spacing:.12em;text-transform:uppercase">Tool status</div>
+            <div class="number">2</div>
+          </div>
+          <div class="float-card card-restaurant">
+            <strong>Restaurant flow</strong>
+            <small>Koelingen, bijvullen, diensten, fooienpot en taken in één tool die je team snapt.</small>
+          </div>
+          <div class="ribbon">
+            <div class="ribbon-track">
+              <span>Premium interface</span><span>Eigen logins</span><span>Mobiel vriendelijk</span><span>Casa Bot</span><span>Realtime workflow</span><span>Premium interface</span><span>Eigen logins</span><span>Mobiel vriendelijk</span><span>Casa Bot</span><span>Realtime workflow</span>
             </div>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn small good" onclick="markFilled('${item.koeling_id}', '${item.product_id}')">Gepakt</button>
-            <button class="btn small danger" onclick="markOutOfStock('${item.koeling_id}', '${item.product_id}')">Op</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="gmail">
+    <div class="section-wrap">
+      <div>
+        <div class="section-badge">Gmail Cleaner</div>
+        <h2 class="section-title">Van inbox chaos naar een strakke cleanup flow.</h2>
+        <p class="section-copy">Je cleaner draait achter een eigen login en voelt nu als onderdeel van een echte app. De launch page laat meteen zien wat het doet, zonder dat je overal dezelfde knoppen terugziet.</p>
+        <div class="feature-list">
+          <div class="feature"><div class="feature-dot"></div><div><strong>Eigen toegangspoort</strong><span>Gmail opent pas na een eigen pincode, los van Casa Cara.</span></div></div>
+          <div class="feature"><div class="feature-dot"></div><div><strong>Snel naar actie</strong><span>Statistieken, opschonen en downloads zitten achter een rustige, duidelijke flow.</span></div></div>
+          <div class="feature"><div class="feature-dot"></div><div><strong>Meer premium gevoel</strong><span>Niet meer een los script, maar een onderdeel van een branded launch experience.</span></div></div>
+        </div>
+      </div>
+      <div class="visual">
+        <div class="visual-panel gmail">
+          <div class="mock-window">Gmail Cleaner / live layer</div>
+          <div class="mail-list">
+            <div class="mail"><strong>Nieuwe PDF downloads</strong><p>Documenten automatisch opgepikt en klaar voor verwerking, zonder dat je inbox dichtslibt.</p></div>
+            <div class="mail"><strong>Schonere mailbox</strong><p>Overzichtelijk, sneller terug te vinden en minder handwerk voor je dagelijkse flow.</p></div>
+            <div class="mail"><strong>Dashboard met ritme</strong><p>Niet meer losse schermen, maar één systeem dat meteen vertrouwen geeft aan wie het opent.</p></div>
           </div>
         </div>
-      `;
-      fillList.appendChild(el);
-    });
-  });
-}
-
-function renderProductTypes(){
-  const list = document.getElementById('typesList');
-  const select = document.getElementById('newProductType');
-  const typeLocationSelect = document.getElementById('newTypeLocation');
-  list.innerHTML = '';
-  select.innerHTML = '';
-  typeLocationSelect.innerHTML = '';
-  if(!productTypesData.length){
-    list.innerHTML = '<div class="empty">Nog geen productsoorten toegevoegd.</div>';
-  } else {
-    productTypesData.forEach(type => {
-      const pill = document.createElement('div');
-      pill.className = 'pill';
-      pill.innerHTML = `${esc(type.naam)} · ${esc(type.locatie)} <button class="btn small" onclick="renameProductType('${type.naam.replaceAll("'", "\\'")}')">Wijzig</button> <button class="btn danger small" onclick="deleteProductType('${type.naam.replaceAll("'", "\\'")}')">×</button>`;
-      list.appendChild(pill);
-
-      const opt = document.createElement('option');
-      opt.value = type.naam;
-      opt.textContent = `${type.naam} · ${type.locatie}`;
-      select.appendChild(opt);
-    });
-  }
-
-  if(!locationsData.length){
-    const opt = document.createElement('option');
-    opt.value = '-';
-    opt.textContent = '-';
-    typeLocationSelect.appendChild(opt);
-  } else {
-    locationsData.forEach(loc => {
-      const opt = document.createElement('option');
-      opt.value = loc;
-      opt.textContent = loc;
-      typeLocationSelect.appendChild(opt);
-    });
-  }
-}
-
-
-
-function groupedItems(items, mode){
-  const map = {};
-  items.forEach(item => {
-    let key = mode === 'soort' ? (item.soort || 'Overig') : (item.locatie || '-');
-    if(!map[key]) map[key] = [];
-    map[key].push(item);
-  });
-  return Object.keys(map).sort((a,b)=>a.localeCompare(b, 'nl')).map(key => [key, map[key]]);
-}
-
-function renderFillSummary(){
-  const target = document.getElementById('fillSummaryCard');
-  const btn = document.getElementById('fillOverviewBtn');
-  if(!target || !btn) return;
-  const openItems = (barData.fill_items || []).length;
-
-  if(openItems === 0){
-    target.innerHTML = `
-      <div class="line">
-        <div class="name">Alles is bijgevuld</div>
-        <div class="meta">Er zijn nu geen open bijvulitems. Je hoeft het overzicht niet te openen.</div>
       </div>
-    `;
-    btn.disabled = true;
-    btn.style.opacity = '0.55';
-    btn.style.cursor = 'not-allowed';
-  } else {
-    target.innerHTML = `
-      <div class="line">
-        <div class="name">${openItems} open bijvulitem(s)</div>
-        <div class="meta">Er moet nog bijgevuld worden. Open het overzicht voor de volledige lijst, gesorteerd op locatie of productsoort.</div>
-      </div>
-    `;
-    btn.disabled = false;
-    btn.style.opacity = '1';
-    btn.style.cursor = 'pointer';
-  }
-}
+    </div>
+  </section>
 
-function renderLocations(){
-  const list = document.getElementById('locationsList');
-  const typeLocationSelect = document.getElementById('newTypeLocation');
-  if(!list || !typeLocationSelect) return;
-  list.innerHTML = '';
-  typeLocationSelect.innerHTML = '';
-
-  if(!locationsData.length){
-    list.innerHTML = '<div class="empty">Nog geen locaties toegevoegd.</div>';
-    const opt = document.createElement('option');
-    opt.value = '-';
-    opt.textContent = '-';
-    typeLocationSelect.appendChild(opt);
-    return;
-  }
-
-  locationsData.forEach(loc => {
-    const pill = document.createElement('div');
-    pill.className = 'pill';
-    pill.innerHTML = `${esc(loc)} <button class="btn small" onclick="renameLocation('${loc.replaceAll("'", "\\'")}')">Wijzig</button> <button class="btn danger small" onclick="deleteLocation('${loc.replaceAll("'", "\\'")}')">×</button>`;
-    list.appendChild(pill);
-
-    const opt = document.createElement('option');
-    opt.value = loc;
-    opt.textContent = loc;
-    typeLocationSelect.appendChild(opt);
-  });
-}
-
-function renderOpList(){
-  const target = document.getElementById('opList');
-  if(!target) return;
-  target.innerHTML = '';
-  if(!opData.length){
-    target.innerHTML = '<div class="empty">Er staan nu geen producten op de op-lijst.</div>';
-    return;
-  }
-  opData.forEach(item => {
-    const el = document.createElement('div');
-    el.className = 'line';
-    el.innerHTML = `
-      <div class="line-top">
-        <div>
-          <div class="name">${esc(item.product)} · ${esc(item.koeling)}</div>
-          <div class="meta">Soort: ${esc(item.soort)} · Locatie: ${esc(item.locatie)}</div>
-        </div>
-        <button class="btn small good" onclick="markAvailable('${item.koeling_id}', '${item.product_id}')">Weer beschikbaar</button>
-      </div>
-    `;
-    target.appendChild(el);
-  });
-}
-
-function renderBarSummary(){
-  const target = document.getElementById('barSummary');
-  const koelingen = barData.koelingen || [];
-  const products = koelingen.reduce((sum, k) => sum + k.producten.length, 0);
-  const low = (barData.fill_items || []).length;
-  target.innerHTML = `<div class="line"><div class="name">${koelingen.length} koeling(en)</div><div class="meta">${products} producten totaal<br>${low} open item(s) in je bijvullijst<br>${opData.length} item(s) op de op-lijst<br>${productTypesData.length} productsoort(en)</div></div>`;
-}
-
-async function addCooling(){
-  const name = document.getElementById('newCoolingName').value.trim();
-  if(!name){ showToast('Bar', 'Vul eerst een naam voor de koeling in.'); return; }
-  const res = await fetch('/api/cooling', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})
-  });
-  barData = await res.json();
-  document.getElementById('newCoolingName').value = '';
-  renderBarHome();
-  showToast('Bar', 'Koeling toegevoegd.', 'success');
-}
-
-function openCooling(id){
-  selectedCoolingId = id;
-  document.getElementById('barHome').style.display = 'none';
-  document.getElementById('fillOverview').style.display = 'none';
-  document.getElementById('coolingDetail').style.display = 'block';
-  renderCoolingDetail();
-}
-function openFillOverview(){
-  document.getElementById('barHome').style.display = 'none';
-  document.getElementById('coolingDetail').style.display = 'none';
-  document.getElementById('fillOverview').style.display = 'block';
-  renderFillOverviewOnly();
-}
-function backToBarHome(){
-  document.getElementById('barHome').style.display = 'block';
-  document.getElementById('coolingDetail').style.display = 'none';
-  document.getElementById('fillOverview').style.display = 'none';
-}
-function backToBarHomeFromFill(){
-  document.getElementById('barHome').style.display = 'block';
-  document.getElementById('coolingDetail').style.display = 'none';
-  document.getElementById('fillOverview').style.display = 'none';
-}
-
-function renderCoolingDetail(){
-  const cooling = (barData.koelingen || []).find(k => k.id === selectedCoolingId);
-  const title = document.getElementById('detailTitle');
-  const list = document.getElementById('productList');
-  const sortMode = document.getElementById('coolingSortMode')?.value || 'soort';
-
-  if(!cooling){
-    title.textContent = 'Koeling niet gevonden';
-    list.innerHTML = '<div class="empty">Deze koeling bestaat niet meer.</div>';
-    return;
-  }
-
-  title.textContent = cooling.naam;
-  list.innerHTML = '';
-
-  if(!cooling.producten.length){
-    list.innerHTML = '<div class="empty">Nog geen producten in deze koeling.</div>';
-    return;
-  }
-
-  const normalized = cooling.producten.map(product => {
-    const locatie = productTypesData.find(t => t.naam === (product.soort || 'Overig'))?.locatie || '-';
-    return {...product, locatie};
-  });
-
-  groupedItems(normalized, sortMode).forEach(([groupName, products]) => {
-    const header = document.createElement('div');
-    header.className = 'line';
-    header.innerHTML = `<div class="name">${esc(sortMode === 'soort' ? 'Productsoort' : 'Locatie')}: ${esc(groupName)}</div><div class="meta">${products.length} product(en)</div>`;
-    list.appendChild(header);
-
-    products.forEach(product => {
-      const refillAmount = Number(product.voorraad || 0);
-      const el = document.createElement('div');
-      el.className = 'line';
-      el.innerHTML = `
-        <div class="line-top">
-          <div>
-            <div class="name">${esc(product.naam)}</div>
-            <div class="meta">Soort: ${esc(product.soort || 'Overig')} · Locatie: ${esc(product.locatie)} · Aanvullen tot: ${product.minimum}</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn small" onclick="openProductModal('${selectedCoolingId}', '${product.id}')">Bekijk productinfo</button>
-            <button class="btn small" onclick="editProduct('${product.id}')">Aanpassen</button>
-            <button class="btn danger small" onclick="confirmDeleteProduct('${product.id}')">Verwijderen</button>
+  <section class="section" id="restaurant">
+    <div class="section-wrap">
+      <div class="visual">
+        <div class="visual-panel restaurant">
+          <div class="mock-window">Restaurant-tool / Casa Cara</div>
+          <div class="ticket-list">
+            <div class="ticket"><div class="label">Voorraad</div><strong>Koelingen & bijvullen</strong><p>Snel aanpassen, slim doorsturen en logisch voor medewerker en admin.</p><div class="bar"><span style="width:82%"></span></div></div>
+            <div class="ticket"><div class="label">Taken</div><strong>Wie + wanneer</strong><p>Afvinken met logging, zodat je altijd terugziet wie wat gedaan heeft.</p><div class="bar"><span style="width:68%"></span></div></div>
+            <div class="ticket"><div class="label">Rechten</div><strong>Per rol afgestemd</strong><p>Iedereen ziet alleen wat relevant is, ook in sidebar en overzichten.</p><div class="bar"><span style="width:74%"></span></div></div>
+            <div class="ticket"><div class="label">Bot</div><strong>Chat-achtige hulp</strong><p>Sneller antwoorden, doorsturen naar acties en een betere gebruikersflow.</p><div class="bar"><span style="width:61%"></span></div></div>
           </div>
         </div>
-        <div class="qty">
-          <button onclick="adjustProduct('${product.id}', -5)">-5</button>
-          <button onclick="adjustProduct('${product.id}', -1)">−</button>
-          <input type="number" value="${refillAmount}" oninput="queueProductRefillSave('${product.id}', this.value)" onchange="setProductRefill('${product.id}', this.value)" onkeydown="if(event.key==='Enter'){ event.preventDefault(); setProductRefill('${product.id}', this.value); this.blur(); }">
-          <button onclick="adjustProduct('${product.id}', 1)">+</button>
-          <button onclick="adjustProduct('${product.id}', 5)">+5</button>
+      </div>
+      <div>
+        <div class="section-badge">Restaurant-tool</div>
+        <h2 class="section-title">Gebouwd voor de vloer, maar nu met de uitstraling van een echte app.</h2>
+        <p class="section-copy">Je restaurant-tool blijft praktisch, maar de launch page voelt veel groter en spannender. Beweging, diepte en sfeer zonder dat het onrustig of onleesbaar wordt.</p>
+        <div class="feature-list">
+          <div class="feature"><div class="feature-dot" style="background:linear-gradient(180deg,var(--gold),var(--pink));box-shadow:0 0 0 6px rgba(255,154,82,.12)"></div><div><strong>Eigen loginflow</strong><span>Casa Cara houdt z’n tweede login, maar nu in een veel strakkere visuele laag.</span></div></div>
+          <div class="feature"><div class="feature-dot" style="background:linear-gradient(180deg,var(--gold),var(--pink));box-shadow:0 0 0 6px rgba(255,154,82,.12)"></div><div><strong>Nav als toegangspoort</strong><span>De tools leef je niet meer via losse buttons op de page in, maar via de zwevende menu-ervaring.</span></div></div>
+          <div class="feature"><div class="feature-dot" style="background:linear-gradient(180deg,var(--gold),var(--pink));box-shadow:0 0 0 6px rgba(255,154,82,.12)"></div><div><strong>Levende backgrounds</strong><span>Meer beweging, meer gelaagdheid en genoeg stijl om het werkgever-proof te maken.</span></div></div>
         </div>
-      `;
-      list.appendChild(el);
-    });
-  });
+      </div>
+    </div>
+  </section>
+
+  <div class="footer-note">Open de tools via het floating menu bovenin.</div>
+</main>
+
+<script>
+const navToggle = document.getElementById('navToggle');
+const navPanel = document.getElementById('navPanel');
+const navShell = document.getElementById('navShell');
+const floatingLogo = document.getElementById('floatingLogo');
+let lastScrollY = window.scrollY;
+function updateFloatingState(){
+  const y = window.scrollY;
+  const doc = document.documentElement;
+  const nearBottom = y + window.innerHeight > doc.scrollHeight - 180;
+  const goingDown = y > lastScrollY && y > 50;
+  navShell.classList.toggle('hidden', goingDown || nearBottom);
+  floatingLogo.classList.toggle('hidden', goingDown || nearBottom);
+  const inReadableZone = y > window.innerHeight * 0.72 && y < window.innerHeight * 1.35;
+  floatingLogo.classList.toggle('dim', inReadableZone);
+  lastScrollY = y;
 }
-
-async function addProduct(){
-  const name = document.getElementById('newProductName').value.trim();
-  const minimum = Number(document.getElementById('newProductMinimum').value || 0);
-  const soort = document.getElementById('newProductType').value;
-
-  if(!name){
-    showToast('Bar', 'Vul eerst een productnaam in.');
-    return;
-  }
-
-  try{
-    const res = await fetch('/api/product-add', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cooling_id: selectedCoolingId, name, minimum, soort})
-    });
-
-    const data = await res.json();
-    barData = data;
-
-    document.getElementById('newProductName').value = '';
-    document.getElementById('newProductMinimum').value = '';
-    if(document.getElementById('newProductType').options.length){
-      document.getElementById('newProductType').selectedIndex = 0;
-    }
-
-    renderBarHome();
-    renderCoolingDetail();
-    showToast('Bar', 'Product toegevoegd.', 'success');
-  } catch(e){
-    showToast('Bar', 'Toevoegen lukte niet.', 'info');
-  }
-}
-
-let productRefillTimers = {};
-
-async function adjustProduct(productId, delta){
-  const cooling = (barData.koelingen || []).find(k => k.id === selectedCoolingId);
-  const product = (cooling?.producten || []).find(p => p.id === productId);
-  const currentRefill = Number(product?.voorraad || 0);
-  const refill = Math.max(currentRefill + delta, 0);
-  await saveProductRefill(productId, refill, false);
-}
-
-function queueProductRefillSave(productId, value){
-  if(productRefillTimers[productId]){
-    clearTimeout(productRefillTimers[productId]);
-  }
-  productRefillTimers[productId] = setTimeout(() => {
-    setProductRefill(productId, value);
-  }, 300);
-}
-
-async function setProductRefill(productId, value){
-  const refill = Math.max(Number(value || 0), 0);
-  await saveProductRefill(productId, refill, true);
-}
-
-async function saveProductRefill(productId, refill, showMessage){
-  try{
-    const res = await fetch('/api/product-set-refill', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cooling_id: selectedCoolingId, product_id: productId, refill})
-    });
-
-    const data = await res.json();
-    barData = data;
-    renderBarHome();
-    renderCoolingDetail();
-
-    if(showMessage){
-      showToast('Bar', 'Aantal aangepast.', 'success');
-    }
-  } catch(e){
-    showToast('Bar', 'Aantal aanpassen lukte niet.', 'info');
-  }
-}
-
-function editProduct(productId){
-  const cooling = (barData.koelingen || []).find(k => k.id === selectedCoolingId);
-  const product = (cooling.producten || []).find(p => p.id === productId);
-  if(!product) return;
-
-  const typeOptions = productTypesData.map(t => `<option value="${esc(t.naam)}" ${t.naam === (product.soort || 'Overig') ? 'selected' : ''}>${esc(t.naam)} · ${esc(t.locatie)}</option>`).join('');
-  openEdit('Product aanpassen', `
-    <div class="field"><label>Naam</label><input id="editProductName" value="${esc(product.naam)}"></div>
-    <div class="field"><label>Aanvullen tot</label><input id="editProductMinimum" type="number" value="${product.minimum}"></div>
-    <div class="field"><label>Productsoort</label><select id="editProductType">${typeOptions}</select></div>
-  `, async () => {
-    const res = await fetch('/api/product-edit', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        cooling_id: selectedCoolingId,
-        product_id: productId,
-        name: document.getElementById('editProductName').value.trim(),
-        minimum: Number(document.getElementById('editProductMinimum').value || 0),
-        soort: document.getElementById('editProductType').value
-      })
-    });
-    barData = await res.json();
-    renderBarHome();
-    renderCoolingDetail();
-    closeEdit();
-    showToast('Bar', 'Product aangepast.', 'success');
-  });
-}
-
-async function doDeleteProduct(productId){
-  const res = await fetch('/api/product-delete', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: selectedCoolingId, product_id: productId})
-  });
-  barData = await res.json();
-  renderBarHome();
-  renderCoolingDetail();
-  showToast('Bar', 'Product verwijderd.', 'success');
-}
-function confirmDeleteProduct(productId){
-  confirmAction = () => doDeleteProduct(productId);
-  openConfirm('Weet je zeker dat je dit product wilt verwijderen?');
-}
-
-async function doDeleteCurrentCooling(){
-  const res = await fetch('/api/cooling-delete', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: selectedCoolingId})
-  });
-  barData = await res.json();
-  selectedCoolingId = null;
-  backToBarHome();
-  renderBarHome();
-  showToast('Bar', 'Koeling verwijderd.', 'success');
-}
-async function deleteCurrentCooling(){
-  confirmAction = () => doDeleteCurrentCooling();
-  openConfirm('Weet je zeker dat je deze koeling wilt verwijderen?');
-}
-
-async function markFilled(coolingId, productId){
-  const res = await fetch('/api/fill-mark-product', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: coolingId, product_id: productId})
-  });
-  barData = await res.json();
-  await loadOpItems();
-  renderBarHome();
-  renderFillOverviewOnly();
-  if(selectedCoolingId){ renderCoolingDetail(); }
-}
-
-async function markOutOfStock(coolingId, productId){
-  const res = await fetch('/api/fill-mark-out', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: coolingId, product_id: productId})
-  });
-  const data = await res.json();
-  barData = data.bar;
-  opData = data.op_items;
-  renderBarHome();
-  renderFillOverviewOnly();
-  if(selectedCoolingId){ renderCoolingDetail(); }
-  showToast('Bijvullen', 'Toegevoegd aan op-lijst.', 'info');
-}
-
-async function markAvailable(coolingId, productId){
-  const res = await fetch('/api/op-mark-available', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({cooling_id: coolingId, product_id: productId})
-  });
-  const data = await res.json();
-  barData = data.bar;
-  opData = data.op_items;
-  renderBarHome();
-  if(document.getElementById('fillOverview').style.display === 'block'){ renderFillOverviewOnly(); }
-  if(selectedCoolingId){ renderCoolingDetail(); }
-}
-
-async function markAllFilled(){
-  const res = await fetch('/api/fill-mark-all', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({})
-  });
-  barData = await res.json();
-  await loadOpItems();
-  renderBarHome();
-  renderFillOverviewOnly();
-  if(selectedCoolingId){ renderCoolingDetail(); }
-  showToast('Bijvullen', 'Alles is bijgevuld.', 'success');
-}
-
-async function addLocation(){
-  const name = document.getElementById('newLocationName').value.trim();
-  if(!name){ showToast('Locaties', 'Vul eerst een locatie in.'); return; }
-  const res = await fetch('/api/location-add', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name})
-  });
-  const data = await res.json();
-  locationsData = data.locations;
-  productTypesData = data.types;
-  document.getElementById('newLocationName').value = '';
-  renderLocations();
-  renderProductTypes();
-  showToast('Locaties', 'Locatie toegevoegd.', 'success');
-}
-async function doDeleteLocation(name){
-  const res = await fetch('/api/location-delete', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name})
-  });
-  const data = await res.json();
-  locationsData = data.locations;
-  productTypesData = data.types;
-  renderLocations();
-  renderProductTypes();
-  renderBarHome();
-  if(selectedCoolingId){ renderCoolingDetail(); }
-  showToast('Productsoorten', 'Productsoort verwijderd.', 'success');
-}
-function deleteLocation(name){
-  confirmAction = () => doDeleteLocation(name);
-  openConfirm('Weet je zeker dat je deze locatie wilt verwijderen?');
-}
-function renameLocation(oldName){
-  openEdit('Locatie aanpassen', `
-    <div class="field"><label>Nieuwe naam voor locatie</label><input id="editLocationName" value="${esc(oldName)}"></div>
-  `, async () => {
-    const newName = document.getElementById('editLocationName').value.trim();
-    if(!newName || newName === oldName){
-      closeEdit();
-      return;
-    }
-    const res = await fetch('/api/location-rename', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({old_name: oldName, new_name: newName})
-    });
-    const data = await res.json();
-    locationsData = data.locations;
-    productTypesData = data.types;
-    renderLocations();
-    renderProductTypes();
-    renderBarHome();
-    if(selectedCoolingId){ renderCoolingDetail(); }
-    closeEdit();
-    showToast('Locaties', 'Locatie aangepast.', 'success');
-  });
-}
-
-async function addProductType(){
-  const name = document.getElementById('newTypeName').value.trim();
-  const locatie = document.getElementById('newTypeLocation').value.trim();
-  if(!name){ showToast('Productsoorten', 'Vul eerst een productsoort in.'); return; }
-  const res = await fetch('/api/product-type-add', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name, locatie})
-  });
-  productTypesData = await res.json();
-  document.getElementById('newTypeName').value = '';
-  document.getElementById('newTypeLocation').selectedIndex = 0;
-  renderLocations();
-  renderProductTypes();
-  renderFillSummary();
-  renderOpList();
-  renderBarSummary();
-}
-async function doDeleteProductType(name){
-  const res = await fetch('/api/product-type-delete', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name})
-  });
-  const data = await res.json();
-  productTypesData = data.types;
-  barData = data.bar;
-  renderProductTypes();
-  renderBarHome();
-  if(selectedCoolingId){ renderCoolingDetail(); }
-}
-async function deleteProductType(name){
-  confirmAction = () => doDeleteProductType(name);
-  openConfirm('Weet je zeker dat je deze productsoort wilt verwijderen?');
-}
-function renameProductType(oldName){
-  const existing = productTypesData.find(t => t.naam === oldName);
-  const locationOptions = locationsData.map(loc => `<option value="${esc(loc)}" ${loc === (existing?.locatie || '-') ? 'selected' : ''}>${esc(loc)}</option>`).join('');
-  openEdit('Productsoort aanpassen', `
-    <div class="field"><label>Naam</label><input id="editTypeName" value="${esc(oldName)}"></div>
-    <div class="field"><label>Vaste locatie</label><select id="editTypeLocation">${locationOptions}</select></div>
-  `, async () => {
-    const res = await fetch('/api/product-type-rename', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        old_name: oldName,
-        new_name: document.getElementById('editTypeName').value.trim(),
-        new_location: document.getElementById('editTypeLocation').value
-      })
-    });
-    const data = await res.json();
-    productTypesData = data.types;
-    barData = data.bar;
-    renderProductTypes();
-    renderBarHome();
-    if(selectedCoolingId){ renderCoolingDetail(); }
-    closeEdit();
-    showToast('Productsoorten', 'Productsoort aangepast.', 'success');
-  });
-}
-
-loadAll();
+navToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  navPanel.classList.toggle('open');
+});
+document.addEventListener('click', (e) => {
+  if(!navShell.contains(e.target)) navPanel.classList.remove('open');
+});
+window.addEventListener('scroll', updateFloatingState, {passive:true});
+updateFloatingState();
 </script>
 </body>
 </html>
@@ -2321,65 +1590,68 @@ refreshAll();setInterval(refreshAll,2500);
 @app.before_request
 def require_login():
     import time
-    allowed_paths = {"/login", "/setup-code", "/logout"}
-    casa_allowed_paths = {"/casa-cara-login", "/casa-cara-setup", "/casa-cara-logout"}
     if request.path.startswith("/static/"):
         return None
-    if request.path in allowed_paths:
-        return None
-    if session.get("dashboard_logged_in"):
-        last_activity = float(session.get("last_activity", 0) or 0)
+
+    protected_gmail_endpoints = {
+        "gmail",
+        "api_stats",
+        "api_trash",
+        "api_downloads",
+        "api_kept",
+        "api_activity",
+        "api_pending_trash",
+        "run_gmail",
+        "api_approve_trash",
+        "api_reject_trash",
+    }
+
+    if session.get("casa_logged_in"):
+        last_activity = float(session.get("casa_last_activity", 0) or 0)
         now = time.time()
         if last_activity and (now - last_activity) > 120:
-            session.clear()
-            session["login_message"] = "Je sessie is verlopen. Log opnieuw in."
-            session["login_success"] = False
-            if request.path.startswith("/api/"):
-                return jsonify({"ok": False, "message": "Sessie verlopen. Log opnieuw in."}), 401
-            return redirect(url_for("login_page"))
-        session["last_activity"] = now
-        if request.path in casa_allowed_paths:
-            return None
-        return None
-    if request.path.startswith("/api/"):
-        return jsonify({"ok": False, "message": "Niet ingelogd."}), 401
-    return redirect(url_for("login_page"))
+            for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
+                session.pop(key, None)
+            session["casa_login_message"] = "Je Casa Cara sessie is verlopen. Log opnieuw in."
+            session["casa_login_success"] = False
+            if request.path.startswith("/casa-cara"):
+                return redirect(url_for("casa_login_page"))
+        else:
+            session["casa_last_activity"] = now
+
+    if session.get("gmail_logged_in"):
+        last_activity = float(session.get("gmail_last_activity", 0) or 0)
+        now = time.time()
+        if last_activity and (now - last_activity) > 120:
+            for key in ["gmail_logged_in", "gmail_last_activity"]:
+                session.pop(key, None)
+            session["gmail_login_message"] = "Je Gmail Cleaner sessie is verlopen. Log opnieuw in."
+            session["gmail_login_success"] = False
+            if request.endpoint in protected_gmail_endpoints:
+                if request.path.startswith("/api/"):
+                    return jsonify({"ok": False, "message": "Gmail Cleaner sessie verlopen. Log opnieuw in."}), 401
+                return redirect(url_for("gmail_login_page"))
+        else:
+            session["gmail_last_activity"] = now
+
+    if request.endpoint in protected_gmail_endpoints and not session.get("gmail_logged_in"):
+        if request.path.startswith("/api/"):
+            return jsonify({"ok": False, "message": "Log eerst in bij Gmail Cleaner."}), 401
+        return redirect(url_for("gmail_login_page"))
+
+    return None
 
 @app.route("/login", methods=["GET"])
 def login_page():
-    message = session.pop("login_message", "")
-    success = session.pop("login_success", False)
-    return render_template_string(LOGIN_HTML, message=message, success=success, code_exists=has_access_code())
+    return redirect(url_for("home"))
 
 @app.route("/login", methods=["POST"])
 def login_submit():
-    access_code = (request.form.get("access_code") or "").strip()
-    auth = load_auth()
-    if access_code and access_code == (auth.get("access_code") or "").strip():
-        import time
-        session["dashboard_logged_in"] = True
-        session["last_activity"] = time.time()
-        return redirect(url_for("home"))
-    session["login_message"] = "Onjuiste code."
-    session["login_success"] = False
-    return redirect(url_for("login_page"))
+    return redirect(url_for("home"))
 
 @app.route("/setup-code", methods=["POST"])
 def setup_code():
-    master_password = (request.form.get("master_password") or "").strip()
-    new_access_code = (request.form.get("new_access_code") or "").strip()
-    if master_password != MASTER_PASSWORD:
-        session["login_message"] = "Hoofdwachtwoord onjuist."
-        session["login_success"] = False
-        return redirect(url_for("login_page"))
-    if not new_access_code:
-        session["login_message"] = "Vul een nieuwe code in."
-        session["login_success"] = False
-        return redirect(url_for("login_page"))
-    save_auth({"access_code": new_access_code})
-    session["login_message"] = "Nieuwe code opgeslagen. Je kunt nu inloggen."
-    session["login_success"] = True
-    return redirect(url_for("login_page"))
+    return redirect(url_for("gmail_login_page"))
 
 @app.route("/casa-cara-login", methods=["GET"])
 def casa_login_page():
@@ -2401,7 +1673,7 @@ def casa_login_submit():
         return redirect("/casa-cara")
     session["casa_login_message"] = "Onjuiste Casa Cara code."
     session["casa_login_success"] = False
-    return redirect(url_for("home"))
+    return redirect(url_for("casa_login_page"))
 
 @app.route("/casa-cara-setup", methods=["POST"])
 def casa_setup_code():
@@ -2434,7 +1706,7 @@ def casa_logout():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login_page"))
+    return redirect(url_for("home"))
 
 @app.route("/")
 def home():
@@ -2442,8 +1714,52 @@ def home():
     normalize_bar_data()
     return render_template_string(HOME_HTML)
 
+@app.route("/gmail-login", methods=["GET"])
+def gmail_login_page():
+    message = session.pop("gmail_login_message", "")
+    success = session.pop("gmail_login_success", False)
+    return render_template_string(GMAIL_LOGIN_HTML, message=message, success=success, gmail_code_exists=gmail_code_exists())
+
+@app.route("/gmail-login", methods=["POST"])
+def gmail_login_submit():
+    import time
+    access_code = (request.form.get("access_code") or "").strip()
+    auth = load_gmail_auth()
+    stored = (auth.get("access_code") or "").strip()
+    if stored and access_code == stored:
+        session["gmail_logged_in"] = True
+        session["gmail_last_activity"] = time.time()
+        return redirect(url_for("gmail"))
+    session["gmail_login_message"] = "Onjuiste Gmail Cleaner code."
+    session["gmail_login_success"] = False
+    return redirect(url_for("gmail_login_page"))
+
+@app.route("/gmail-setup", methods=["POST"])
+def gmail_setup_code():
+    master_password = (request.form.get("master_password") or "").strip()
+    new_access_code = (request.form.get("new_access_code") or "").strip()
+    if master_password != MASTER_PASSWORD:
+        session["gmail_login_message"] = "Hoofdwachtwoord onjuist."
+        session["gmail_login_success"] = False
+        return redirect(url_for("gmail_login_page"))
+    if not new_access_code or len(new_access_code) != 4 or not new_access_code.isdigit():
+        session["gmail_login_message"] = "Voer een 4-cijferige code in."
+        session["gmail_login_success"] = False
+        return redirect(url_for("gmail_login_page"))
+    save_gmail_auth({"access_code": new_access_code})
+    session["gmail_login_message"] = "Nieuwe Gmail Cleaner code opgeslagen."
+    session["gmail_login_success"] = True
+    return redirect(url_for("gmail_login_page"))
+
+@app.route("/gmail-logout")
+def gmail_logout():
+    for key in ["gmail_logged_in", "gmail_last_activity"]:
+        session.pop(key, None)
+    return redirect(url_for("home"))
+
 @app.route("/gmail")
 def gmail():
+    session["gmail_last_activity"] = time.time()
     return render_template_string(GMAIL_HTML)
 
 
