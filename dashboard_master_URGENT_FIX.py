@@ -1095,24 +1095,43 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   .showcase,
   .visuals,
   .cards,
-  .cards-container {
+  .cards-container,
+  .hero-media,
+  .stage {
     width: 100% !important;
     max-width: 100% !important;
+    min-width: 0 !important;
     overflow: hidden !important;
     padding-left: 16px !important;
     padding-right: 16px !important;
   }
 
-  /* FORCE CARDS INSIDE SCREEN */
-  .card,
+  /* KEEP ONLY SHOWCASE CARDS INSIDE SCREEN */
+  .float-card,
+  .card-mail,
+  .card-pulse,
+  .card-restaurant,
   .visual-card,
   .showcase-card {
-    width: 100% !important;
-    max-width: 300px !important;
-    margin: 0 auto !important;
-    transform: scale(0.95) !important;
-    left: 0 !important;
-    right: 0 !important;
+    box-sizing: border-box !important;
+    max-width: calc(100vw - 36px) !important;
+  }
+
+  .card-mail,
+  .card-restaurant {
+    left: 18px !important;
+    right: 18px !important;
+    width: auto !important;
+    margin: 0 !important;
+    transform: none !important;
+  }
+
+  .card-pulse {
+    left: 50% !important;
+    right: auto !important;
+    width: min(118px, calc(100vw - 48px)) !important;
+    transform: translateX(-50%) !important;
+    margin: 0 !important;
   }
 
 }
