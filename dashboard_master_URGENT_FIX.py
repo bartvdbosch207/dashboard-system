@@ -1088,6 +1088,33 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   .feature strong{font-size:14px}
   .feature span{font-size:13px}
   .footer-note{padding:0 16px 56px}
+  
+@media (max-width: 768px) {
+
+  /* FIX RIGHT CUT OFF */
+  .showcase,
+  .visuals,
+  .cards,
+  .cards-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /* FORCE CARDS INSIDE SCREEN */
+  .card,
+  .visual-card,
+  .showcase-card {
+    width: 100% !important;
+    max-width: 300px !important;
+    margin: 0 auto !important;
+    transform: scale(0.95) !important;
+    left: 0 !important;
+    right: 0 !important;
+  }
+
 }
 </style>
 </head>
