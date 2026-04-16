@@ -927,7 +927,7 @@ HOME_HTML = """
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;min-height:100%;background:#04070d!important;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;overscroll-behavior:none;scroll-behavior:smooth}
-body{min-height:100dvh;min-height:100svh;overflow-x:hidden;background:#04070d!important}
+body{min-height:100dvh;min-height:100svh;overflow-x:clip;background:#04070d!important;width:100%;max-width:100vw}
 body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   radial-gradient(circle at 15% 10%, rgba(122,226,255,.16), transparent 23%),
   radial-gradient(circle at 85% 14%, rgba(255,108,174,.13), transparent 19%),
@@ -967,7 +967,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
 .tool-title{font-size:15px;font-weight:800;letter-spacing:-.02em}
 .tool-copy{margin-top:3px;font-size:12px;color:var(--muted);line-height:1.4}
 .tool-arrow{color:#b8c5da;font-size:18px;line-height:1;margin-top:2px}
-.page{position:relative;z-index:1}
+.page{position:relative;z-index:1;overflow-x:clip}
 .hero{min-height:112vh;display:grid;place-items:center;padding:120px 22px 80px;position:relative;overflow:hidden}
 .hero-content{max-width:1040px;width:100%;text-align:center;position:relative}
 .eyebrow{display:inline-flex;align-items:center;gap:10px;padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);backdrop-filter:blur(12px);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#dfe9fb}
@@ -1038,24 +1038,51 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   .hero-media{height:420px}
 }
 @media (max-width: 640px){
+  html,body{width:100%;max-width:100%;overflow-x:clip}
+  body{position:relative}
+  .page,.hero,.section,.hero-content,.section-wrap,.visual,.visual-panel,.hero-media,.stage,.mail-list,.ticket-list{width:100%;max-width:100%;min-width:0}
   .logo-float{left:14px;top:14px;width:58px;height:58px;border-radius:18px}
   .logo-float svg{width:36px;height:36px}
-  .nav-shell{top:14px}
-  .nav-pill{padding:8px 10px}
+  .nav-shell{top:14px;width:calc(100vw - 28px);max-width:420px}
+  .nav-pill{padding:8px 10px;justify-content:center}
   .nav-toggle{width:40px;height:40px;border-radius:12px}
   .nav-label{font-size:13px}
-  .hero{padding-top:118px}
+  .nav-panel{width:calc(100vw - 28px);max-width:420px}
+  .hero{min-height:auto;padding:118px 16px 56px;overflow:hidden}
+  .hero-content{padding:0}
   .hero-title{font-size:22vw}
-  .hero-copy{font-size:15px}
-  .hero-media{height:440px}
-  .float-card{padding:14px}
-  .card-mail{left:4%;width:240px}
-  .card-restaurant{right:4%;width:246px}
-  .card-pulse{left:30%;top:10%;width:132px}
-  .section{padding:72px 16px 96px}
-  .section-copy{font-size:15px}
-  .visual{min-height:520px}
+  .hero-copy{font-size:15px;max-width:100%;padding:0 6px;line-height:1.55}
+  .marquee{max-width:100%;margin-top:24px}
+  .marquee-track{gap:18px;padding:12px 16px}
+  .marquee-track span{font-size:11px}
+  .hero-media{height:410px;margin-top:26px}
+  .stage{border-radius:28px}
+  .float-card{padding:14px;max-width:calc(100% - 24px)}
+  .card-mail{left:12px;top:18%;width:min(240px,calc(100% - 44px))}
+  .card-restaurant{right:12px;bottom:18%;width:min(246px,calc(100% - 44px))}
+  .card-pulse{left:50%;transform:translateX(-50%);top:10%;width:126px}
+  .ribbon{left:10px;right:10px;bottom:12px;transform:none}
+  .ribbon-track{gap:10px}
+  .ribbon span{padding:10px 14px;font-size:10px}
+  .section{padding:72px 16px 96px;overflow:hidden}
+  .section-wrap{gap:18px}
+  .section-copy{font-size:15px;max-width:100%}
+  .visual{min-height:500px}
+  .visual-panel{border-radius:28px}
+  .mock-window{left:16px;right:16px;top:16px;height:48px;border-radius:16px;padding:0 14px 0 70px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mock-window::before{left:16px;top:50%;transform:translateY(-50%);width:10px;height:10px;box-shadow:18px 0 0 #ffcf55,36px 0 0 #54db74}
+  .mail-list,.ticket-list{left:16px;right:16px;top:80px}
+  .mail,.ticket{min-width:0}
+  .mail strong,.ticket strong{font-size:14px}
+  .mail p,.ticket p{font-size:13px;line-height:1.45}
   .ticket-list{grid-template-columns:1fr}
+  .ticket{min-height:148px;padding:14px}
+  .ticket .label{margin-bottom:12px}
+  .feature-list{gap:10px}
+  .feature{padding:12px 14px}
+  .feature strong{font-size:14px}
+  .feature span{font-size:13px}
+  .footer-note{padding:0 16px 56px}
 }
 </style>
 </head>
