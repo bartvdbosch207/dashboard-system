@@ -1670,6 +1670,10 @@ def casa_login_submit():
         session["casa_user_pin"] = user.get("pin")
         session["casa_user_name"] = user.get("name")
         session["casa_user_role"] = user.get("role")
+        # Compatibility flags for existing Casa Cara builds that still expect dashboard auth
+        session["dashboard_logged_in"] = True
+        session["is_logged_in"] = True
+        session["last_activity"] = time.time()
         return redirect("/casa-cara")
     session["casa_login_message"] = "Onjuiste Casa Cara code."
     session["casa_login_success"] = False
@@ -1699,7 +1703,7 @@ def casa_setup_code():
 
 @app.route("/casa-cara-logout")
 def casa_logout():
-    for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
+    for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role", "dashboard_logged_in", "is_logged_in", "last_activity"]:
         session.pop(key, None)
     return redirect(url_for("home"))
 
@@ -1707,6 +1711,13 @@ def casa_logout():
 def logout():
     session.clear()
     return redirect(url_for("home"))
+
+
+@app.route("/restaurant-tool")
+def restaurant_tool():
+    if session.get("casa_logged_in"):
+        return redirect("/casa-cara")
+    return redirect(url_for("casa_login_page"))
 
 @app.route("/")
 def home():
