@@ -1038,16 +1038,18 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   .hero-media{height:420px}
 }
 @media (max-width: 640px){
-  html,body{width:100%;max-width:100%;overflow-x:clip}
+  html,body{width:100%;max-width:100%;overflow-x:hidden}
   body{position:relative}
-  .page,.hero,.section,.hero-content,.section-wrap,.visual,.visual-panel,.hero-media,.stage,.mail-list,.ticket-list{width:100%;max-width:100%;min-width:0}
-  .logo-float{left:14px;top:14px;width:58px;height:58px;border-radius:18px}
-  .logo-float svg{width:36px;height:36px}
-  .nav-shell{top:14px;width:calc(100vw - 28px);max-width:420px}
-  .nav-pill{padding:8px 10px;justify-content:center}
-  .nav-toggle{width:40px;height:40px;border-radius:12px}
-  .nav-label{font-size:13px}
-  .nav-panel{width:calc(100vw - 28px);max-width:420px}
+  .page,.hero,.section,.hero-content,.section-wrap,.visual,.visual-panel,.hero-media,.stage,.mail-list,.ticket-list,.mock-window,.feature-list{width:100%;max-width:100%;min-width:0}
+  .logo-float{left:14px;top:14px;width:54px;height:54px;border-radius:17px}
+  .logo-float svg{width:34px;height:34px}
+  .nav-shell{top:14px;left:82px;right:14px;width:auto;max-width:none;transform:none}
+  .nav-shell.hidden{transform:translateY(-18px)}
+  .nav-pill{padding:8px 12px 8px 10px;justify-content:center;min-height:54px}
+  .nav-toggle{width:40px;height:40px;border-radius:12px;flex:0 0 auto}
+  .nav-label{font-size:13px;white-space:nowrap}
+  .nav-panel{left:0;right:0;top:62px;transform:none;width:auto;max-width:none}
+  .nav-panel.open{transform:none}
   .hero{min-height:auto;padding:118px 16px 56px;overflow:hidden}
   .hero-content{padding:0}
   .hero-title{font-size:22vw}
@@ -1061,11 +1063,12 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   .card-mail{left:12px;top:18%;width:min(240px,calc(100% - 44px))}
   .card-restaurant{right:12px;bottom:18%;width:min(246px,calc(100% - 44px))}
   .card-pulse{left:50%;transform:translateX(-50%);top:10%;width:126px}
-  .ribbon{left:10px;right:10px;bottom:12px;transform:none}
-  .ribbon-track{gap:10px}
+  .ribbon{left:12px;right:12px;bottom:12px;transform:none;overflow:hidden}
+  .ribbon-track{gap:10px;animation-duration:24s}
   .ribbon span{padding:10px 14px;font-size:10px}
   .section{padding:72px 16px 96px;overflow:hidden}
-  .section-wrap{gap:18px}
+  .section-wrap{grid-template-columns:1fr;gap:18px}
+  .section-title{font-size:clamp(36px,14vw,62px);line-height:.96}
   .section-copy{font-size:15px;max-width:100%}
   .visual{min-height:500px}
   .visual-panel{border-radius:28px}
