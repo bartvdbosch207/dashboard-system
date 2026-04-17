@@ -260,11 +260,33 @@ def gmail_process_running():
 
 
 def start_gmail_subprocess(args):
-    if not GMAIL_SCRIPT.exists():
+    try:
+        import gmail_filter
+    except Exception:
         return False
 
+    mode = "full"
+    action = "cleanup"
+    for arg in args:
+        if arg == "--approve-trash":
+            action = "approve"
+        elif arg == "--reject-trash":
+            action = "reject"
+        elif arg.startswith("--mode="):
+            mode = arg.split("=", 1)[1].strip().lower() or "full"
+
     def _run():
-        subprocess.run([PYTHON_BIN, str(GMAIL_SCRIPT), *args], cwd=str(BASE_DIR), check=False)
+        try:
+            if action == "approve":
+                gmail_filter.approve_pending_trash()
+            elif action == "reject":
+                gmail_filter.reject_pending_trash()
+            else:
+                gmail_filter.cleanup(mode=mode)
+        except Exception:
+            # gmail_filter schrijft zelf de foutstatus weg naar dashboard_stats.json
+            pass
+
     threading.Thread(target=_run, daemon=True).start()
     return True
 
@@ -1095,43 +1117,24 @@ body::before{content:"";position:fixed;inset:0;z-index:-20;background:
   .showcase,
   .visuals,
   .cards,
-  .cards-container,
-  .hero-media,
-  .stage {
+  .cards-container {
     width: 100% !important;
     max-width: 100% !important;
-    min-width: 0 !important;
     overflow: hidden !important;
     padding-left: 16px !important;
     padding-right: 16px !important;
   }
 
-  /* KEEP ONLY SHOWCASE CARDS INSIDE SCREEN */
-  .float-card,
-  .card-mail,
-  .card-pulse,
-  .card-restaurant,
+  /* FORCE CARDS INSIDE SCREEN */
+  .card,
   .visual-card,
   .showcase-card {
-    box-sizing: border-box !important;
-    max-width: calc(100vw - 36px) !important;
-  }
-
-  .card-mail,
-  .card-restaurant {
-    left: 18px !important;
-    right: 18px !important;
-    width: auto !important;
-    margin: 0 !important;
-    transform: none !important;
-  }
-
-  .card-pulse {
-    left: 50% !important;
-    right: auto !important;
-    width: min(118px, calc(100vw - 48px)) !important;
-    transform: translateX(-50%) !important;
-    margin: 0 !important;
+    width: 100% !important;
+    max-width: 300px !important;
+    margin: 0 auto !important;
+    transform: scale(0.95) !important;
+    left: 0 !important;
+    right: 0 !important;
   }
 
 }
@@ -1322,345 +1325,531 @@ updateFloatingState();
 """
 
 GMAIL_HTML = """
-
 <!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-<title>Gmail Cleaner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Inbox Pilot</title>
 <link rel="icon" type="image/png" href="/static/gmail.png">
 <style>
 :root{
-  --bg:#06101c; --bg2:#0b1220; --text:#eff6ff; --muted:#9fb0c7;
-  --line:rgba(159,176,199,.14); --line-strong:rgba(159,176,199,.22);
-  --accent:#63d5ff; --good:#22c55e; --warn:#f59e0b; --danger:#ef4444;
-  --shadow:0 20px 50px rgba(0,0,0,.28); --radius:28px;
+  --bg:#090b10;--bg2:#0f1219;--panel:#121722;--panel-2:#171d2a;--panel-3:#1c2433;
+  --text:#f5f7fb;--muted:#9ca8ba;--line:rgba(255,255,255,.08);--line-strong:rgba(255,255,255,.15);
+  --accent:#7c9cff;--accent-2:#b3c4ff;--good:#2ed573;--warn:#f5b041;--danger:#ff6b6b;
+  --shadow:0 20px 50px rgba(0,0,0,.32);--radius-xl:28px;--radius-lg:22px;--radius-md:16px;
 }
-*{box-sizing:border-box}
-body{
-  margin:0; color:var(--text);
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(56,189,248,.15), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(99,213,255,.10), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(34,197,94,.06), transparent 30%),
-    linear-gradient(180deg, var(--bg), var(--bg2));
-  min-height:100vh;
-}
-.wrap{
-    background:#0b1a2b;max-width:1380px;margin:0 auto;padding:calc(24px + env(safe-area-inset-top,0px)) 20px calc(44px + env(safe-area-inset-bottom,0px))}
-.topbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-.back{
-  display:inline-flex;align-items:center;gap:8px;
-  text-decoration:none;color:var(--text);
-  padding:10px 14px;border-radius:16px;
-  background:rgba(16,27,48,.88);
-  border:1px solid var(--line);
-}
-.hero{
-  display:grid;
-  grid-template-columns:minmax(0,1.25fr) auto;
-  gap:22px;
-  align-items:start;
-  margin-bottom:24px;
-}
-.hero-main{
-  background:linear-gradient(180deg, rgba(15,23,42,.78), rgba(15,23,42,.55));
-  border:1px solid var(--line);
-  border-radius:32px;
-  padding:26px 26px 20px;
-  box-shadow:var(--shadow);
-}
-.eyebrow{
-  display:inline-flex;align-items:center;gap:8px;
-  font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
-  color:#bfe9ff;background:rgba(56,189,248,.10);border:1px solid rgba(99,213,255,.18);
-  padding:8px 12px;border-radius:999px;margin-bottom:14px;
-}
-.eyebrow::before{
-  content:""; width:8px;height:8px;border-radius:999px;background:var(--accent);
-  box-shadow:0 0 0 6px rgba(56,189,248,.12);
-}
-.hero h1{margin:0 0 10px;font-size:42px;line-height:1.05;letter-spacing:-.03em}
-.hero p{margin:0;color:var(--muted);line-height:1.6;max-width:780px;font-size:14px}
-.statusrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
-.status{
-  color:var(--muted);font-size:14px;padding:12px 14px;border-radius:16px;
-  background:rgba(15,23,42,.62);border:1px solid var(--line);display:inline-flex;align-items:center;gap:10px;min-height:46px;
-}
-.dot{width:10px;height:10px;border-radius:999px;background:var(--muted);display:inline-block}
-.dot.running{background:var(--accent);box-shadow:0 0 0 6px rgba(56,189,248,.12)}
-.dot.ready{background:var(--good);box-shadow:0 0 0 6px rgba(34,197,94,.12)}
-.dot.waiting{background:var(--warn);box-shadow:0 0 0 6px rgba(245,158,11,.12)}
-.buttons{display:grid;gap:12px;min-width:280px}
-button,.linkbtn{
-  border:1px solid rgba(159,176,199,.10);border-radius:18px;padding:13px 18px;font-size:14px;font-weight:800;
-  cursor:pointer;text-decoration:none;color:white;background:rgba(28,37,56,.92);
-  transition:transform .16s ease,opacity .16s ease,background .16s ease,box-shadow .16s ease,border-color .16s ease;
-  box-shadow:0 10px 26px rgba(0,0,0,.16);
-}
-button:hover,.linkbtn:hover{transform:translateY(-2px);opacity:.98;box-shadow:0 16px 34px rgba(0,0,0,.24);border-color:rgba(159,176,199,.20)}
-button:disabled{opacity:.58;cursor:not-allowed;transform:none}
-.primary{background:linear-gradient(180deg,#8ae3ff,#38bdf8);color:#08263a}
-.secondary{background:rgba(28,37,56,.96)}
-.danger{background:linear-gradient(180deg,#fca5a5,#ef4444);color:#3b0909}
-.progress-shell{margin-top:16px;background:rgba(11,18,32,.66);border-radius:18px;padding:14px 16px;border:1px solid var(--line)}
-.progress-head{display:flex;justify-content:space-between;gap:10px;align-items:center}
-.progress-line{height:12px;background:rgba(159,176,199,.12);border-radius:999px;overflow:hidden;margin-top:10px}
-.progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#7ddfff,#38bdf8);transition:width .25s ease}
-.tabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 20px;padding:8px;border-radius:22px;background:rgba(10,18,32,.54);border:1px solid var(--line)}
-.tabbtn{background:transparent;color:var(--text);border:1px solid transparent;box-shadow:none}
-.tabbtn.active{background:linear-gradient(180deg,#8ae3ff,#38bdf8);color:#08263a;border-color:transparent;box-shadow:0 10px 24px rgba(56,189,248,.24)}
-.tabpanel{display:none}.tabpanel.active{display:block}
-.section-title{margin:0 0 14px;font-size:20px;letter-spacing:-.02em}
-.muted{color:var(--muted);font-size:14px}
-.card,.chart-card{background:linear-gradient(180deg, rgba(16,27,48,.86), rgba(12,20,36,.78));border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px}
-.stat .label{color:var(--muted);font-size:13px;margin-bottom:12px}
-.stat .value-row{display:flex;align-items:flex-end;gap:10px}
-.stat .value{font-size:36px;font-weight:900;line-height:1.05;letter-spacing:-.03em}
-.stat .delta{font-size:13px;color:#91d7ff;font-weight:800;background:rgba(56,189,248,.10);padding:6px 9px;border-radius:999px;border:1px solid rgba(56,189,248,.16)}
-.searchbar{width:100%;border:1px solid rgba(201,170,112,.16);background:rgba(8,8,8,.92);color:var(--text);border-radius:18px;padding:14px 15px;font-size:14px;margin-bottom:14px;outline:none}
-.list{display:grid;gap:10px}
-.item{background:rgba(17,27,45,.78);border-radius:18px;padding:15px 16px;cursor:pointer;border:1px solid rgba(159,176,199,.08)}
-.item .time{color:var(--muted);font-size:12px;margin-bottom:6px}
-.item .title{font-weight:800;line-height:1.35}
-.item .meta{color:var(--muted);font-size:13px;margin-top:6px;line-height:1.5}
-.foldergrid{display:grid;gap:12px}
-.folder{display:flex;justify-content:space-between;align-items:center;background:rgba(17,27,45,.78);border-radius:18px;padding:14px 16px;border:1px solid rgba(159,176,199,.08)}
-.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
-.chart{display:flex;align-items:flex-end;gap:12px;min-height:230px;padding-top:10px}
-.bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;min-width:0}
-.bar-value{font-size:12px;color:var(--text);margin-bottom:8px;background:rgba(255,255,255,.04);padding:4px 8px;border-radius:999px;border:1px solid rgba(159,176,199,.08)}
-.bar{width:100%;max-width:54px;border-radius:16px 16px 8px 8px;min-height:8px;transition:height .4s ease}
-.bar-label{font-size:11px;color:var(--muted);margin-top:8px;text-align:center}
-.bar.green{background:linear-gradient(180deg,#86efac,#22c55e)}
-.bar.orange{background:linear-gradient(180deg,#fcd34d,#f59e0b)}
-.empty{padding:18px;background:rgba(17,27,45,.58);border-radius:18px;color:var(--muted);border:1px dashed rgba(159,176,199,.14)}
-.pending-card{border-color:rgba(239,68,68,.22);background:radial-gradient(circle at top right, rgba(239,68,68,.10), transparent 28%),linear-gradient(180deg, rgba(32,17,24,.88), rgba(20,14,18,.82))}
-.pending-top{display:flex;justify-content:space-between;gap:14px;align-items:start;flex-wrap:wrap}
-.pending-badge{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#fecaca;background:rgba(239,68,68,.12);padding:8px 10px;border-radius:999px;border:1px solid rgba(239,68,68,.20)}
-.actionrow{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px}
-.modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.76);display:none;align-items:center;justify-content:center;z-index:9999}
-.modal-backdrop.active{display:flex}
-.modal{width:min(760px,calc(100vw - 24px));max-height:84vh;overflow:auto;background:#0d1628;border:1px solid var(--line-strong);border-radius:28px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.40)}
-.modal h3{margin:0 0 12px;font-size:22px}
-.modal .row{margin-bottom:14px}
-.modal .key{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
-.modal .val{margin-top:4px;line-height:1.55}
-.modal-close{float:right;background:rgba(31,41,55,.9);margin-left:10px}
-.toast-wrap{position:fixed;top:18px;right:18px;z-index:10000;display:grid;gap:10px}
-.toast{min-width:300px;max-width:390px;background:rgba(9,15,28,.96);border:1px solid rgba(201,170,112,.16);color:var(--text);border-radius:18px;padding:14px 16px;box-shadow:0 18px 40px rgba(0,0,0,.32)}
-.toast .title{font-weight:900;margin-bottom:4px}
-.toast.success{border-color:rgba(34,197,94,.35)}
-.toast.info{border-color:rgba(56,189,248,.35)}
-.toast.warning{border-color:rgba(245,158,11,.35)}
-.toast.danger{border-color:rgba(239,68,68,.35)}
-@media (max-width:1100px){.hero{grid-template-columns:1fr}.buttons{grid-template-columns:repeat(3,minmax(0,1fr));min-width:0}}
-@media (max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}}
-@media (max-width:640px){.wrap{
-    background:transparent;padding:18px 14px 34px}.hero-main{padding:20px 18px 18px}.hero h1{font-size:34px}.grid{grid-template-columns:1fr}.buttons{grid-template-columns:1fr}.tabs{padding:6px}}
-
-@media (max-width: 480px){
-  body{padding:20px}
-  .card{padding:24px 18px 18px}
-  .pad{gap:10px}
-  .key{min-height:54px;font-size:21px}
-  .toolbar{margin-top:14px}
-}
-
-
-.bg-fixed{
-  position:fixed;
-  inset:0;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(148,163,184,.08), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(148,163,184,.05), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(148,163,184,.04), transparent 30%),
-    linear-gradient(180deg, #06101c, #0b1220);
-  z-index:-1;
-}
-
-
-html,body{
-  margin:0;
-  min-height:100%;
-  background:#0b1220 !important;
-  overscroll-behavior:none;
-}
-body{
-  min-height:100vh;
-  min-height:100dvh;
-  min-height:100svh;
-  padding-top:env(safe-area-inset-top,0px);
-  padding-bottom:env(safe-area-inset-bottom,0px);
-}
-.bg-fixed{
-  position:fixed;
-  inset:0;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(56,189,248,.15), transparent 24%),
-    radial-gradient(circle at 90% 0%, rgba(99,213,255,.10), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(34,197,94,.06), transparent 30%),
-    linear-gradient(180deg, #06101c, #0b1220);
-  z-index:-1;
-}
-.wrap{
-  background:transparent !important;
-}
-
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%;width:100%;max-width:100%;background:var(--bg)!important;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+body{min-height:100dvh;min-height:100svh;overflow-x:hidden;position:relative;background:var(--bg)!important}
+body::before{content:"";position:fixed;inset:0;background:linear-gradient(180deg,var(--bg),var(--bg2));z-index:-30;pointer-events:none}
+a{text-decoration:none;color:inherit}
+button,input{font:inherit}
+.shell{min-height:100dvh;min-height:100svh;position:relative;width:100%;max-width:100%;overflow-x:hidden;background:
+ radial-gradient(circle at top left, rgba(124,156,255,.12), transparent 26%),
+ radial-gradient(circle at bottom right, rgba(255,255,255,.05), transparent 24%),
+ linear-gradient(180deg,var(--bg),var(--bg2));}
+.topbar{position:sticky;top:0;z-index:25;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;background:rgba(9,11,16,.76);backdrop-filter:blur(16px);border-bottom:1px solid var(--line)}
+.topbar-left,.topbar-right{display:flex;align-items:center;gap:12px}
+.icon-btn,.back{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 14px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);cursor:pointer}
+.menu-btn{width:44px;padding:0}.menu-lines,.menu-lines:before,.menu-lines:after{display:block;content:"";width:18px;height:2px;background:var(--text);border-radius:999px;position:relative}.menu-lines:before{position:absolute;top:-6px}.menu-lines:after{position:absolute;top:6px}
+.brand{display:flex;flex-direction:column;gap:2px}.brand-kicker{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}.brand-title{font-size:18px;font-weight:900;letter-spacing:-.03em}
+.status-pill{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.03);color:var(--muted);font-size:13px}
+.status-dot{width:9px;height:9px;border-radius:999px;background:var(--muted);box-shadow:0 0 0 0 transparent;transition:.2s}.status-dot.running{background:var(--accent);box-shadow:0 0 0 6px rgba(124,156,255,.15)}.status-dot.ready{background:var(--good);box-shadow:0 0 0 6px rgba(46,213,115,.14)}.status-dot.waiting{background:var(--warn);box-shadow:0 0 0 6px rgba(245,176,65,.14)}
+.app{max-width:1440px;margin:0 auto;padding:22px 20px calc(30px + env(safe-area-inset-bottom,0px))}
+.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;align-items:start}
+.page{display:none;animation:fade .22s ease}.page.active{display:block}
+@keyframes fade{from{opacity:.4;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.panel{background:linear-gradient(180deg,rgba(18,23,34,.95),rgba(20,26,38,.92));border:1px solid var(--line);border-radius:var(--radius-xl);box-shadow:var(--shadow)}
+.hero{padding:28px}.eyebrow{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(124,156,255,.12);border:1px solid rgba(124,156,255,.22);color:var(--accent-2);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.eyebrow:before{content:"";width:8px;height:8px;border-radius:999px;background:var(--accent)}
+.hero h1{margin:16px 0 10px;font-size:48px;line-height:1;letter-spacing:-.06em}.hero p{margin:0;color:var(--muted);font-size:15px;line-height:1.65;max-width:760px}.hero-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.metric-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:18px}.metric{padding:18px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))}.metric .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px}.metric .v{font-size:38px;font-weight:900;letter-spacing:-.05em;line-height:1}.metric .s{font-size:13px;color:var(--muted);margin-top:10px}
+.stack{display:grid;gap:18px}
+.command{padding:22px}.command-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.command h2,.section-title{margin:0;font-size:24px;letter-spacing:-.04em}.muted{color:var(--muted)}
+.button-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 16px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;transition:transform .15s ease,background .15s ease,border-color .15s ease}.btn:hover{transform:translateY(-1px);border-color:var(--line-strong)}.btn.primary{background:linear-gradient(180deg,#b3c4ff,#7c9cff);color:#0d1531;border-color:transparent}.btn.ghost{background:rgba(255,255,255,.02)}.btn.danger{background:linear-gradient(180deg,#ffb0b0,#ff6b6b);color:#350d0d;border-color:transparent}
+.progress-wrap{margin-top:16px;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.02)}.progress-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.progress-line{height:12px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06);margin-top:10px}.progress-fill{height:100%;width:0;background:linear-gradient(90deg,#b3c4ff,#7c9cff);transition:width .25s ease}
+.side-card{padding:22px}.mini-list{display:grid;gap:10px;margin-top:16px}.mini-item{padding:14px 16px;border-radius:18px;background:rgba(255,255,255,.025);border:1px solid var(--line)}.mini-item strong{display:block;font-size:15px}.mini-item span{display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:6px}
+.home-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:18px}
+.review-shell{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}
+.review-stage{padding:24px;position:relative;overflow:hidden;min-height:560px}.review-stage:before{content:"";position:absolute;inset:auto -80px -120px auto;width:260px;height:260px;border-radius:999px;background:radial-gradient(circle, rgba(124,156,255,.18), transparent 68%);pointer-events:none}
+.review-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}.review-count{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em}
+.deck{position:relative;min-height:410px;margin-top:12px}.ghost-card,.focus-card{position:absolute;inset:0;border-radius:28px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(24,31,45,.98),rgba(18,24,35,.96));box-shadow:var(--shadow)}.ghost-card{transform:translate(18px,18px) scale(.98);opacity:.24}.ghost-card.second{transform:translate(9px,9px) scale(.99);opacity:.36}
+.focus-card{padding:24px;display:flex;flex-direction:column;gap:18px;transition:transform .26s ease,opacity .26s ease}.focus-card.exit-left{transform:translateX(-60px) rotate(-4deg);opacity:0}.focus-card.exit-right{transform:translateX(60px) rotate(4deg);opacity:0}.focus-card.exit-down{transform:translateY(50px);opacity:0}
+.mail-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.pill{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted);background:rgba(255,255,255,.03)}.pill.good{color:#b9ffd2;border-color:rgba(46,213,115,.22);background:rgba(46,213,115,.08)}.pill.warn{color:#ffe0ac;border-color:rgba(245,176,65,.22);background:rgba(245,176,65,.09)}.pill.danger{color:#ffc7c7;border-color:rgba(255,107,107,.22);background:rgba(255,107,107,.09)}
+.mail-subject{font-size:30px;font-weight:900;letter-spacing:-.04em;line-height:1.05}.mail-meta{display:grid;gap:8px}.meta-line{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:14px}.reason-box{padding:16px;border-radius:20px;background:rgba(255,255,255,.025);border:1px solid var(--line)}.reason-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px}.reason-list{display:grid;gap:8px}.reason-item{display:flex;align-items:center;gap:10px;font-size:14px}.reason-dot{width:8px;height:8px;border-radius:999px;background:var(--accent)}
+.review-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:auto}.action-btn{min-height:54px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text);font-weight:800;cursor:pointer}.action-btn.delete{background:linear-gradient(180deg,#ffb0b0,#ff6b6b);color:#2f0f0f;border-color:transparent}.action-btn.keep{background:linear-gradient(180deg,#c5ffe2,#2ed573);color:#092113;border-color:transparent}.action-btn.skip{background:rgba(255,255,255,.05)}
+.shortcut-hint{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;color:var(--muted);font-size:13px}.keycap{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:28px;padding:0 8px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font-weight:800}
+.timeline,.archive-list,.rules-list,.settings-list{display:grid;gap:12px}.t-item,.archive-item,.rule-item,.settings-item{padding:16px 18px;border-radius:20px;background:rgba(255,255,255,.025);border:1px solid var(--line)}.t-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}.t-time{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.t-body{font-size:15px;line-height:1.55}
+.chat-shell{padding:22px;display:grid;gap:16px}.chat-log{display:grid;gap:12px;max-height:360px;overflow:auto;padding-right:4px}.chat-bubble{padding:14px 16px;border-radius:18px;max-width:92%;line-height:1.55}.chat-bubble.bot{background:rgba(255,255,255,.04);border:1px solid var(--line)}.chat-bubble.user{background:rgba(124,156,255,.12);border:1px solid rgba(124,156,255,.22);margin-left:auto}
+.chat-form{display:flex;gap:10px}.chat-input{flex:1;min-height:50px;border-radius:16px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 14px;outline:none}
+.drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.46);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:opacity .18s ease;z-index:40}.drawer-backdrop.open{opacity:1;pointer-events:auto}.drawer{position:fixed;left:16px;top:16px;bottom:16px;width:min(330px,calc(100vw - 32px));background:linear-gradient(180deg,rgba(18,23,34,.98),rgba(14,18,27,.98));border:1px solid var(--line);border-radius:28px;box-shadow:0 24px 60px rgba(0,0,0,.40);padding:18px;transform:translateX(-115%);transition:transform .2s ease;z-index:45;display:grid;grid-template-rows:auto auto 1fr auto;gap:16px}.drawer.open{transform:translateX(0)}
+.drawer-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.nav-list{display:grid;gap:8px}.nav-btn{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:56px;padding:0 16px;border-radius:18px;border:1px solid transparent;background:rgba(255,255,255,.025);color:var(--text);cursor:pointer}.nav-btn.active{background:rgba(124,156,255,.14);border-color:rgba(124,156,255,.20)}.nav-left{display:flex;align-items:center;gap:12px}.nav-ico{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:rgba(255,255,255,.05);font-size:18px}.nav-copy strong{display:block;font-size:15px}.nav-copy span{display:block;font-size:12px;color:var(--muted);margin-top:2px}.nav-count{font-size:12px;color:var(--muted)}
+.section-block{padding:24px}.section-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:16px}.section-head h2{margin:0;font-size:28px;letter-spacing:-.05em}.section-head p{margin:8px 0 0;color:var(--muted);max-width:720px;line-height:1.6}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.notice{padding:16px 18px;border-radius:20px;border:1px solid rgba(245,176,65,.18);background:rgba(245,176,65,.08);color:#ffe0ac}
+.pending-banner{display:none;padding:18px 20px;border-radius:22px;border:1px solid rgba(255,107,107,.18);background:rgba(255,107,107,.08);margin-top:18px}.pending-banner.active{display:block}
+.hidden{display:none!important}
+@media (max-width:1100px){.grid,.home-grid,.review-shell,.two-col{grid-template-columns:1fr}.metric-strip{grid-template-columns:1fr}.hero h1{font-size:40px}}
+@media (max-width:720px){.app{padding:16px 14px 26px}.topbar{padding:14px}.hero,.command,.side-card,.chat-shell,.section-block,.review-stage{padding:18px}.hero h1{font-size:34px}.review-actions{grid-template-columns:1fr}.topbar-right .back{display:none}.mail-subject{font-size:24px}}
 </style>
 </head>
 <body>
-<div class="bg-fixed"></div>
-<div class="wrap">
+<div class="shell">
   <div class="topbar">
-    <a class="back" href="/">← Terug naar home</a>
-    <a class="back" href="/logout">Uitloggen</a>
-  </div>
-  <div class="hero">
-    <div class="hero-main">
-      <div class="eyebrow">Gmail automation center</div>
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;"><img src="/static/gmail.png" alt="Gmail" onerror="this.style.display='none'" style="width:40px;height:40px;object-fit:contain;border-radius:12px;background:white;padding:6px;"><h1>Gmail Cleaner</h1></div>
-      <p>Je centrale overzicht voor Gmail-opruiming, PDF-downloads, goedkeuringen en geschiedenis.</p>
-      <div class="statusrow">
-        <div class="status" id="statusText"><span class="dot" id="statusDot"></span><span id="statusLabel">Status laden…</span></div>
-        <div class="status" id="autoRunText">Auto-run: laden…</div>
-      </div>
-      <div id="progressShell" class="progress-shell" style="display:none;">
-        <div class="progress-head">
-          <div id="progressText" class="muted">Bezig...</div>
-          <div id="progressPercent" class="muted">0%</div>
-        </div>
-        <div class="progress-line"><div id="progressFill" class="progress-fill"></div></div>
-      </div>
+    <div class="topbar-left">
+      <button class="icon-btn menu-btn" type="button" onclick="openDrawer()" aria-label="Open navigatie"><span class="menu-lines"></span></button>
+      <a class="back" href="/">← Home</a>
+      <div class="brand"><div class="brand-kicker">Inbox Pilot</div><div class="brand-title">Command center</div></div>
     </div>
-    <div class="buttons">
-      <button id="btnFull" class="primary" onclick="runGmail('full')">Nu Gmail checken</button>
-      <button id="btnCleanup" class="secondary" onclick="runGmail('cleanup')">Alleen cleanup</button>
-      <button id="btnPdfs" class="secondary" onclick="runGmail('pdfs')">Alleen PDF's ophalen</button>
+    <div class="topbar-right">
+      <div class="status-pill"><span id="statusDot" class="status-dot"></span><span id="statusLabel">Status laden…</span></div>
+      <a class="back" href="/logout">Uitloggen</a>
     </div>
   </div>
 
-  <div id="pendingApprovalCard" class="card pending-card" style="display:none; margin-bottom:18px;">
-    <div class="pending-top">
+  <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-head">
       <div>
-        <div class="pending-badge">Goedkeuring nodig</div>
-        <h2 class="section-title" style="margin-top:12px;">Er wachten mails op jouw keuze</h2>
-        <div class="muted" id="pendingSummary">Er wachten mails op goedkeuring.</div>
+        <div class="brand-kicker">Inbox Pilot</div>
+        <div class="brand-title">Navigatie</div>
       </div>
+      <button class="icon-btn" type="button" onclick="closeDrawer()">✕</button>
     </div>
-    <div class="actionrow">
-      <button id="approveBtn" class="danger" onclick="approveTrash()">Ja, naar prullenbak</button>
-      <button id="rejectBtn" class="secondary" onclick="rejectTrash()">Nee, annuleren</button>
-      <button class="secondary" onclick="showPendingModal()">Bekijk lijst</button>
-    </div>
-  </div>
+    <div class="notice">Elke pagina heeft een eigen taak. Geen info-dump meer, maar een echte workflow.</div>
+    <nav class="nav-list">
+      <button class="nav-btn active" data-page="homebase" onclick="switchPage('homebase', this)"><div class="nav-left"><div class="nav-ico">⌂</div><div class="nav-copy"><strong>Homebase</strong><span>Wat speelt er nu?</span></div></div><span class="nav-count">Live</span></button>
+      <button class="nav-btn" data-page="review" onclick="switchPage('review', this)"><div class="nav-left"><div class="nav-ico">➜</div><div class="nav-copy"><strong>Review Desk</strong><span>Werk je queue weg</span></div></div><span id="navReviewCount" class="nav-count">0</span></button>
+      <button class="nav-btn" data-page="runs" onclick="switchPage('runs', this)"><div class="nav-left"><div class="nav-ico">◔</div><div class="nav-copy"><strong>Runs</strong><span>Status en logs</span></div></div><span class="nav-count">Ops</span></button>
+      <button class="nav-btn" data-page="archive" onclick="switchPage('archive', this)"><div class="nav-left"><div class="nav-ico">▣</div><div class="nav-copy"><strong>Archive</strong><span>PDF's en bewaard</span></div></div><span class="nav-count">Store</span></button>
+      <button class="nav-btn" data-page="rules" onclick="switchPage('rules', this)"><div class="nav-left"><div class="nav-ico">◇</div><div class="nav-copy"><strong>Rules</strong><span>Waarom beslist het systeem?</span></div></div><span class="nav-count">Trust</span></button>
+      <button class="nav-btn" data-page="settings" onclick="switchPage('settings', this)"><div class="nav-left"><div class="nav-ico">⚙</div><div class="nav-copy"><strong>Settings</strong><span>Snelacties & folders</span></div></div><span class="nav-count">Local</span></button>
+    </nav>
+    <div class="muted" style="font-size:13px;line-height:1.6">Focus eerst op Review Desk. Daar zit de kernwaarde van Inbox Pilot.</div>
+  </aside>
 
-  <div class="tabs">
-    <button class="tabbtn active" onclick="showTab('overzicht', this)">Overzicht</button>
-    <button class="tabbtn" onclick="showTab('prullenbak', this)">Naar prullenbak</button>
-    <button class="tabbtn" onclick="showTab('pdfs', this)">PDF's gedownload</button>
-    <button class="tabbtn" onclick="showTab('bewaard', this)">Bewaarde mails</button>
-    <button class="tabbtn" onclick="showTab('activiteit', this)">Activiteit / logs</button>
-    <button class="tabbtn" onclick="showTab('shortcuts', this)">Shortcuts</button>
-  </div>
+  <main class="app">
+    <section id="page-homebase" class="page active">
+      <div class="grid">
+        <div class="stack">
+          <section class="panel hero">
+            <div class="eyebrow">Gmail autopilot</div>
+            <h1>Maak van inbox-chaos een korte review-flow.</h1>
+            <p>Inbox Pilot laat je niet verdrinken in data. Je ziet alleen wat nú aandacht nodig heeft, waarom het systeem iets voorstelt en welke stap logisch is als volgende actie.</p>
+            <div class="hero-meta">
+              <div class="status-pill">Laatste run: <strong id="lastRun">-</strong></div>
+              <div class="status-pill">Auto-run: <span id="autoRunText">laden…</span></div>
+              <div class="status-pill">Queue: <strong id="heroQueue">0</strong></div>
+            </div>
+            <div id="pendingBanner" class="pending-banner">
+              <strong>Er wachten mails op review.</strong>
+              <div class="muted" id="pendingSummary">Open Review Desk om te beslissen wat weg mag.</div>
+            </div>
+          </section>
+          <section class="panel metric-strip">
+            <div class="metric"><div class="k">Te beoordelen</div><div id="metricPending" class="v">0</div><div class="s">Items in je review-queue</div></div>
+            <div class="metric"><div class="k">Vandaag verwerkt</div><div id="metricProcessed" class="v">0</div><div class="s">Geschatte acties deze sessie</div></div>
+            <div class="metric"><div class="k">PDF's veilig</div><div id="metricPdfs" class="v">0</div><div class="s">Gedownloade documenten</div></div>
+          </section>
+          <section class="panel command">
+            <div class="command-head">
+              <div>
+                <h2>Wat wil je nu doen?</h2>
+                <div class="muted">Start een run of ga direct naar Review Desk als er iets op je wacht.</div>
+              </div>
+            </div>
+            <div class="button-row">
+              <button class="btn primary" onclick="runGmail('full')">Volledige scan starten</button>
+              <button class="btn ghost" onclick="runGmail('cleanup')">Alleen cleanup</button>
+              <button class="btn ghost" onclick="runGmail('pdfs')">Alleen PDF's ophalen</button>
+              <button class="btn ghost" onclick="switchPage('review')">Open Review Desk</button>
+            </div>
+            <div id="progressWrap" class="progress-wrap hidden">
+              <div class="progress-top"><div id="progressText" class="muted">Bezig...</div><div id="progressPercent" class="muted">0%</div></div>
+              <div class="progress-line"><div id="progressFill" class="progress-fill"></div></div>
+            </div>
+          </section>
+        </div>
+        <div class="stack">
+          <section class="panel side-card">
+            <div class="section-title">Assistent</div>
+            <div class="muted">Vraag wat er vandaag gebeurde, waarom iets bewaard wordt of wat je volgende stap is.</div>
+            <div class="chat-shell" style="padding:18px 0 0">
+              <div id="chatLog" class="chat-log">
+                <div class="chat-bubble bot">Welkom terug. Ik vat je inbox samen zodra de live data binnen is.</div>
+              </div>
+              <form class="chat-form" onsubmit="askAssistant(event)">
+                <input id="chatInput" class="chat-input" placeholder="Vraag iets aan Inbox Pilot…">
+                <button class="btn primary" type="submit">Vraag</button>
+              </form>
+            </div>
+          </section>
+          <section class="panel side-card">
+            <div class="section-title">Volgende beste stap</div>
+            <div id="nextStepList" class="mini-list"></div>
+          </section>
+        </div>
+      </div>
+    </section>
 
-  <div id="tab-overzicht" class="tabpanel active">
-    <div class="grid">
-      <div class="card stat"><div class="label">Laatste run</div><div class="value" id="lastRun">-</div></div>
-      <div class="card stat"><div class="label">Mails gescand</div><div class="value-row"><div class="value" id="emailsScanned">0</div><div class="delta" id="emailsScannedDelta"></div></div></div>
-      <div class="card stat"><div class="label">PDF's gedownload</div><div class="value-row"><div class="value" id="pdfsDownloaded">0</div><div class="delta" id="pdfsDownloadedDelta"></div></div></div>
-      <div class="card stat"><div class="label">Naar prullenbak</div><div class="value-row"><div class="value" id="emailsTrashed">0</div><div class="delta" id="emailsTrashedDelta"></div></div></div>
-    </div>
-    <div class="grid">
-      <div class="card stat"><div class="label">Beschermde mails bewaard</div><div class="value-row"><div class="value" id="protectedKept">0</div><div class="delta" id="protectedKeptDelta"></div></div></div>
-      <div class="card stat"><div class="label">Belangrijke mails bewaard</div><div class="value-row"><div class="value" id="importantKept">0</div><div class="delta" id="importantKeptDelta"></div></div></div>
-      <div class="card stat"><div class="label">Dubbele downloads overgeslagen</div><div class="value-row"><div class="value" id="duplicateSkipped">0</div><div class="delta" id="duplicateSkippedDelta"></div></div></div>
-      <div class="card stat"><div class="label">Laatste status</div><div class="value" id="lastStatus" style="font-size:22px;">-</div></div>
-    </div>
-    <div class="grid">
-      <div class="card stat"><div class="label">Vandaag verwijderd</div><div class="value" id="trashToday">0</div></div>
-      <div class="card stat"><div class="label">Afgelopen 7 dagen verwijderd</div><div class="value" id="trashWeek">0</div></div>
-      <div class="card stat"><div class="label">Vandaag PDF's</div><div class="value" id="pdfToday">0</div></div>
-      <div class="card stat"><div class="label">Afgelopen 7 dagen PDF's</div><div class="value" id="pdfWeek">0</div></div>
-    </div>
-    <div class="chart-grid">
-      <div class="chart-card"><h2 class="section-title">Prullenbak per dag</h2><div class="muted" style="margin-bottom:8px;">Hoeveel mails per dag naar de prullenbak zijn gegaan.</div><div id="trashChart" class="chart"></div></div>
-      <div class="chart-card"><h2 class="section-title">PDF-downloads per dag</h2><div class="muted" style="margin-bottom:8px;">Hoeveel PDF's per dag zijn opgeslagen.</div><div id="downloadChart" class="chart"></div></div>
-    </div>
-    <div class="chart-grid">
-      <div class="chart-card"><h2 class="section-title">Afgelopen 30 dagen</h2><div class="muted" style="margin-bottom:8px;">Slim overzicht van trends.</div><div id="thirtyDaySummary" class="list"></div></div>
-      <div class="chart-card"><h2 class="section-title">Top afzenders (prullenbak)</h2><div class="muted" style="margin-bottom:8px;">Welke afzenders het vaakst in prullenbak eindigen.</div><div id="topSenders" class="list"></div></div>
-    </div>
-  </div>
+    <section id="page-review" class="page">
+      <div class="review-shell">
+        <section class="panel review-stage">
+          <div class="review-top">
+            <div>
+              <div class="review-count">Review Desk</div>
+              <h2 class="section-title">Neem snel beslissingen met context.</h2>
+            </div>
+            <div class="status-pill"><span id="reviewProgressText">0 / 0 gedaan</span></div>
+          </div>
+          <div class="deck" id="reviewDeck">
+            <div class="ghost-card"></div>
+            <div class="ghost-card second"></div>
+            <div id="focusCard" class="focus-card">
+              <div class="mail-top">
+                <div>
+                  <div id="reviewConfidencePill" class="pill warn">Wachten op data</div>
+                  <div id="reviewSubject" class="mail-subject" style="margin-top:12px">Inbox Pilot laadt je review-queue…</div>
+                </div>
+                <div id="reviewActionLabel" class="pill">Nog geen voorstel</div>
+              </div>
+              <div class="mail-meta">
+                <div class="meta-line"><strong>Afzender</strong><span id="reviewSender">-</span></div>
+                <div class="meta-line"><strong>Tijd</strong><span id="reviewTime">-</span></div>
+              </div>
+              <div class="reason-box">
+                <div class="reason-title">Waarom stelt het systeem dit voor?</div>
+                <div id="reviewReasons" class="reason-list"></div>
+              </div>
+              <div class="review-actions">
+                <button class="action-btn delete" onclick="reviewAction('delete')">🗑 Verwijderen</button>
+                <button class="action-btn keep" onclick="reviewAction('keep')">⭐ Bewaren</button>
+                <button class="action-btn skip" onclick="reviewAction('skip')">↧ Skip</button>
+              </div>
+              <div class="shortcut-hint">
+                <span><span class="keycap">←</span> verwijderen</span>
+                <span><span class="keycap">→</span> bewaren</span>
+                <span><span class="keycap">↓</span> skip</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="stack">
+          <section class="panel side-card">
+            <div class="section-title">Live counters</div>
+            <div class="mini-list">
+              <div class="mini-item"><strong id="counterQueue">0</strong><span>Nog te beoordelen</span></div>
+              <div class="mini-item"><strong id="counterDone">0</strong><span>Acties deze sessie</span></div>
+              <div class="mini-item"><strong id="counterRecommended">0%</strong><span>Gemiddelde confidence</span></div>
+            </div>
+          </section>
+          <section class="panel side-card">
+            <div class="section-title">Review queue</div>
+            <div id="reviewListMini" class="mini-list"></div>
+          </section>
+          <section class="panel side-card">
+            <div class="section-title">Prullenbak batch</div>
+            <div class="muted">Gebruik dit alleen als je de wachtende lijst in één keer wilt afhandelen via je bestaande backendflow.</div>
+            <div class="button-row" style="margin-top:14px">
+              <button class="btn danger" onclick="approveTrash()">Alles naar prullenbak</button>
+              <button class="btn ghost" onclick="rejectTrash()">Queue annuleren</button>
+            </div>
+          </section>
+        </section>
+      </div>
+    </section>
 
-  <div id="tab-prullenbak" class="tabpanel"><div class="card"><h2 class="section-title">Mails naar prullenbak</h2><input id="trashSearch" class="searchbar" placeholder="Zoek op onderwerp of afzender..." oninput="renderTrash()"><div id="trashList" class="list"></div></div></div>
-  <div id="tab-pdfs" class="tabpanel"><div class="card"><h2 class="section-title">PDF's gedownload</h2><input id="downloadsSearch" class="searchbar" placeholder="Zoek op bestandsnaam, onderwerp of afzender..." oninput="renderDownloads()"><div id="downloadsList" class="list"></div></div></div>
-  <div id="tab-bewaard" class="tabpanel"><div class="card"><h2 class="section-title">Bewaarde mails</h2><input id="keptSearch" class="searchbar" placeholder="Zoek op onderwerp, afzender of type..." oninput="renderKept()"><div id="keptList" class="list"></div></div></div>
-  <div id="tab-activiteit" class="tabpanel"><div class="card"><h2 class="section-title">Activiteit / logs</h2><input id="activitySearch" class="searchbar" placeholder="Zoek in activiteiten..." oninput="renderActivity()"><div id="activityList" class="list"></div></div></div>
-  <div id="tab-shortcuts" class="tabpanel"><div class="card"><h2 class="section-title">Shortcuts</h2><div class="foldergrid"><div class="folder"><span>Documenten</span><a class="linkbtn" href="/open/documenten">Open</a></div><div class="folder"><span>Loonstroken</span><a class="linkbtn" href="/open/loonstroken">Open</a></div><div class="folder"><span>Foto's</span><a class="linkbtn" href="/open/fotos">Open</a></div><div class="folder"><span>Dropbox map</span><a class="linkbtn" href="/open/base">Open</a></div></div></div></div>
+    <section id="page-runs" class="page">
+      <section class="panel section-block">
+        <div class="section-head"><div><h2>Runs</h2><p>Hier zie je alleen operationele status, voortgang en activity. Geen archive-info, geen review-rumoer.</p></div></div>
+        <div class="two-col">
+          <div class="stack">
+            <div class="panel side-card">
+              <div class="section-title">Run status</div>
+              <div class="mini-list">
+                <div class="mini-item"><strong id="runStatusCopy">-</strong><span>Huidige statusmelding</span></div>
+                <div class="mini-item"><strong id="runModeCopy">-</strong><span>Laatst uitgevoerde modus</span></div>
+                <div class="mini-item"><strong id="runProgressCopy">0 / 0</strong><span>Voortgang uit backend</span></div>
+              </div>
+            </div>
+            <div class="panel side-card">
+              <div class="section-title">Run acties</div>
+              <div class="button-row">
+                <button class="btn primary" onclick="runGmail('full')">Start full run</button>
+                <button class="btn ghost" onclick="runGmail('cleanup')">Cleanup</button>
+                <button class="btn ghost" onclick="runGmail('pdfs')">PDF run</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel side-card">
+            <div class="section-title">Activity feed</div>
+            <div id="activityFeed" class="timeline"></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="page-archive" class="page">
+      <section class="panel section-block">
+        <div class="section-head"><div><h2>Archive</h2><p>Hier leeft alles wat je later wilt terugvinden: downloads, bewaarde mails en trash history.</p></div></div>
+        <div class="two-col">
+          <div class="panel side-card"><div class="section-title">PDF downloads</div><div id="downloadsList" class="archive-list"></div></div>
+          <div class="panel side-card"><div class="section-title">Bewaarde mails</div><div id="keptList" class="archive-list"></div></div>
+        </div>
+        <div class="panel side-card" style="margin-top:18px"><div class="section-title">Naar prullenbak</div><div id="trashList" class="archive-list"></div></div>
+      </section>
+    </section>
+
+    <section id="page-rules" class="page">
+      <section class="panel section-block">
+        <div class="section-head"><div><h2>Rules</h2><p>Waarom denkt Inbox Pilot dat iets verwijderd of bewaard moet worden? Hier maak je dat zichtbaar en verkoopbaar.</p></div></div>
+        <div id="rulesList" class="rules-list"></div>
+      </section>
+    </section>
+
+    <section id="page-settings" class="page">
+      <section class="panel section-block">
+        <div class="section-head"><div><h2>Settings & shortcuts</h2><p>Lokaal nuttige acties. Deze pagina verandert niets aan je backendlogica, maar maakt de tool bruikbaarder.</p></div></div>
+        <div class="settings-list">
+          <div class="settings-item"><strong>Shortcuts</strong><div class="muted" style="margin-top:8px">← verwijderen · → bewaren · ↓ skip · Esc sluit de sidebar</div></div>
+          <div class="settings-item"><strong>Lokale mappen</strong><div class="button-row" style="margin-top:12px"><button class="btn ghost" onclick="openTarget('documenten')">Open Documenten</button><button class="btn ghost" onclick="openTarget('loonstroken')">Open Loonstroken</button><button class="btn ghost" onclick="openTarget('fotos')">Open Foto's</button></div></div>
+          <div class="settings-item"><strong>Snel terug</strong><div class="button-row" style="margin-top:12px"><a class="btn ghost" href="/">Ga naar launch page</a></div></div>
+        </div>
+      </section>
+    </section>
+  </main>
 </div>
-
-<div id="modalBackdrop" class="modal-backdrop" onclick="closeModal(event)">
-  <div class="modal">
-    <button class="modal-close linkbtn" onclick="forceCloseModal()">Sluiten</button>
-    <h3 id="modalTitle">Details</h3>
-    <div id="modalBody"></div>
-  </div>
-</div>
-
-<div id="toastWrap" class="toast-wrap"></div>
-
 <script>
-let trashData = [];
-let downloadsData = [];
-let keptData = [];
-let activityData = [];
-let pendingTrashData = [];
-let previousStats = null;
-let clientRunPending = false;
-let clientActionPending = false;
+const state = {
+  stats:null, trash:[], downloads:[], kept:[], activity:[], pending:[],
+  reviewIndex:0, reviewDone:0, page:'homebase'
+};
 
-const esc = v => (v ?? '').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-const fmt = v => v && v > 0 ? `+${v}` : '';
-const set = (id, v) => document.getElementById(id).textContent = v;
+function openDrawer(){document.getElementById('drawer').classList.add('open');document.getElementById('drawerBackdrop').classList.add('open');}
+function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('drawerBackdrop').classList.remove('open');}
+function switchPage(page, btn=null){
+  state.page = page;
+  document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
+  const target = document.getElementById('page-'+page); if(target) target.classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(el=>el.classList.toggle('active', el.dataset.page===page));
+  closeDrawer();
+}
 
-function showTab(name, btn){document.querySelectorAll('.tabpanel').forEach(el=>el.classList.remove('active'));document.querySelectorAll('.tabbtn').forEach(el=>el.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');btn.classList.add('active');}
-function openModal(title, rows){document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=rows.map(r=>`<div class="row"><div class="key">${esc(r.key)}</div><div class="val">${esc(r.value)}</div></div>`).join('');document.getElementById('modalBackdrop').classList.add('active');}
-function closeModal(e){if(e.target.id==='modalBackdrop')document.getElementById('modalBackdrop').classList.remove('active')}
-function forceCloseModal(){document.getElementById('modalBackdrop').classList.remove('active')}
-function showToast(title,message,type='info'){const wrap=document.getElementById('toastWrap');const el=document.createElement('div');el.className=`toast ${type}`;el.innerHTML=`<div class="title">${esc(title)}</div><div>${esc(message)}</div>`;wrap.appendChild(el);setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),220)},3600)}
-function setRunButtons(disabled){['btnFull','btnCleanup','btnPdfs'].forEach(id=>document.getElementById(id).disabled=disabled)}
-function setApprovalButtons(disabled){document.getElementById('approveBtn').disabled=disabled;document.getElementById('rejectBtn').disabled=disabled;}
-function updateStatusBadge(statusText,running=false,waiting=false){const dot=document.getElementById('statusDot');const label=document.getElementById('statusLabel');dot.className='dot';if(running)dot.classList.add('running');else if(waiting)dot.classList.add('waiting');else dot.classList.add('ready');label.textContent=statusText;}
-function renderItems(id,items,formatter){const c=document.getElementById(id);c.innerHTML='';if(!items||items.length===0){c.innerHTML='<div class="empty">Geen gegevens gevonden.</div>';return;}items.slice().reverse().forEach(item=>{const el=document.createElement('div');el.className='item';el.innerHTML=formatter(item);c.appendChild(el);});}
-function filterItems(items,q,keys){if(!q)return items;const s=q.toLowerCase();return items.filter(item=>keys.some(k=>((item[k]||'').toString().toLowerCase()).includes(s)));}
-function groupByDay(items,key){const counts={};items.forEach(item=>{const v=(item[key]||'');const d=v.split(' ')[0]||v;if(!d)return;counts[d]=(counts[d]||0)+1;});return counts;}
-function renderBarChart(id,counts,color){const c=document.getElementById(id);const entries=Object.entries(counts).slice(-7);if(entries.length===0){c.innerHTML='<div class="empty">Nog geen gegevens voor deze grafiek.</div>';return;}const max=Math.max(...entries.map(e=>e[1]),1);c.innerHTML='';entries.forEach(([label,value])=>{const w=document.createElement('div');w.className='bar-wrap';w.innerHTML=`<div class="bar-value">${value}</div><div class="bar ${color}" style="height:${Math.max((value/max)*160,8)}px"></div><div class="bar-label">${label}</div>`;c.appendChild(w);});}
-function wireClicks(id,data,cb){const c=document.getElementById(id);Array.from(c.children).forEach((node,idx)=>{node.onclick=()=>cb(data.slice().reverse()[idx]);});}
-function parseDate(v){const [d]=(v||'').split(' ');if(!d)return null;const [day,month,year]=d.split('-').map(Number);if(!day||!month||!year)return null;return new Date(year,month-1,day);}
-function countSince(items,key,daysBack){const threshold=new Date();threshold.setHours(0,0,0,0);threshold.setDate(threshold.getDate()-daysBack);return items.filter(item=>{const dt=parseDate(item[key]||'');return dt&&dt>=threshold;}).length;}
-function topSenders(items,limit=5){const counts={};items.forEach(item=>{const sender=(item.sender||'Onbekend').trim();counts[sender]=(counts[sender]||0)+1;});return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,limit);}
-function renderOverviewExtras(){set('trashToday',countSince(trashData,'time',0));set('trashWeek',countSince(trashData,'time',6));set('pdfToday',countSince(downloadsData,'time',0));set('pdfWeek',countSince(downloadsData,'time',6));const trash30=countSince(trashData,'time',29),pdf30=countSince(downloadsData,'time',29),kept30=countSince(keptData,'time',29);document.getElementById('thirtyDaySummary').innerHTML=`<div class="item"><div class="title">Laatste 30 dagen</div><div class="meta">Prullenbak: ${trash30}<br>PDF's: ${pdf30}<br>Bewaard: ${kept30}</div></div><div class="item"><div class="title">Trend-indicatie</div><div class="meta">${trash30>pdf30?'Je ruimt meer mails op dan je PDF’s binnenkrijgt.':'Je ontvangt relatief veel belangrijke PDF’s.'}</div></div>`;const senders=topSenders(trashData);document.getElementById('topSenders').innerHTML=senders.length?senders.map(([s,c])=>`<div class="item"><div class="title">${esc(s)}</div><div class="meta">${c} keer in prullenbak</div></div>`).join(''):'<div class="empty">Nog geen afzenders bekend.</div>';renderBarChart('trashChart',groupByDay(trashData,'time'),'orange');renderBarChart('downloadChart',groupByDay(downloadsData,'time'),'green');}
-async function loadOverview(){const res=await fetch('/api/stats');const d=await res.json();set('lastRun',d.last_run||'-');set('emailsScanned',d.emails_scanned??0);set('pdfsDownloaded',d.pdfs_downloaded??0);set('emailsTrashed',d.emails_trashed??0);set('protectedKept',d.protected_kept??0);set('importantKept',d.important_kept??0);set('duplicateSkipped',d.duplicate_skipped??0);set('lastStatus',d.last_status||'-');set('autoRunText','Auto-run: elke dag om 09:00 en bij inloggen');set('emailsScannedDelta',fmt(d.run_scanned_delta));set('pdfsDownloadedDelta',fmt(d.run_pdfs_delta));set('emailsTrashedDelta',fmt(d.run_trashed_delta));set('protectedKeptDelta',fmt(d.run_protected_delta));set('importantKeptDelta',fmt(d.run_important_delta));set('duplicateSkippedDelta',fmt(d.run_duplicate_delta));const shell=document.getElementById('progressShell'),fill=document.getElementById('progressFill'),text=document.getElementById('progressText'),percent=document.getElementById('progressPercent');const running=!!d.is_running,current=d.progress_current||0,total=d.progress_total||0,pct=total>0?Math.round((current/total)*100):0;const waitingApproval=(d.last_status||'').toLowerCase().includes('wacht op goedkeuring');shell.style.display=running?'block':'none';fill.style.width=`${pct}%`;text.textContent=running?`Bezig: ${current} van ${total} verwerkt`:'Klaar';percent.textContent=running?`${pct}%`:'100%';updateStatusBadge(`Status: ${d.last_status||'onbekend'}`,running,waitingApproval);if(running)setRunButtons(true);else if(!clientActionPending)setRunButtons(false);if(previousStats&&previousStats.is_running&&!d.is_running)showToast('Run voltooid',d.last_status||'Gmail-check klaar','info');previousStats=d;}
-async function loadPendingApproval(){const res=await fetch('/api/pending-trash');const d=await res.json();pendingTrashData=d.items||[];const card=document.getElementById('pendingApprovalCard');const summary=document.getElementById('pendingSummary');if(pendingTrashData.length>0){card.style.display='block';summary.textContent=`${pendingTrashData.length} mail(s) wachten op goedkeuring om naar de prullenbak te gaan.`;}else card.style.display='none';}
-function showPendingModal(){if(!pendingTrashData.length)return;openModal('Te goed te keuren mails',pendingTrashData.map((item,idx)=>({key:`Mail ${idx+1}`,value:`${item.subject||'(geen onderwerp)'} — ${item.sender||'-'}`})));}
-async function runGmail(mode){if(clientRunPending)return;clientRunPending=true;setRunButtons(true);try{const res=await fetch(`/api/run-gmail?mode=${encodeURIComponent(mode)}`,{method:'POST'});const d=await res.json();showToast('Run gestart',d.message||'Gmail-check gestart','info');setTimeout(refreshAll,1200);}finally{setTimeout(()=>{clientRunPending=false;},1500);}}
-async function approveTrash(){if(clientActionPending)return;clientActionPending=true;setApprovalButtons(true);try{const res=await fetch('/api/approve-trash',{method:'POST'});const d=await res.json();showToast('Goedkeuring verstuurd',d.message||'Mails worden naar prullenbak verplaatst','danger');setTimeout(refreshAll,1200)}finally{clientActionPending=false;setApprovalButtons(false);}}
-async function rejectTrash(){if(clientActionPending)return;clientActionPending=true;setApprovalButtons(true);try{const res=await fetch('/api/reject-trash',{method:'POST'});const d=await res.json();showToast('Actie geannuleerd',d.message||'Prullenbak-lijst is gewist','info');setTimeout(refreshAll,700)}finally{clientActionPending=false;setApprovalButtons(false);}}
-function renderTrash(){const q=document.getElementById('trashSearch').value.trim();const filtered=filterItems(trashData,q,['subject','sender','time']);renderItems('trashList',filtered,item=>`<div class="time">${esc(item.time||'')}</div><div class="title">${esc(item.subject||'(geen onderwerp)')}</div><div class="meta">Van: ${esc(item.sender||'-')}</div>`);wireClicks('trashList',filtered,item=>openModal('Mail naar prullenbak',[{key:'Tijd',value:item.time||'-'},{key:'Onderwerp',value:item.subject||'-'},{key:'Afzender',value:item.sender||'-'},{key:'Message ID',value:item.message_id||'-'}]));}
-function renderDownloads(){const q=document.getElementById('downloadsSearch').value.trim();const filtered=filterItems(downloadsData,q,['filename','subject','sender','time']);renderItems('downloadsList',filtered,item=>`<div class="time">${esc(item.time||'')}</div><div class="title">${esc(item.filename||'-')}</div><div class="meta">Van: ${esc(item.sender||'-')}<br>Onderwerp: ${esc(item.subject||'-')}</div>`);wireClicks('downloadsList',filtered,item=>openModal('PDF gedownload',[{key:'Tijd',value:item.time||'-'},{key:'Bestandsnaam',value:item.filename||'-'},{key:'Afzender',value:item.sender||'-'},{key:'Onderwerp',value:item.subject||'-'},{key:'Message ID',value:item.message_id||'-'}]));}
-function renderKept(){const q=document.getElementById('keptSearch').value.trim();const filtered=filterItems(keptData,q,['subject','sender','type','time']);renderItems('keptList',filtered,item=>`<div class="time">${esc(item.time||'')}</div><div class="title">${esc(item.subject||'(geen onderwerp)')}</div><div class="meta">Van: ${esc(item.sender||'-')}<br>Type: ${esc(item.type||'-')}</div>`);wireClicks('keptList',filtered,item=>openModal('Mail bewaard',[{key:'Tijd',value:item.time||'-'},{key:'Onderwerp',value:item.subject||'-'},{key:'Afzender',value:item.sender||'-'},{key:'Type',value:item.type||'-'},{key:'Message ID',value:item.message_id||'-'}]));}
-function renderActivity(){const q=document.getElementById('activitySearch').value.trim();const filtered=filterItems(activityData,q,['message','time']);renderItems('activityList',filtered,item=>`<div class="time">${esc(item.time||'')}</div><div class="title">${esc(item.message||'')}</div>`);wireClicks('activityList',filtered,item=>openModal('Activiteit',[{key:'Tijd',value:item.time||'-'},{key:'Actie',value:item.message||'-'}]));}
-async function loadHistory(){const [trash,downloads,kept,activity]=await Promise.all([fetch('/api/trash').then(r=>r.json()),fetch('/api/downloads').then(r=>r.json()),fetch('/api/kept').then(r=>r.json()),fetch('/api/activity').then(r=>r.json())]);trashData=trash||[];downloadsData=downloads||[];keptData=kept||[];activityData=activity||[];renderTrash();renderDownloads();renderKept();renderActivity();renderOverviewExtras();}
-function refreshAll(){loadOverview();loadHistory();loadPendingApproval();}
-refreshAll();setInterval(refreshAll,2500);
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape') closeDrawer();
+  if(state.page !== 'review') return;
+  if(e.key==='ArrowLeft'){e.preventDefault(); reviewAction('delete');}
+  if(e.key==='ArrowRight'){e.preventDefault(); reviewAction('keep');}
+  if(e.key==='ArrowDown'){e.preventDefault(); reviewAction('skip');}
+});
+
+function toast(message){
+  const t=document.createElement('div'); t.className='status-pill'; t.style.position='fixed'; t.style.right='16px'; t.style.bottom='16px'; t.style.zIndex='99'; t.style.background='rgba(18,23,34,.96)'; t.textContent=message;
+  document.body.appendChild(t); setTimeout(()=>t.remove(),2400);
+}
+
+function formatTime(value){ return value || '-'; }
+function nlNumber(n){ return new Intl.NumberFormat('nl-NL').format(Number(n||0)); }
+function animateNumber(id, value){
+  const el=document.getElementById(id); if(!el) return;
+  const end=Number(value||0); const start=Number((el.dataset.value)||0); const dur=350; const t0=performance.now();
+  function frame(now){ const p=Math.min((now-t0)/dur,1); const cur=Math.round(start + (end-start)*p); el.textContent = nlNumber(cur); if(p<1) requestAnimationFrame(frame); else el.dataset.value=String(end); }
+  requestAnimationFrame(frame);
+}
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+function deriveReasons(item){
+  const text=((item.subject||'')+' '+(item.sender||'')).toLowerCase();
+  const reasons=[];
+  if(/nieuwsbrief|unsubscribe|afmelden|sale|korting|deal|promo|marketing/.test(text)) reasons.push('Lijkt op marketing of nieuwsbrief');
+  if(/factuur|invoice|belasting|bank|verzekering|loon|salary|payslip|overheid/.test(text)) reasons.push('Bevat belangrijke of administratieve signalen');
+  if((item.filename||'').toLowerCase().endsWith('.pdf')) reasons.push('Heeft een PDF of document-achtig spoor');
+  if((item.sender||'').toLowerCase().includes('noreply')) reasons.push('Komt van een no-reply afzender');
+  if(!reasons.length) reasons.push('Nog weinig sterke signalen, daarom ter review');
+  return reasons;
+}
+function deriveSuggestion(item){
+  const text=((item.subject||'')+' '+(item.sender||'')).toLowerCase();
+  let action='Review'; let score=58; let tone='warn';
+  if(/nieuwsbrief|unsubscribe|afmelden|sale|korting|deal|promo|marketing|advertentie/.test(text)){ action='Verwijderen'; score=88; tone='danger'; }
+  if(/factuur|invoice|belasting|bank|verzekering|loon|salary|payslip|overheid|mborijnland|studielink/.test(text)){ action='Bewaren'; score=93; tone='good'; }
+  if((item.subject||'').length < 8) score = clamp(score-10, 40, 99);
+  return {action, score, tone};
+}
+
+async function getJSON(url){ const res=await fetch(url); if(!res.ok) throw new Error('HTTP '+res.status); return res.json(); }
+
+async function refreshAll(){
+  try{
+    const [stats, trash, downloads, kept, activity, pending] = await Promise.all([
+      getJSON('/api/stats'), getJSON('/api/trash'), getJSON('/api/downloads'), getJSON('/api/kept'), getJSON('/api/activity'), getJSON('/api/pending-trash')
+    ]);
+    state.stats=stats; state.trash=trash||[]; state.downloads=downloads||[]; state.kept=kept||[]; state.activity=activity||[]; state.pending=(pending&&pending.items)||[];
+    renderStats(); renderNextSteps(); renderReview(); renderRuns(); renderArchive(); renderRules(); refreshAssistantGreeting();
+  }catch(err){ console.error(err); toast('Kon Inbox Pilot data niet verversen'); }
+}
+
+function renderStats(){
+  const s=state.stats||{}; const pendingCount=state.pending.length;
+  document.getElementById('lastRun').textContent = s.last_run || '-';
+  document.getElementById('autoRunText').textContent = s.last_run_mode || 'volledig';
+  document.getElementById('statusLabel').textContent = s.last_status || 'Onbekend';
+  const dot=document.getElementById('statusDot'); dot.className='status-dot';
+  if(s.is_running) dot.classList.add('running'); else if(pendingCount) dot.classList.add('waiting'); else dot.classList.add('ready');
+  animateNumber('metricPending', pendingCount);
+  animateNumber('metricProcessed', state.reviewDone);
+  animateNumber('metricPdfs', s.pdfs_downloaded || 0);
+  document.getElementById('heroQueue').textContent = nlNumber(pendingCount);
+  document.getElementById('navReviewCount').textContent = nlNumber(pendingCount);
+  const progressWrap=document.getElementById('progressWrap');
+  const total=Number(s.progress_total||0), current=Number(s.progress_current||0); const percent = total ? Math.round(current/total*100) : 0;
+  if(s.is_running){ progressWrap.classList.remove('hidden'); document.getElementById('progressText').textContent = `${current} van ${total} verwerkt`; document.getElementById('progressPercent').textContent = `${percent}%`; document.getElementById('progressFill').style.width = percent+'%'; }
+  else{ progressWrap.classList.add('hidden'); }
+  const banner=document.getElementById('pendingBanner');
+  if(pendingCount){ banner.classList.add('active'); document.getElementById('pendingSummary').textContent = `${pendingCount} mails wachten op review of batch-goedkeuring.`; }
+  else banner.classList.remove('active');
+}
+
+function renderNextSteps(){
+  const host=document.getElementById('nextStepList'); host.innerHTML='';
+  const steps=[];
+  if(state.pending.length) steps.push({t:'Open Review Desk', s:`${state.pending.length} items wachten op je keuze.`});
+  if((state.stats?.is_running)) steps.push({t:'Volg je actieve run', s:'De backend is nu bezig. Hou Runs in de gaten.'});
+  if((state.stats?.pdfs_downloaded||0)>0) steps.push({t:'Check Archive', s:'Je laatste documenten staan klaar in de archive-pagina.'});
+  if(!steps.length) steps.push({t:'Start een nieuwe scan', s:'Op dit moment is je queue leeg. Een full run is de beste volgende stap.'});
+  steps.slice(0,3).forEach(x=>{ const el=document.createElement('div'); el.className='mini-item'; el.innerHTML=`<strong>${x.t}</strong><span>${x.s}</span>`; host.appendChild(el); });
+}
+
+function currentReviewItem(){ return state.pending[state.reviewIndex] || null; }
+function renderReview(){
+  const item=currentReviewItem();
+  const queueRemaining=Math.max(state.pending.length - state.reviewIndex, 0);
+  document.getElementById('counterQueue').textContent = nlNumber(queueRemaining);
+  document.getElementById('counterDone').textContent = nlNumber(state.reviewDone);
+  document.getElementById('reviewProgressText').textContent = `${nlNumber(state.reviewDone)} gedaan · ${nlNumber(queueRemaining)} over`;
+  const mini=document.getElementById('reviewListMini'); mini.innerHTML='';
+  state.pending.slice(state.reviewIndex, state.reviewIndex+4).forEach((x,i)=>{ const rec=deriveSuggestion(x); const el=document.createElement('div'); el.className='mini-item'; el.innerHTML=`<strong>${escapeHtml(x.subject||'Zonder onderwerp')}</strong><span>${escapeHtml(x.sender||'Onbekend')} · ${rec.action} (${rec.score}%)</span>`; mini.appendChild(el); });
+  if(!item){
+    document.getElementById('reviewSubject').textContent='Je review-queue is leeg.';
+    document.getElementById('reviewSender').textContent='Niets te beoordelen';
+    document.getElementById('reviewTime').textContent='-';
+    document.getElementById('reviewActionLabel').textContent='Alles afgewerkt';
+    document.getElementById('reviewConfidencePill').className='pill good';
+    document.getElementById('reviewConfidencePill').textContent='Klaar';
+    document.getElementById('reviewReasons').innerHTML='<div class="reason-item"><span class="reason-dot"></span><span>Er zijn nu geen wachtende items meer in Inbox Pilot.</span></div>';
+    document.getElementById('counterRecommended').textContent='0%';
+    return;
+  }
+  const rec=deriveSuggestion(item);
+  document.getElementById('reviewSubject').textContent = item.subject || 'Zonder onderwerp';
+  document.getElementById('reviewSender').textContent = item.sender || 'Onbekend';
+  document.getElementById('reviewTime').textContent = item.time || state.stats?.last_run || '-';
+  document.getElementById('reviewActionLabel').textContent = `${rec.action} voorgesteld`;
+  const pill=document.getElementById('reviewConfidencePill'); pill.className='pill '+rec.tone; pill.textContent = `${rec.action} · ${rec.score}% confidence`;
+  document.getElementById('counterRecommended').textContent = rec.score + '%';
+  document.getElementById('reviewReasons').innerHTML = deriveReasons(item).map(r=>`<div class="reason-item"><span class="reason-dot"></span><span>${escapeHtml(r)}</span></div>`).join('');
+}
+
+function reviewAction(type){
+  const item=currentReviewItem(); if(!item){ toast('Geen review-item beschikbaar'); return; }
+  const card=document.getElementById('focusCard');
+  card.classList.remove('exit-left','exit-right','exit-down');
+  if(type==='delete') card.classList.add('exit-left');
+  else if(type==='keep') card.classList.add('exit-right');
+  else card.classList.add('exit-down');
+  setTimeout(()=>{
+    state.reviewIndex += 1; state.reviewDone += 1; card.classList.remove('exit-left','exit-right','exit-down'); renderReview(); renderStats();
+  },230);
+}
+
+function renderRuns(){
+  const s=state.stats||{};
+  document.getElementById('runStatusCopy').textContent = s.last_status || '-';
+  document.getElementById('runModeCopy').textContent = s.last_run_mode || '-';
+  document.getElementById('runProgressCopy').textContent = `${s.progress_current||0} / ${s.progress_total||0}`;
+  const feed=document.getElementById('activityFeed'); feed.innerHTML='';
+  (state.activity||[]).slice().reverse().slice(0,18).forEach(item=>{
+    const el=document.createElement('div'); el.className='t-item'; el.innerHTML=`<div class="t-top"><div class="t-time">${escapeHtml(item.time||'-')}</div></div><div class="t-body">${escapeHtml(item.message||'')}</div>`; feed.appendChild(el);
+  });
+  if(!feed.children.length) feed.innerHTML='<div class="t-item"><div class="t-body muted">Nog geen activity gevonden.</div></div>';
+}
+
+function renderArchive(){
+  fillArchiveList('downloadsList', state.downloads, item=>({title:item.filename||'Bestand', sub:`${item.sender||'Onbekend'} · ${item.time||'-'}`}));
+  fillArchiveList('keptList', state.kept, item=>({title:item.subject||'Bewaarde mail', sub:`${item.sender||'Onbekend'} · ${buildRuleLabel(item, 'kept')}`}));
+  fillArchiveList('trashList', state.trash, item=>({title:item.subject||'Naar prullenbak', sub:`${item.sender||'Onbekend'} · ${buildRuleLabel(item, 'trash')}`}));
+}
+function fillArchiveList(id, items, mapper){
+  const host=document.getElementById(id); host.innerHTML='';
+  (items||[]).slice().reverse().slice(0,18).forEach(item=>{ const m=mapper(item); const el=document.createElement('div'); el.className='archive-item'; el.innerHTML=`<strong>${escapeHtml(m.title)}</strong><div class="muted" style="margin-top:8px">${escapeHtml(m.sub)}</div>`; host.appendChild(el); });
+  if(!host.children.length) host.innerHTML='<div class="archive-item muted">Nog geen items gevonden.</div>';
+}
+
+function buildRuleLabel(item, type){
+  const text=((item.subject||'')+' '+(item.sender||'')).toLowerCase();
+  if(/factuur|invoice|belasting|bank|verzekering|loon|salary|payslip|overheid/.test(text)) return 'Waarom: administratief / belangrijk';
+  if(/nieuwsbrief|unsubscribe|afmelden|sale|korting|deal|promo|marketing/.test(text)) return 'Waarom: marketing-signaal';
+  return type==='kept' ? 'Waarom: handmatig of beschermd' : 'Waarom: review / lage prioriteit';
+}
+
+function renderRules(){
+  const host=document.getElementById('rulesList'); host.innerHTML='';
+  const rules=[
+    ['Belangrijk → bewaren','Woorden zoals factuur, bank, verzekering, loon, overheid of school verhogen de kans op bewaren.'],
+    ['Marketing → verwijderen','Woorden zoals nieuwsbrief, unsubscribe, promo, sale en korting wijzen vaak op rommel.'],
+    ['No-reply is zwakker vertrouwd','No-reply afzenders zonder belangrijke keywords zijn eerder kandidaat voor review of verwijdering.'],
+    ['PDF-documenten zijn waardevoller','Document-signalen tellen positief mee voor bewaren en archiveren.']
+  ];
+  rules.forEach(([t,s])=>{ const el=document.createElement('div'); el.className='rule-item'; el.innerHTML=`<strong>${t}</strong><div class="muted" style="margin-top:8px">${s}</div>`; host.appendChild(el); });
+}
+
+function refreshAssistantGreeting(){
+  const log=document.getElementById('chatLog');
+  if(!log || log.dataset.greeted) return;
+  log.dataset.greeted='1';
+  addBotMessage(generateAssistantReply('wat is er nu aan de hand'));
+}
+function askAssistant(ev){
+  ev.preventDefault();
+  const input=document.getElementById('chatInput'); const q=(input.value||'').trim(); if(!q) return;
+  addUserMessage(q); addBotMessage(generateAssistantReply(q)); input.value='';
+}
+function addBotMessage(text){ const log=document.getElementById('chatLog'); const el=document.createElement('div'); el.className='chat-bubble bot'; el.textContent=text; log.appendChild(el); log.scrollTop=log.scrollHeight; }
+function addUserMessage(text){ const log=document.getElementById('chatLog'); const el=document.createElement('div'); el.className='chat-bubble user'; el.textContent=text; log.appendChild(el); log.scrollTop=log.scrollHeight; }
+function generateAssistantReply(q){
+  const s=state.stats||{}; const lower=q.toLowerCase();
+  if(lower.includes('wat') && lower.includes('doen')) return state.pending.length ? `Je beste volgende stap is Review Desk openen. Daar wachten ${state.pending.length} items op je beslissing.` : 'Je queue is leeg. Start een full run als je nieuwe inbox-signalen wilt ophalen.';
+  if(lower.includes('waarom') && lower.includes('bewa')) return 'Inbox Pilot bewaart vooral mails met administratieve signalen, PDF-sporen of belangrijke afzenders zoals bank, overheid, loon of school.';
+  if(lower.includes('verwijd') || lower.includes('trash')) return state.pending.length ? `De review-queue bevat ${state.pending.length} items. Marketing-achtige signalen zoals nieuwsbrief, promo of unsubscribe sturen vaak richting verwijderen.` : 'Er is momenteel geen actieve review-queue om te verwijderen.';
+  if(lower.includes('pdf')) return `Tot nu toe zijn ${s.pdfs_downloaded||0} PDF's gedownload. Check Archive om ze terug te vinden.`;
+  if(lower.includes('vandaag') || lower.includes('gebeurd')) return `Laatste status: ${s.last_status||'onbekend'}. Gescand: ${s.emails_scanned||0}. PDF's: ${s.pdfs_downloaded||0}. Queue: ${state.pending.length}.`;
+  return `Samengevat: status is "${s.last_status||'onbekend'}", je review-queue staat op ${state.pending.length} en de laatste run-modus was ${s.last_run_mode||'volledig'}.`;
+}
+
+async function runGmail(mode){
+  try{ const res=await fetch(`/api/run-gmail?mode=${encodeURIComponent(mode)}`, {method:'POST'}); const data=await res.json(); toast(data.message || (data.ok ? 'Run gestart' : 'Kon niet starten')); refreshAll(); }
+  catch(err){ toast('Kon de run niet starten'); }
+}
+async function approveTrash(){
+  try{ const res=await fetch('/api/approve-trash', {method:'POST'}); const data=await res.json(); toast(data.message || 'Batch goedgekeurd'); refreshAll(); }
+  catch(err){ toast('Goedkeuring mislukt'); }
+}
+async function rejectTrash(){
+  try{ const res=await fetch('/api/reject-trash', {method:'POST'}); const data=await res.json(); toast(data.message || 'Queue geannuleerd'); refreshAll(); }
+  catch(err){ toast('Annuleren mislukt'); }
+}
+async function openTarget(target){
+  try{ const res=await fetch('/open/'+encodeURIComponent(target)); const data=await res.json(); toast(data.message || 'Actie uitgevoerd'); }
+  catch(err){ toast('Kon map niet openen'); }
+}
+
+function escapeHtml(value){ return String(value ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+refreshAll();
+setInterval(refreshAll, 4000);
 </script>
 </body>
 </html>
-
 """
 
 
