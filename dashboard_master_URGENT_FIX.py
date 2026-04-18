@@ -15,7 +15,7 @@ IS_RENDER = bool(os.environ.get("RENDER")) or bool(os.environ.get("PORT"))
 if IS_RENDER:
     BASE_DIR = Path(__file__).resolve().parent
     STATIC_DIR = BASE_DIR / "static"
-    DATA_ROOT = Path(os.environ.get("INBOX_PILOT_DATA_DIR", str(BASE_DIR / "data")))
+    DATA_ROOT = Path(os.environ.get("INBOX_PILOT_DATA_DIR", "/var/data/inbox-pilot"))
     DATA_DIR = BASE_DIR / "data" / "casa_cara"
 else:
     BASE_DIR = Path("/Users/bartvandenbosch/Desktop/Dropbox")
@@ -1874,17 +1874,7 @@ def require_login():
     }
 
     if session.get("casa_logged_in"):
-        last_activity = float(session.get("casa_last_activity", 0) or 0)
-        now = time.time()
-        if last_activity and (now - last_activity) > 120:
-            for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
-                session.pop(key, None)
-            session["casa_login_message"] = "Je Casa Cara sessie is verlopen. Log opnieuw in."
-            session["casa_login_success"] = False
-            if request.path.startswith("/casa-cara"):
-                return redirect(url_for("casa_login_page"))
-        else:
-            session["casa_last_activity"] = now
+        session["casa_last_activity"] = time.time()
 
     if session.get("gmail_logged_in"):
         last_activity = float(session.get("gmail_last_activity", 0) or 0)

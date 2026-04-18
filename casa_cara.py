@@ -16,6 +16,7 @@ PRODUCT_TYPES_FILE = DATA_DIR / "product_soorten.json"
 LOCATIONS_FILE = DATA_DIR / "locaties.json"
 DIENST_TYPES_FILE = DATA_DIR / "dienst_soorten.json"
 KITCHEN_FILE = DATA_DIR / "kitchen_tasks.json"
+BAR_TASKS_FILE = DATA_DIR / "bar_tasks.json"
 RECIPES_FILE = DATA_DIR / "recipes.json"
 CASA_AUTH_FILE = DATA_DIR / "casa_auth.json"
 
@@ -196,7 +197,6 @@ def permission_denied_response(message="Je hebt geen rechten voor deze actie."):
 
 @casa_cara.before_request
 def require_casa_login():
-    import time
     if request.path.startswith("/api/") or request.path in {"/casa", "/casa-cara"}:
         if not session.get("dashboard_logged_in"):
             if request.path.startswith("/api/"):
@@ -206,21 +206,12 @@ def require_casa_login():
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "message": "Log eerst in voor Casa Cara."}), 401
             return redirect("/casa-cara-login")
-        now = time.time()
-        last_activity = float(session.get("casa_last_activity", 0) or 0)
-        if last_activity and (now - last_activity) > 120:
-            for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
-                session.pop(key, None)
-            if request.path.startswith("/api/"):
-                return jsonify({"ok": False, "message": "Casa Cara sessie verlopen. Log opnieuw in."}), 401
-            return redirect("/casa-cara-login")
         if not get_current_casa_user():
             for key in ["casa_logged_in", "casa_last_activity", "casa_user_pin", "casa_user_name", "casa_user_role"]:
                 session.pop(key, None)
             if request.path.startswith("/api/"):
                 return jsonify({"ok": False, "message": "Casa Cara gebruiker niet gevonden."}), 401
             return redirect("/casa-cara-login")
-        session["casa_last_activity"] = now
 
 def slugify(text: str) -> str:
     text = (text or "").strip().lower()
@@ -350,8 +341,8 @@ def save_dienst_types(items):
     save_json(DIENST_TYPES_FILE, cleaned)
 
 
-def get_kitchen_data():
-    data = load_json(KITCHEN_FILE, {"lists": []})
+def normalize_tasklist_data(path: Path):
+    data = load_json(path, {"lists": []})
     if not isinstance(data, dict):
         data = {"lists": []}
     data.setdefault("lists", [])
@@ -365,6 +356,12 @@ def get_kitchen_data():
             if "last_checked_at" not in task:
                 task["last_checked_at"] = ""
                 changed = True
+            if "last_checked" not in task:
+                task["last_checked"] = ""
+                changed = True
+            if "checked" not in task:
+                task["checked"] = False
+                changed = True
             task.setdefault("subtasks", [])
             for sub in task.get("subtasks", []):
                 if "last_checked_by" not in sub:
@@ -373,12 +370,43 @@ def get_kitchen_data():
                 if "last_checked_at" not in sub:
                     sub["last_checked_at"] = ""
                     changed = True
+                if "last_checked" not in sub:
+                    sub["last_checked"] = ""
+                    changed = True
+                if "checked" not in sub:
+                    sub["checked"] = False
+                    changed = True
     if changed:
-        save_json(KITCHEN_FILE, data)
+        save_json(path, data)
     return data
+
+def sync_task_with_subtasks(task, today: str, checked_by: str = "", checked_at: str = ""):
+    subtasks = [sub for sub in task.get("subtasks", []) if isinstance(sub, dict)]
+    if not subtasks:
+        return
+    all_done_today = all(bool(sub.get("checked")) and sub.get("last_checked") == today for sub in subtasks)
+    if all_done_today:
+        task["checked"] = True
+        task["last_checked"] = today
+        task["last_checked_by"] = checked_by or task.get("last_checked_by") or ""
+        task["last_checked_at"] = checked_at or task.get("last_checked_at") or ""
+    else:
+        task["checked"] = False
+        task["last_checked"] = ""
+        task["last_checked_by"] = ""
+        task["last_checked_at"] = ""
+
+def get_kitchen_data():
+    return normalize_tasklist_data(KITCHEN_FILE)
 
 def save_kitchen_data(data):
     save_json(KITCHEN_FILE, data)
+
+def get_bar_tasks_data():
+    return normalize_tasklist_data(BAR_TASKS_FILE)
+
+def save_bar_tasks_data(data):
+    save_json(BAR_TASKS_FILE, data)
 
 def get_recipes_data():
     data = load_json(RECIPES_FILE, {"items": []})
@@ -445,6 +473,7 @@ def serialize_app_data():
         "locations": get_locations(),
         "dienst_types": get_dienst_types(),
         "kitchen": get_kitchen_data(),
+        "bar_tasks": get_bar_tasks_data(),
         "recipes": get_recipes_data(),
         "auth": {
             "user_name": user.get("name", ""),
@@ -822,7 +851,7 @@ HTML = r"""
     .ktask-row,.ksub-row{
       display:flex;
       align-items:flex-start;
-      gap:12px;
+      gap:10px;
       cursor:pointer;
     }
     .kcheck{
@@ -848,9 +877,9 @@ HTML = r"""
     }
     .ksub{
       border:1px solid rgba(255,255,255,.06);
-      background:rgba(255,255,255,.015);
-      border-radius:14px;
-      padding:12px;
+      background:rgba(255,255,255,.014);
+      border-radius:12px;
+      padding:10px;
     }
     .recipe-card{
       border:1px solid var(--line);
@@ -936,7 +965,7 @@ HTML = r"""
       display:grid;
       grid-template-columns:1fr;
       gap:8px;
-      margin-top:14px;
+      margin-top:12px;
     }
     .kheadbar{
       display:flex;
@@ -955,23 +984,83 @@ HTML = r"""
       grid-template-columns:1fr;
       gap:8px;
     }
+    .task-sections{
+      display:grid;
+      gap:12px;
+    }
+    .task-group{
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(255,255,255,.015);
+      overflow:hidden;
+      box-shadow:0 10px 24px rgba(0,0,0,.10);
+    }
+    .task-group summary{
+      list-style:none;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:12px 14px;
+      background:rgba(255,255,255,.02);
+    }
+    .task-group summary::-webkit-details-marker{display:none}
+    .task-group-body{
+      padding:10px;
+      display:grid;
+      gap:10px;
+      border-top:1px solid rgba(255,255,255,.06);
+    }
+    .task-group-label{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+      min-width:0;
+    }
+    .task-group-title{
+      font-size:14px;
+      font-weight:900;
+      letter-spacing:-.01em;
+      color:var(--text);
+    }
+    .task-group-sub{
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.35;
+    }
+    .task-group-right{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex-shrink:0;
+    }
+    .group-chevron{
+      color:var(--muted);
+      font-size:12px;
+      transition:transform .18s ease;
+    }
+    .task-group[open] .group-chevron{transform:rotate(180deg)}
+    .task-group.done-group:not([open]){
+      opacity:.96;
+    }
     .ktask{
       border:1px solid var(--line);
-      background:rgba(255,255,255,.02);
-      border-radius:18px;
-      padding:14px;
-      box-shadow:0 10px 24px rgba(0,0,0,.12);
+      background:rgba(255,255,255,.018);
+      border-radius:16px;
+      padding:12px;
+      box-shadow:0 8px 20px rgba(0,0,0,.10);
     }
     .ktask-row,.ksub-row{
       display:flex;
       align-items:flex-start;
-      gap:12px;
+      gap:10px;
       cursor:pointer;
     }
     .kcheck{
-      width:30px;
-      height:30px;
-      min-width:30px;
+      width:26px;
+      height:26px;
+      min-width:26px;
       border-radius:999px;
       border:1px solid rgba(255,255,255,.14);
       background:rgba(255,255,255,.03);
@@ -987,7 +1076,7 @@ HTML = r"""
       color:#d8ffe7;
     }
     .ktask-title{
-      font-size:15px;
+      font-size:14px;
       font-weight:800;
       letter-spacing:-.01em;
       color:var(--text);
@@ -999,8 +1088,9 @@ HTML = r"""
     }
     .ktask-meta{
       color:var(--muted);
-      font-size:13px;
-      margin-top:4px;
+      font-size:12px;
+      margin-top:3px;
+      line-height:1.35;
     }
     .ktask-actions{
       display:grid;
@@ -1017,12 +1107,12 @@ HTML = r"""
     }
     .ksub{
       border:1px solid rgba(255,255,255,.06);
-      background:rgba(255,255,255,.015);
-      border-radius:14px;
-      padding:12px;
+      background:rgba(255,255,255,.014);
+      border-radius:12px;
+      padding:10px;
     }
     .ksub-title{
-      font-size:14px;
+      font-size:13px;
       font-weight:700;
       color:var(--text);
     }
@@ -1041,10 +1131,20 @@ HTML = r"""
       }
     }
     @media (max-width: 640px){
-      .klist-card,.ktask,.ksub{padding:13px}
-      .klist-icon{width:34px;height:34px;min-width:34px}
-      .klist-name{font-size:15px}
-      .kprogress{margin-top:10px}
+      .klist-card,.ktask,.ksub{padding:11px}
+      .klist-icon{width:32px;height:32px;min-width:32px}
+      .klist-name{font-size:14px}
+      .kprogress{margin-top:8px}
+      .badge{font-size:11px;padding:0 8px;min-height:24px}
+      .kmeta{font-size:12px;margin-top:8px}
+      .ksub-wrap{gap:8px;padding-left:10px}
+      .task-group summary{padding:11px 12px}
+      .task-group-body{padding:8px}
+      .ktask-row,.ksub-row{gap:8px}
+      .ktask-meta,.task-group-sub,.audit-note{font-size:11px}
+      .ktask-title{font-size:13px}
+      .ksub-title{font-size:12px}
+      .kcheck{width:24px;height:24px;min-width:24px;font-size:12px}
     }
 
 
@@ -1122,6 +1222,7 @@ HTML = r"""
       <div class="sub-list" id="group-bar">
         <button class="sub-btn" data-page="bar-overzicht" onclick="openPage('bar-overzicht'); closeDrawer();">Overzicht</button>
         <button class="sub-btn" data-page="bar-koelingen" onclick="openPage('bar-koelingen'); closeDrawer();">Koelingen</button>
+        <button class="sub-btn" data-page="bar-takenlijsten" onclick="openPage('bar-takenlijsten'); closeDrawer();">Takenlijsten</button>
         <button class="sub-btn admin-only" data-page="bar-productsoorten" onclick="openPage('bar-productsoorten'); closeDrawer();">Productsoorten</button>
         <button class="sub-btn admin-only" data-page="bar-locaties" onclick="openPage('bar-locaties'); closeDrawer();">Locaties</button>
         <button class="sub-btn" data-page="bar-oplijst" onclick="openPage('bar-oplijst'); closeDrawer();">Op / niet op voorraad</button>
@@ -1382,6 +1483,55 @@ HTML = r"""
       </div>
     </section>
 
+    <section class="page" id="page-bar-takenlijsten">
+      <div class="hero">
+        <h1>☑ Bar · Takenlijsten</h1>
+        <p>Kies een lijst voor je barshift. Compact, snel af te vinken en fijn op telefoon.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3 class="panel-title">Takenlijsten</h3>
+          <button class="btn accent admin-only-action" onclick="openBarListModal()">Takenlijst toevoegen</button>
+        </div>
+        <div class="list" id="barTaskLists"></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-bar-takenlijst-detail">
+      <div class="hero">
+        <h1 id="barDetailTitle">☑ Bar checklist</h1>
+        <p>Werk deze barlijst stap voor stap af. De lijst blijft staan, de vinkjes resetten per nieuwe dag.</p>
+      </div>
+      <div class="panel">
+        <div id="barDetailSummary"></div>
+        <div class="panel-head">
+          <h3 class="panel-title">Taken</h3>
+          <div class="actions">
+            <button class="btn" onclick="openPage('bar-takenlijsten')">Terug naar lijsten</button>
+            <button class="btn accent admin-only-action" onclick="openBarManagePage(window.currentBarListId)">⚙️ Beheer</button>
+          </div>
+        </div>
+        <div class="list" id="barDetailList"></div>
+      </div>
+    </section>
+
+    <section class="page admin-only-page" id="page-bar-takenlijst-beheer">
+      <div class="hero">
+        <h1 id="barManageTitle">⚙️ Bar takenlijst beheren</h1>
+        <p>Pas hier alleen de inhoud aan. De checklist op de werkvloer blijft compact en rustig.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3 class="panel-title">Beheer</h3>
+          <div class="actions">
+            <button class="btn" onclick="openPage('bar-takenlijst-detail')">Terug naar checklist</button>
+            <button class="btn accent admin-only-action" onclick="openBarTaskModal(window.currentBarListId)">+ Taak toevoegen</button>
+          </div>
+        </div>
+        <div class="list" id="barManageList"></div>
+      </div>
+    </section>
+
     <section class="page" id="page-bar-koelingen">
       <div class="hero">
         <h1>❄️ Bar · Koelingen</h1>
@@ -1491,12 +1641,15 @@ HTML = r"""
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
-  let appData = { bar: { koelingen: [], fill_items: [] }, general: { fooienpot: 0, diensten: [] }, types: [], locations: [] };
+  let appData = { bar: { koelingen: [], fill_items: [] }, bar_tasks: { lists: [] }, general: { fooienpot: 0, diensten: [] }, kitchen: { lists: [] }, recipes: { items: [] }, types: [], locations: [] };
   let currentPage = 'dashboard';
   let currentKoelingId = null;
   let currentKitchenListId = null;
+  let currentBarListId = null;
+  const groupState = { algemeen:false, keuken:false, bar:false };
   window.currentKoelingId = null;
   window.currentKitchenListId = null;
+  window.currentBarListId = null;
 
   function euro(value){
     const num = Number(value || 0);
@@ -1518,7 +1671,7 @@ HTML = r"""
   function isAdmin(){ return currentRole() === 'admin'; }
   function adminOnly(html){ return isAdmin() ? html : ''; }
   function hasPermission(key){ return isAdmin() ? true : !!(appData?.auth?.permissions || {})[key]; }
-  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','keuken-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
+  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','keuken-takenlijst-beheer','bar-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
   function pageAllowed(page){
     if (isAdmin()) return true;
     const map = {
@@ -1535,6 +1688,9 @@ HTML = r"""
       'keuken-recepten': hasPermission('access_kitchen') && hasPermission('view_recipes'),
       'bar-overzicht': hasPermission('access_bar'),
       'bar-koelingen': hasPermission('access_bar') && (hasPermission('adjust_stock') || hasPermission('manage_products') || hasPermission('manage_coolers')),
+      'bar-takenlijsten': hasPermission('access_bar') && hasPermission('use_tasklists'),
+      'bar-takenlijst-detail': hasPermission('access_bar') && hasPermission('use_tasklists'),
+      'bar-takenlijst-beheer': hasPermission('access_bar') && hasPermission('manage_tasklists'),
       'bar-productsoorten': hasPermission('manage_types'),
       'bar-locaties': hasPermission('manage_locations'),
       'bar-oplijst': hasPermission('access_bar') && hasPermission('view_oplijst'),
@@ -1567,11 +1723,19 @@ HTML = r"""
     else openDrawer();
   }
 
-  function toggleGroup(group){
+  function setGroupState(group, open){
     const list = document.getElementById('group-' + group);
     const toggle = document.getElementById('toggle-' + group);
-    list.classList.toggle('open');
-    toggle.classList.toggle('expanded');
+    if (!list || !toggle) return;
+    const isOpen = !!open;
+    groupState[group] = isOpen;
+    list.classList.toggle('open', isOpen);
+    toggle.classList.toggle('expanded', isOpen);
+    list.style.display = isOpen ? 'grid' : '';
+  }
+
+  function toggleGroup(group){
+    setGroupState(group, !groupState[group]);
   }
 
   function activateNav(page){
@@ -1594,8 +1758,11 @@ HTML = r"""
       const toggle = document.getElementById('toggle-' + key);
       const group = document.getElementById('group-' + key);
       if (toggle) toggle.style.display = visible ? '' : 'none';
-      if (group) group.style.display = visible ? (group.classList.contains('open') ? 'grid' : '') : 'none';
-      if (!visible && group) group.classList.remove('open');
+      if (group) group.style.display = visible ? (groupState[key] ? 'grid' : '') : 'none';
+      if (!visible && group) {
+        group.classList.remove('open');
+        groupState[key] = false;
+      }
       if (!visible && toggle) toggle.classList.remove('expanded');
     });
     document.querySelectorAll('.page').forEach(el => {
@@ -1622,6 +1789,9 @@ HTML = r"""
       'keuken-recepten': ['Keuken', 'Recepten'],
       'bar-overzicht': ['Bar', 'Overzicht'],
       'bar-koelingen': ['Bar', 'Koelingen'],
+      'bar-takenlijsten': ['Bar', 'Takenlijsten'],
+      'bar-takenlijst-detail': ['Bar', 'Takenlijst'],
+      'bar-takenlijst-beheer': ['Bar', 'Takenlijst beheren'],
       'bar-productsoorten': ['Bar', 'Productsoorten'],
       'bar-locaties': ['Bar', 'Locaties'],
       'bar-oplijst': ['Bar', 'Op / niet op voorraad'],
@@ -1641,6 +1811,9 @@ HTML = r"""
     setText('topKicker', kicker);
     setText('topTitle', title);
     activateNav(page);
+    if (page.startsWith('algemeen')) setGroupState('algemeen', true);
+    if (page.startsWith('keuken')) setGroupState('keuken', true);
+    if (page.startsWith('bar')) setGroupState('bar', true);
     window.scrollTo({ top: 0, behavior: 'instant' });
     if(page === 'bar-bijvullen' && !window.selectedCooler){
       openRefillSelector();
@@ -1983,6 +2156,7 @@ HTML = r"""
     if (pageAllowed('diensten')) quickCards.push({label:'Algemeen', title:'Diensten', sub:'Bekijk en plan je diensten', page:'diensten'});
     if (pageAllowed('fooienpot')) quickCards.push({label:'Algemeen', title:'Fooienpot', sub:'Huidige stand en snelle aanpassing', page:'fooienpot'});
     if (pageAllowed('keuken-takenlijsten')) quickCards.push({label:'Keuken', title:'Takenlijsten', sub:'Open lijsten en vink taken af', page:'keuken-takenlijsten'});
+    if (pageAllowed('bar-takenlijsten')) quickCards.push({label:'Bar', title:'Takenlijsten', sub:'Open je bar-opstart en afsluit lijsten', page:'bar-takenlijsten'});
     if (pageAllowed('keuken-recepten')) quickCards.push({label:'Keuken', title:'Recepten', sub:'Open receptkaarten en ingrediënten', page:'keuken-recepten'});
     const quickGrid = document.getElementById('dashboardQuickGrid');
     if (quickGrid){
@@ -2316,10 +2490,14 @@ HTML = r"""
   function renderBarOverview(){
     const koelingen = safeArray(appData.bar?.koelingen);
     const fill = safeArray(appData.bar?.fill_items);
+    const lists = safeArray(appData.bar_tasks?.lists);
+    const tasks = lists.flatMap(list => safeArray(list.tasks));
     const lowCount = koelingen.reduce((total, koeling) => total + safeArray(koeling.producten).filter(product => !product.op && Number(product.voorraad || 0) < Number(product.minimum || 0)).length, 0);
     const opCount = koelingen.reduce((total, koeling) => total + safeArray(koeling.producten).filter(product => !!product.op).length, 0);
+    const doneToday = tasks.filter(task => kitchenTaskIsChecked(task)).length;
     const cards = [];
     if (pageAllowed('bar-koelingen')) cards.push({ kicker:'Bar', title:'Koelingen', sub:'Bekijk koelingen en pas voorraad direct aan.', badge:`${koelingen.length} koelingen`, badgeClass:'accent', meta:[`${lowCount} lage voorraad`, `${opCount} producten op`], actions:[{ label:'Open koelingen', kind:'accent', onclick:`openPage('bar-koelingen')` }] });
+    if (pageAllowed('bar-takenlijsten')) cards.push({ kicker:'Bar', title:'Takenlijsten', sub:'Werk je bar-opstart of afsluiting rustig af vanaf je telefoon.', badge:`${lists.length} lijsten`, badgeClass:'accent', meta:[`${doneToday} taken vandaag afgevinkt`, `${tasks.length} taken totaal`], actions:[{ label:'Open takenlijsten', kind:'accent', onclick:`openPage('bar-takenlijsten')` }] });
     if (pageAllowed('bar-bijvullen')) cards.push({ kicker:'Bar', title:'Bijvuloverzicht', sub:'Zie meteen wat vandaag aandacht nodig heeft.', badge:`${fill.length} acties`, badgeClass: fill.length ? 'warn' : 'good', meta: fill.slice(0,2).map(item => `${item.product} · ${item.bijvullen} bijvullen`), actions:[{ label:'Open bijvullen', kind:'accent', onclick:`openPage('bar-bijvullen')` }] });
     if (pageAllowed('bar-oplijst')) cards.push({ kicker:'Bar', title:'Op-lijst', sub:'Alles wat op is of weer terug op voorraad moet.', badge:`${opCount} op`, badgeClass: opCount ? 'warn' : 'good', actions:[{ label:'Open op-lijst', kind:'accent', onclick:`openPage('bar-oplijst')` }] });
     if (pageAllowed('bar-productsoorten')) cards.push({ kicker:'Bar', title:'Productsoorten', sub:'Beheer soorten en indeling per locatie.', badge:`${safeArray(appData.types).length} soorten`, actions:[{ label:'Open soorten', kind:'accent', onclick:`openPage('bar-productsoorten')` }] });
@@ -2327,9 +2505,16 @@ HTML = r"""
     renderOverviewCards('barOverviewGrid', cards, 'Je ziet hier alleen de bar-onderdelen waar jij echt iets mee kunt.');
 
     const rows = [];
-    fill.slice(0,4).forEach(item => rows.push({ title:item.product, sub:`${item.koeling} · ${item.locatie || '-'} · nu ${item.voorraad}`, badge:`+${item.bijvullen}`, badgeClass:'warn' }));
-    if (!rows.length && pageAllowed('bar-koelingen')) rows.push({ title:'Koelingen in beeld', sub:`${koelingen.length} koelingen beschikbaar voor jouw rol.`, badge: lowCount ? `${lowCount} alerts` : 'In orde', badgeClass: lowCount ? 'warn' : 'good' });
-    setText('barFocusBadge', rows.length ? `${rows.length} acties` : '0 acties');
+    fill.slice(0,3).forEach(item => rows.push({ title:item.product, sub:`${item.koeling} · ${item.locatie || '-'} · nu ${item.voorraad}`, badge:`+${item.bijvullen}`, badgeClass:'warn' }));
+    safeArray(lists).forEach(list => {
+      safeArray(list.tasks).forEach(task => {
+        if (task.last_checked_by && task.last_checked_at && rows.length < 4){
+          rows.push({ title: task.name || 'Taak', sub: `${list.name || 'Takenlijst'} · ${formatAuditLine(task)}`, badge:'Checklist', badgeClass:'accent' });
+        }
+      });
+    });
+    if (!rows.length && pageAllowed('bar-koelingen')) rows.push({ title:'Bar in beeld', sub:`${koelingen.length} koelingen en ${lists.length} lijsten beschikbaar.`, badge: lowCount ? `${lowCount} alerts` : 'In orde', badgeClass: lowCount ? 'warn' : 'good' });
+    setText('barFocusBadge', rows.length ? `${rows.length} items` : '0 items');
     renderMiniRows('barFocusList', rows, 'Geen directe focuspunten. De bar is op dit moment netjes op orde.');
   }
 
@@ -2367,6 +2552,84 @@ HTML = r"""
   function getTaskStatusMeta(task){
     const audit = formatAuditLine(task);
     return audit || `${safeArray(task.subtasks).length} subtaken`;
+  }
+  function getTaskProgress(task, taskCheckedFn, subtaskCheckedFn){
+    const subtasks = safeArray(task?.subtasks);
+    const doneSubs = subtasks.filter(sub => subtaskCheckedFn(sub)).length;
+    const totalSubs = subtasks.length;
+    const isDone = taskCheckedFn(task);
+    const pendingSubs = Math.max(totalSubs - doneSubs, 0);
+    let status = 'open';
+    if (isDone) status = 'done';
+    else if (doneSubs > 0) status = 'progress';
+    return { subtasks, doneSubs, totalSubs, pendingSubs, isDone, status };
+  }
+
+  function renderTaskGroup(title, subtitle, badgeClass, badgeText, itemsHtml, openByDefault=false, extraClass=''){
+    if (!itemsHtml) return '';
+    return `
+      <details class="task-group ${extraClass}" ${openByDefault ? 'open' : ''}>
+        <summary>
+          <div class="task-group-label">
+            <div class="task-group-title">${title}</div>
+            <div class="task-group-sub">${subtitle}</div>
+          </div>
+          <div class="task-group-right">
+            <span class="badge ${badgeClass}">${badgeText}</span>
+            <span class="group-chevron">⌄</span>
+          </div>
+        </summary>
+        <div class="task-group-body">${itemsHtml}</div>
+      </details>
+    `;
+  }
+
+  function renderChecklistTaskCard(task, options){
+    const progress = getTaskProgress(task, options.taskCheckedFn, options.subtaskCheckedFn);
+    const meta = formatAuditLine(task) || (progress.totalSubs ? `${progress.doneSubs}/${progress.totalSubs} subtaken gedaan${progress.pendingSubs ? ` · nog ${progress.pendingSubs} open` : ''}` : 'Losse taak');
+    return `
+      <div class="ktask">
+        <div class="ktask-row" onclick="${options.toggleTaskCall(task)}">
+          <div class="kcheck ${progress.isDone ? 'done' : ''}">${progress.isDone ? '✓' : ''}</div>
+          <div style="min-width:0;flex:1">
+            <div class="ktask-title ${progress.isDone ? 'done' : ''}">${task.name || 'Taak'}</div>
+            <div class="ktask-meta">${meta}</div>
+          </div>
+          <span class="badge ${progress.isDone ? 'good' : progress.status === 'progress' ? 'accent' : 'warn'}">${progress.isDone ? 'Gedaan' : progress.status === 'progress' ? 'Bezig' : 'Open'}</span>
+        </div>
+        ${progress.totalSubs ? `
+          <div class="ksub-wrap">
+            ${progress.subtasks.map(sub => `
+              <div class="ksub">
+                <div class="ksub-row" onclick="${options.toggleSubtaskCall(task, sub)}">
+                  <div class="kcheck ${options.subtaskCheckedFn(sub) ? 'done' : ''}" style="width:22px;height:22px;min-width:22px;font-size:11px">${options.subtaskCheckedFn(sub) ? '✓' : ''}</div>
+                  <div style="min-width:0;flex:1">
+                    <div class="ksub-title ${options.subtaskCheckedFn(sub) ? 'done' : ''}">${sub.name || 'Subtaak'}</div>
+                    ${formatAuditLine(sub) ? `<div class="audit-note">${formatAuditLine(sub)}</div>` : ''}
+                  </div>
+                  <span class="badge ${options.subtaskCheckedFn(sub) ? 'good' : ''}">${options.subtaskCheckedFn(sub) ? 'Gedaan' : 'Open'}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function renderChecklistSections(targetId, tasks, options){
+    const enriched = safeArray(tasks).map(task => ({ task, progress: getTaskProgress(task, options.taskCheckedFn, options.subtaskCheckedFn) }));
+    const openItems = enriched.filter(item => item.progress.status === 'open');
+    const progressItems = enriched.filter(item => item.progress.status === 'progress');
+    const doneItems = enriched.filter(item => item.progress.status === 'done');
+    const html = `
+      <div class="task-sections">
+        ${renderTaskGroup('Direct doen', openItems.length ? `${openItems.length} taak${openItems.length === 1 ? '' : 'en'} nog volledig open` : 'Alles uit deze groep is gestart', 'warn', String(openItems.length), openItems.map(item => renderChecklistTaskCard(item.task, options)).join(''), true, 'open-group')}
+        ${renderTaskGroup('Bijna klaar', progressItems.length ? `${progressItems.length} taak${progressItems.length === 1 ? '' : 'en'} is al deels gedaan` : 'Nog geen taken half afgerond', 'accent', String(progressItems.length), progressItems.map(item => renderChecklistTaskCard(item.task, options)).join(''), true, 'progress-group')}
+        ${renderTaskGroup('Klaar', doneItems.length ? `${doneItems.length} taak${doneItems.length === 1 ? '' : 'en'} al afgerond vandaag` : 'Nog niets afgerond vandaag', 'good', String(doneItems.length), doneItems.map(item => renderChecklistTaskCard(item.task, options)).join(''), false, 'done-group')}
+      </div>
+    `;
+    document.getElementById(targetId).innerHTML = (openItems.length || progressItems.length || doneItems.length) ? html : '<div class="empty">Nog geen taken in deze lijst.</div>';
   }
 
   function renderKitchen(){
@@ -2438,39 +2701,12 @@ HTML = r"""
       `;
     }
 
-    renderList(
-      'kitchenDetailList',
-      tasks,
-      (task) => `
-        <div class="ktask">
-          <div class="ktask-row" onclick="toggleKitchenTask('${list.id}','${task.id}')">
-            <div class="kcheck ${kitchenTaskIsChecked(task) ? 'done' : ''}">${kitchenTaskIsChecked(task) ? '✓' : ''}</div>
-            <div style="min-width:0;flex:1">
-              <div class="ktask-title ${kitchenTaskIsChecked(task) ? 'done' : ''}">${task.name || 'Taak'}</div>
-              <div class="ktask-meta">${getTaskStatusMeta(task)}</div>
-            </div>
-            <span class="badge ${kitchenTaskIsChecked(task) ? 'good' : 'warn'}">${kitchenTaskIsChecked(task) ? 'Gedaan' : 'Open'}</span>
-          </div>
-          ${safeArray(task.subtasks).length ? `
-            <div class="ksub-wrap">
-              ${safeArray(task.subtasks).map(sub => `
-                <div class="ksub">
-                  <div class="ksub-row" onclick="toggleKitchenSubtask('${list.id}','${task.id}','${sub.id}')">
-                    <div class="kcheck ${kitchenSubtaskIsChecked(sub) ? 'done' : ''}" style="width:24px;height:24px;min-width:24px;font-size:12px">${kitchenSubtaskIsChecked(sub) ? '✓' : ''}</div>
-                    <div style="min-width:0;flex:1">
-                      <div class="ksub-title ${kitchenSubtaskIsChecked(sub) ? 'done' : ''}">${sub.name || 'Subtaak'}</div>
-                      ${formatAuditLine(sub) ? `<div class="audit-note">${formatAuditLine(sub)}</div>` : ''}
-                    </div>
-                    <span class="badge ${kitchenSubtaskIsChecked(sub) ? 'good' : ''}">${kitchenSubtaskIsChecked(sub) ? 'Gedaan' : 'Open'}</span>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          ` : ''}
-        </div>
-      `,
-      'Nog geen taken in deze lijst.'
-    );
+    renderChecklistSections('kitchenDetailList', tasks, {
+      taskCheckedFn: kitchenTaskIsChecked,
+      subtaskCheckedFn: kitchenSubtaskIsChecked,
+      toggleTaskCall: (task) => `toggleKitchenTask('${list.id}','${task.id}')`,
+      toggleSubtaskCall: (task, sub) => `toggleKitchenSubtask('${list.id}','${task.id}','${sub.id}')`
+    });
   }
 
   function recipeIngredientFields(items){
@@ -2666,6 +2902,259 @@ HTML = r"""
       renderKitchenListDetail();
       renderKitchenManagePage();
       toast('Subtaak verwijderd');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+
+  function barTaskIsChecked(task){
+    return !!task.checked && task.last_checked === getTodayString();
+  }
+
+  function barSubtaskIsChecked(sub){
+    return !!sub.checked && sub.last_checked === getTodayString();
+  }
+
+  function openBarListDetail(listId){
+    currentBarListId = listId;
+    window.currentBarListId = listId;
+    const list = safeArray(appData.bar_tasks?.lists).find(item => item.id === listId) || {};
+    setText('barDetailTitle', `☑ ${list.name || 'Bar checklist'}`);
+    openPage('bar-takenlijst-detail');
+    renderBarTaskListDetail();
+  }
+
+  function renderBarTasks(){
+    const data = appData.bar_tasks || { lists: [] };
+    const lists = safeArray(data.lists);
+    const canManageTasklists = hasPermission('manage_tasklists');
+    renderList(
+      'barTaskLists',
+      lists,
+      (list) => {
+        const tasks = safeArray(list.tasks);
+        const done = tasks.filter(t => barTaskIsChecked(t)).length;
+        const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+        return `
+          <div class="klist-card">
+            <div class="klist-top">
+              <div class="klist-left">
+                <div class="klist-icon">✓</div>
+                <div>
+                  <div class="klist-name">${list.name}</div>
+                  <div class="klist-sub">${done} van ${tasks.length} taken gedaan</div>
+                </div>
+              </div>
+              <span class="badge accent">${percent}%</span>
+            </div>
+            <div class="kprogress"><span style="width:${percent}%"></span></div>
+            <div class="kmeta">
+              <span>${tasks.length ? 'Klaar voor je shift' : 'Nog geen taken in deze lijst'}</span>
+              <span>${tasks.length} taak${tasks.length === 1 ? '' : 'en'}</span>
+            </div>
+            <div class="klist-actions">
+              <button class="btn" onclick="openBarListDetail('${list.id}')">Open lijst</button>
+              ${canManageTasklists ? `<button class="btn danger" onclick="confirmAction('Takenlijst verwijderen','Weet je zeker dat je deze bartakenlijst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteBarList','${list.id}')&quot;)">Verwijderen</button>` : ''}
+            </div>
+          </div>
+        `;
+      },
+      'Nog geen bartakenlijsten gevonden.'
+    );
+  }
+
+  function renderBarTaskListDetail(){
+    const data = appData.bar_tasks || { lists: [] };
+    const list = safeArray(data.lists).find(item => item.id === currentBarListId) || { tasks: [], name: 'Bar checklist' };
+    const tasks = safeArray(list.tasks);
+    const done = tasks.filter(t => barTaskIsChecked(t)).length;
+    const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+    setText('barDetailTitle', `☑ Bar checklist · ${list.name || 'Bar checklist'}`);
+    const summary = document.getElementById('barDetailSummary');
+    if (summary){
+      summary.innerHTML = `
+        <div class="kheadbar">
+          <div class="khead-top">
+            <div class="item-sub">${done} van ${tasks.length} taken gedaan</div>
+            <span class="badge accent">${percent}%</span>
+          </div>
+          <div class="kprogress"><span style="width:${percent}%"></span></div>
+        </div>
+      `;
+    }
+    renderChecklistSections('barDetailList', tasks, {
+      taskCheckedFn: barTaskIsChecked,
+      subtaskCheckedFn: barSubtaskIsChecked,
+      toggleTaskCall: (task) => `toggleBarTask('${list.id}','${task.id}')`,
+      toggleSubtaskCall: (task, sub) => `toggleBarSubtask('${list.id}','${task.id}','${sub.id}')`
+    });
+  }
+
+  function openBarManagePage(listId){
+    if (!hasPermission('manage_tasklists')) return;
+    currentBarListId = listId;
+    window.currentBarListId = listId;
+    const list = safeArray(appData.bar_tasks?.lists).find(item => item.id === listId) || {};
+    setText('barManageTitle', `⚙️ Bar takenlijst beheren · ${list.name || 'Bar checklist'}`);
+    openPage('bar-takenlijst-beheer');
+    renderBarTaskManagePage();
+  }
+
+  function renderBarTaskManagePage(){
+    const data = appData.bar_tasks || { lists: [] };
+    const list = safeArray(data.lists).find(item => item.id === currentBarListId) || { tasks: [], name: 'Bar checklist' };
+    const tasks = safeArray(list.tasks);
+    renderList(
+      'barManageList',
+      tasks,
+      (task) => `
+        <div class="ktask">
+          <div class="item-top">
+            <div>
+              <div class="ktask-title">${task.name || 'Taak'}</div>
+              <div class="ktask-meta">${safeArray(task.subtasks).length} subtaken</div>
+            </div>
+            <span class="badge accent">Taak</span>
+          </div>
+          <div class="ktask-actions">
+            <button class="btn" onclick="openBarSubtaskModal('${list.id}','${task.id}')">+ Subtaak toevoegen</button>
+            <button class="btn danger" onclick="confirmAction('Taak verwijderen','Weet je zeker dat je deze bartaak wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteBarTask','${list.id}','${task.id}')&quot;)">Verwijderen</button>
+          </div>
+          ${safeArray(task.subtasks).length ? `
+            <div class="ksub-wrap">
+              ${safeArray(task.subtasks).map(sub => `
+                <div class="ksub">
+                  <div class="item-top">
+                    <div><div class="ksub-title">${sub.name || 'Subtaak'}</div></div>
+                    <span class="badge">Subtaak</span>
+                  </div>
+                  <div class="ksub-actions">
+                    <button class="btn danger" onclick="confirmAction('Subtaak verwijderen','Weet je zeker dat je deze barsubtaak wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteBarSubtask','${list.id}','${task.id}','${sub.id}')&quot;)">Verwijderen</button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="empty" style="margin-top:12px">Nog geen subtaken.</div>`}
+        </div>
+      `,
+      'Nog geen taken in deze lijst.'
+    );
+  }
+
+  function openBarListModal(){
+    openModal('Bartakenlijst toevoegen','Maak een blijvende lijst aan voor je barwerkzaamheden.',`
+      <div class="form-grid">
+        <div class="field"><label>Naam takenlijst</label><input id="barListName" placeholder="Bijv. Bar opstart"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="closeModal()">Annuleren</button>
+          <button class="btn accent" onclick="saveBarList()">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveBarList(){
+    try{
+      await postJSON('/api/bar-tasks/list-save', { name: document.getElementById('barListName').value });
+      closeModal();
+      await loadData();
+      renderBarTasks();
+      toast('Bartakenlijst opgeslagen');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openBarTaskModal(listId){
+    openModal('Bartaak toevoegen','Voeg een nieuwe taak toe aan deze bartakenlijst.',`
+      <div class="form-grid">
+        <div class="field"><label>Naam taak</label><input id="barTaskName" placeholder="Bijv. Bar klaarzetten"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="closeModal()">Annuleren</button>
+          <button class="btn accent" onclick="saveBarTask('${listId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveBarTask(listId){
+    try{
+      await postJSON('/api/bar-tasks/task-save', { list_id: listId, name: document.getElementById('barTaskName').value });
+      closeModal();
+      await loadData();
+      renderBarTasks();
+      renderBarTaskListDetail();
+      renderBarTaskManagePage();
+      toast('Bartaak opgeslagen');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openBarSubtaskModal(listId, taskId){
+    openModal('Barsubtaak toevoegen','Voeg een subtaak toe onder deze taak.',`
+      <div class="form-grid">
+        <div class="field"><label>Naam subtaak</label><input id="barSubtaskName" placeholder="Bijv. IJs aanvullen"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="closeModal()">Annuleren</button>
+          <button class="btn accent" onclick="saveBarSubtask('${listId}','${taskId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveBarSubtask(listId, taskId){
+    try{
+      await postJSON('/api/bar-tasks/subtask-save', { list_id: listId, task_id: taskId, name: document.getElementById('barSubtaskName').value });
+      closeModal();
+      await loadData();
+      renderBarTaskListDetail();
+      renderBarTaskManagePage();
+      toast('Barsubtaak opgeslagen');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function toggleBarTask(listId, taskId){
+    try{
+      await postJSON('/api/bar-tasks/task-toggle', { list_id: listId, task_id: taskId });
+      await loadData();
+      renderBarTasks();
+      renderBarTaskListDetail();
+      renderBarTaskManagePage();
+      toast('Bartaak bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function toggleBarSubtask(listId, taskId, subtaskId){
+    try{
+      await postJSON('/api/bar-tasks/subtask-toggle', { list_id: listId, task_id: taskId, subtask_id: subtaskId });
+      await loadData();
+      renderBarTaskListDetail();
+      renderBarTaskManagePage();
+      renderBarOverview();
+      toast('Barsubtaak bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function deleteBarList(listId){
+    try{
+      await postJSON('/api/bar-tasks/list-delete', { list_id: listId });
+      await loadData();
+      openPage('bar-takenlijsten');
+      renderBarTasks();
+      toast('Bartakenlijst verwijderd');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function deleteBarTask(listId, taskId){
+    try{
+      await postJSON('/api/bar-tasks/task-delete', { list_id: listId, task_id: taskId });
+      await loadData();
+      renderBarTaskListDetail();
+      renderBarTaskManagePage();
+      toast('Bartaak verwijderd');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function deleteBarSubtask(listId, taskId, subtaskId){
+    try{
+      await postJSON('/api/bar-tasks/subtask-delete', { list_id: listId, task_id: taskId, subtask_id: subtaskId });
+      await loadData();
+      renderBarTaskListDetail();
+      renderBarTaskManagePage();
+      toast('Barsubtaak verwijderd');
     }catch(err){ toast(err.message, 'error'); }
   }
 
@@ -3018,6 +3507,8 @@ HTML = r"""
     renderKitchen();
     renderKitchenOverview();
     renderKitchenManagePage();
+    renderBarTasks();
+    renderBarTaskManagePage();
     renderRecipes();
     renderBarOverview();
     if (currentPage === 'bar-koeling-detail' && currentKoelingId){
@@ -3025,6 +3516,9 @@ HTML = r"""
     }
     if (currentPage === 'keuken-takenlijst-detail' && currentKitchenListId){
       renderKitchenListDetail();
+    }
+    if (currentPage === 'bar-takenlijst-detail' && currentBarListId){
+      renderBarTaskListDetail();
     }
   }
 
@@ -4048,11 +4542,18 @@ def api_kitchen():
         for task in item.get("tasks", []):
             if task.get("last_checked") != today and task.get("checked"):
                 task["checked"] = False
+                task["last_checked"] = ""
                 changed = True
             for sub in task.get("subtasks", []):
                 if sub.get("last_checked") != today and sub.get("checked"):
                     sub["checked"] = False
+                    sub["last_checked"] = ""
                     changed = True
+            before = (task.get("checked"), task.get("last_checked"), task.get("last_checked_by"), task.get("last_checked_at"))
+            sync_task_with_subtasks(task, today, task.get("last_checked_by", ""), task.get("last_checked_at", ""))
+            after = (task.get("checked"), task.get("last_checked"), task.get("last_checked_by"), task.get("last_checked_at"))
+            if before != after:
+                changed = True
     if changed:
         save_kitchen_data(data)
     return jsonify(data)
@@ -4168,6 +4669,11 @@ def kitchen_task_toggle():
                     task["last_checked"] = today if not is_checked else ""
                     task["last_checked_by"] = checked_by if not is_checked else ""
                     task["last_checked_at"] = checked_at if not is_checked else ""
+                    for sub in task.get("subtasks", []):
+                        sub["checked"] = not is_checked
+                        sub["last_checked"] = today if not is_checked else ""
+                        sub["last_checked_by"] = checked_by if not is_checked else ""
+                        sub["last_checked_at"] = checked_at if not is_checked else ""
                     save_kitchen_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
@@ -4224,6 +4730,7 @@ def kitchen_subtask_delete():
                     task["subtasks"] = [sub for sub in task.get("subtasks", []) if sub.get("id") != subtask_id]
                     if len(task["subtasks"]) == before:
                         return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
+                    sync_task_with_subtasks(task, date.today().isoformat())
                     save_kitchen_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
@@ -4251,11 +4758,234 @@ def kitchen_subtask_toggle():
                             sub["last_checked"] = today if not is_checked else ""
                             sub["last_checked_by"] = checked_by if not is_checked else ""
                             sub["last_checked_at"] = checked_at if not is_checked else ""
+                            sync_task_with_subtasks(task, today, checked_by if not is_checked else "", checked_at if not is_checked else "")
                             save_kitchen_data(data)
                             return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
 
 
+
+@casa_cara.route("/api/bar-tasks")
+def api_bar_tasks():
+    data = get_bar_tasks_data()
+    today = date.today().isoformat()
+    changed = False
+    for item in data.get("lists", []):
+        for task in item.get("tasks", []):
+            if task.get("last_checked") != today and task.get("checked"):
+                task["checked"] = False
+                task["last_checked"] = ""
+                changed = True
+            for sub in task.get("subtasks", []):
+                if sub.get("last_checked") != today and sub.get("checked"):
+                    sub["checked"] = False
+                    sub["last_checked"] = ""
+                    changed = True
+            before = (task.get("checked"), task.get("last_checked"), task.get("last_checked_by"), task.get("last_checked_at"))
+            sync_task_with_subtasks(task, today, task.get("last_checked_by", ""), task.get("last_checked_at", ""))
+            after = (task.get("checked"), task.get("last_checked"), task.get("last_checked_by"), task.get("last_checked_at"))
+            if before != after:
+                changed = True
+    if changed:
+        save_bar_tasks_data(data)
+    return jsonify(data)
+
+@casa_cara.route("/api/bar-tasks/list-save", methods=["POST"])
+def bar_list_save():
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "message": "Vul een naam in voor de takenlijst."}), 400
+    data = get_bar_tasks_data()
+    existing = {item.get("id") for item in data.get("lists", [])}
+    new_id = slugify(name)
+    base = new_id
+    count = 2
+    while new_id in existing:
+        new_id = f"{base}_{count}"
+        count += 1
+    data["lists"].append({"id": new_id, "name": name, "tasks": []})
+    save_bar_tasks_data(data)
+    return jsonify({"ok": True})
+
+@casa_cara.route("/api/bar-tasks/list-delete", methods=["POST"])
+def bar_list_delete():
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    data = get_bar_tasks_data()
+    before = len(data.get("lists", []))
+    data["lists"] = [item for item in data.get("lists", []) if item.get("id") != list_id]
+    if len(data["lists"]) == before:
+        return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+    save_bar_tasks_data(data)
+    return jsonify({"ok": True})
+
+@casa_cara.route("/api/bar-tasks/task-save", methods=["POST"])
+def bar_task_save():
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    name = (payload.get("name") or "").strip()
+    if not list_id or not name:
+        return jsonify({"ok": False, "message": "Lijst of taak ontbreekt."}), 400
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            existing = {task.get("id") for task in item.get("tasks", [])}
+            new_id = slugify(name)
+            base = new_id
+            count = 2
+            while new_id in existing:
+                new_id = f"{base}_{count}"
+                count += 1
+            item.setdefault("tasks", []).append({
+                "id": new_id,
+                "name": name,
+                "checked": False,
+                "last_checked": "",
+                "last_checked_by": "",
+                "last_checked_at": "",
+                "subtasks": []
+            })
+            save_bar_tasks_data(data)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/task-delete", methods=["POST"])
+def bar_task_delete():
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            before = len(item.get("tasks", []))
+            item["tasks"] = [task for task in item.get("tasks", []) if task.get("id") != task_id]
+            if len(item["tasks"]) == before:
+                return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
+            save_bar_tasks_data(data)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/task-toggle", methods=["POST"])
+def bar_task_toggle():
+    if not has_casa_permission("use_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    today = date.today().isoformat()
+    checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
+    checked_at = datetime.now().isoformat(timespec="minutes")
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    is_checked = bool(task.get("checked")) and task.get("last_checked") == today
+                    task["checked"] = not is_checked
+                    task["last_checked"] = today if not is_checked else ""
+                    task["last_checked_by"] = checked_by if not is_checked else ""
+                    task["last_checked_at"] = checked_at if not is_checked else ""
+                    for sub in task.get("subtasks", []):
+                        sub["checked"] = not is_checked
+                        sub["last_checked"] = today if not is_checked else ""
+                        sub["last_checked_by"] = checked_by if not is_checked else ""
+                        sub["last_checked_at"] = checked_at if not is_checked else ""
+                    save_bar_tasks_data(data)
+                    return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/subtask-save", methods=["POST"])
+def bar_subtask_save():
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    name = (payload.get("name") or "").strip()
+    if not list_id or not task_id or not name:
+        return jsonify({"ok": False, "message": "Subtaak gegevens ontbreken."}), 400
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    existing = {sub.get("id") for sub in task.get("subtasks", [])}
+                    new_id = slugify(name)
+                    base = new_id
+                    count = 2
+                    while new_id in existing:
+                        new_id = f"{base}_{count}"
+                        count += 1
+                    task.setdefault("subtasks", []).append({
+                        "id": new_id,
+                        "name": name,
+                        "checked": False,
+                        "last_checked": "",
+                        "last_checked_by": "",
+                        "last_checked_at": ""
+                    })
+                    save_bar_tasks_data(data)
+                    return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/subtask-delete", methods=["POST"])
+def bar_subtask_delete():
+    if not has_casa_permission("manage_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    subtask_id = payload.get("subtask_id")
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    before = len(task.get("subtasks", []))
+                    task["subtasks"] = [sub for sub in task.get("subtasks", []) if sub.get("id") != subtask_id]
+                    if len(task["subtasks"]) == before:
+                        return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
+                    sync_task_with_subtasks(task, date.today().isoformat())
+                    save_bar_tasks_data(data)
+                    return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/subtask-toggle", methods=["POST"])
+def bar_subtask_toggle():
+    if not has_casa_permission("use_tasklists"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    subtask_id = payload.get("subtask_id")
+    today = date.today().isoformat()
+    checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
+    checked_at = datetime.now().isoformat(timespec="minutes")
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    for sub in task.get("subtasks", []):
+                        if sub.get("id") == subtask_id:
+                            is_checked = bool(sub.get("checked")) and sub.get("last_checked") == today
+                            sub["checked"] = not is_checked
+                            sub["last_checked"] = today if not is_checked else ""
+                            sub["last_checked_by"] = checked_by if not is_checked else ""
+                            sub["last_checked_at"] = checked_at if not is_checked else ""
+                            sync_task_with_subtasks(task, today, checked_by if not is_checked else "", checked_at if not is_checked else "")
+                            save_bar_tasks_data(data)
+                            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
 
 
 @casa_cara.route("/api/manage/user-save", methods=["POST"])
