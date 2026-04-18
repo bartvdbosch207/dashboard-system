@@ -15,8 +15,8 @@ IS_RENDER = bool(os.environ.get("RENDER")) or bool(os.environ.get("PORT"))
 if IS_RENDER:
     BASE_DIR = Path(__file__).resolve().parent
     STATIC_DIR = BASE_DIR / "static"
-    DATA_ROOT = BASE_DIR / "data"
-    DATA_DIR = DATA_ROOT / "casa_cara"
+    DATA_ROOT = Path(os.environ.get("INBOX_PILOT_DATA_DIR", str(BASE_DIR / "data")))
+    DATA_DIR = BASE_DIR / "data" / "casa_cara"
 else:
     BASE_DIR = Path("/Users/bartvandenbosch/Desktop/Dropbox")
     STATIC_DIR = BASE_DIR / "static"
