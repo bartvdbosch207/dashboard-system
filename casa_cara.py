@@ -1632,41 +1632,41 @@ HTML = r"""
     .mobile-sheet-backdrop.open{opacity:1;pointer-events:auto}
     .mobile-sheet{position:fixed;left:0;right:0;bottom:0;z-index:73;transform:translateY(104%);transition:transform .24s ease;pointer-events:none}
     .mobile-sheet.open{transform:translateY(0);pointer-events:auto}
-    .mobile-sheet-card{background:linear-gradient(180deg,#111a28,#0d1420);border-top-left-radius:24px;border-top-right-radius:24px;border:1px solid rgba(255,255,255,.08);box-shadow:0 -20px 40px rgba(0,0,0,.36);max-height:min(78dvh,780px);overflow:auto;padding:12px 14px calc(18px + env(safe-area-inset-bottom,0px))}
+    .mobile-sheet-card{background:linear-gradient(180deg,#111a28,#0d1420);border-top-left-radius:24px;border-top-right-radius:24px;border:1px solid rgba(255,255,255,.08);box-shadow:0 -20px 40px rgba(0,0,0,.36);max-height:min(82dvh,820px);overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:12px 14px calc(18px + env(safe-area-inset-bottom,0px))}
     .mobile-sheet-grab{width:56px;height:5px;border-radius:999px;background:rgba(255,255,255,.20);margin:0 auto 10px}
     .mobile-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
     .mobile-sheet-kicker{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:800;margin-bottom:4px}
     .mobile-sheet-title{font-size:18px;font-weight:900;letter-spacing:-.03em;color:#f5f7fb}
     .mobile-sheet-sub{font-size:13px;color:#97a6bb;line-height:1.45;margin-top:2px}
     .mobile-sheet-close{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#fff;display:grid;place-items:center}
-.mobile-sheet-actions{display:none;position:sticky;bottom:0;z-index:2;gap:10px;justify-content:flex-end;padding-top:12px;padding-bottom:max(4px, env(safe-area-inset-bottom,0px));margin-top:12px;background:linear-gradient(180deg, rgba(13,20,32,0), rgba(13,20,32,.92) 28%, #0d1420 100%)}
-.fridge-editor-mobile-savebar{display:none;position:sticky;bottom:0;z-index:18;padding:10px 0 calc(10px + env(safe-area-inset-bottom,0px));background:linear-gradient(180deg, rgba(11,18,32,0), rgba(11,18,32,.92) 26%, #0b1220 100%)}
-.fridge-editor-mobile-savebar .fridge-editor-btn{width:100%;justify-content:center}
+    #barLayoutShelfMobileBody{padding-bottom:16px}
+    .mobile-sheet-actions{display:none;position:sticky;bottom:0;z-index:4;gap:10px;justify-content:flex-end;padding:12px 0 calc(12px + env(safe-area-inset-bottom,0px));margin-top:12px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg, rgba(13,20,32,0), rgba(13,20,32,.94) 28%, #0d1420 100%)}
+    .mobile-sheet-actions .fridge-editor-btn{flex:1 1 0;justify-content:center}
+    .mobile-sheet-actions .fridge-editor-btn.primary{box-shadow:0 10px 26px rgba(255,122,17,.22)}
     @media (max-width: 900px){
       .fridge-editor-topbar{padding:14px 14px 12px;align-items:flex-start}
       .fridge-editor-title{font-size:24px;line-height:1.02;max-width:100%}
       .fridge-editor-sub{font-size:13px;max-width:100%;padding-right:0}
-      .fridge-editor-actions{width:100%;justify-content:flex-start}
+      .fridge-editor-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}
       .fridge-editor-btn{min-height:40px;padding:0 14px;border-radius:12px;font-size:13px}
       .fridge-editor-body{grid-template-columns:1fr;padding:8px}
       .fridge-editor-panel{display:none !important}
-      .fridge-editor-canvas{padding:10px}
+      .fridge-editor-canvas{padding:10px;overflow:hidden}
       .fridge-editor-toolbar{flex-direction:column;align-items:stretch;gap:10px;margin-bottom:8px}
-      .fridge-editor-toolbar-left{display:grid;grid-template-columns:minmax(108px,140px) 1fr;gap:8px;align-items:center}
+      .fridge-editor-toolbar-left{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0}
+      .fridge-editor-toolbar-left > *{min-width:0}
+      .fridge-editor-toolbar .badge{display:block;width:100%;white-space:normal;line-height:1.35}
       .fridge-editor-toolbar .actions{display:none}
-      .fridge-editor-select{min-height:42px}
+      .fridge-editor-select{min-height:42px;width:100%}
       .fridge-editor-stage{overflow:visible;padding-bottom:0}
       .mobile-sheet-actions{display:flex}
-      .fridge-editor-mobile-savebar{display:block}
       .fridge-unit{padding:10px;border-radius:18px}
       .fridge-unit-top{padding:0 2px 8px}
       .fridge-unit-name{font-size:18px}
       .fridge-unit-note{font-size:12px;line-height:1.4}
       .fridge-door-badge{display:none}
-      .fridge-bank{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(84vw,84vw);gap:10px;overflow-x:auto;overflow-y:hidden;padding-bottom:10px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
-      .fridge-bank::-webkit-scrollbar{height:6px}
-      .fridge-bank::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
-      .fridge-door{min-height:0;scroll-snap-align:start;padding:7px;border-radius:18px}
+      .fridge-bank{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;overflow:visible;padding-bottom:0}
+      .fridge-door{min-height:0;padding:7px;border-radius:18px}
       .fridge-door-frame{padding:8px 8px 7px;border-radius:14px}
       .fridge-door-window{min-height:320px;padding:10px 6px 8px;border-radius:12px}
       .fridge-handle{top:52px;height:120px}
@@ -2103,7 +2103,7 @@ HTML = r"""
         </div>
         <div class="fridge-editor-body">
           <div class="fridge-editor-canvas">
-            <div class="fridge-editor-mobile-tip">Op telefoon swipe je nu tussen de 3 koelkastjes. Tik op een plank om onderin direct product, facings en plankinstellingen te openen.</div>
+            <div class="fridge-editor-mobile-tip">Op telefoon scroll je nu alleen verticaal door de 3 koelkastjes. Tik op een plank om direct de mobiele editor met product, facings en plankinstellingen te openen.</div>
             <div class="fridge-rotate-hint">Voor het beste overzicht gebruik je deze editor op telefoon in liggende stand.</div>
             <div class="fridge-editor-toolbar">
               <div class="fridge-editor-toolbar-left">
@@ -2137,9 +2137,6 @@ HTML = r"""
               <button class="fridge-editor-btn primary admin-only-action" id="barLayoutMobileSaveBtn" type="button" onclick="saveCurrentBarLayoutStructure()">Indeling opslaan</button>
             </div>
           </div>
-        </div>
-        <div class="fridge-editor-mobile-savebar">
-          <button class="fridge-editor-btn primary admin-only-action" id="barLayoutBottomSaveBtn" type="button" onclick="saveCurrentBarLayoutStructure()">Indeling opslaan</button>
         </div>
       </div>
     </section>
