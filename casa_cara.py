@@ -1528,6 +1528,8 @@ HTML = r"""
     .fridge-editor-page{padding:0;max-width:none;width:100%;margin:0;background:#0b1220}
     .fridge-editor-shell{min-height:100dvh;display:grid;grid-template-rows:auto 1fr;background:radial-gradient(circle at top left, rgba(255,122,17,.10), transparent 18%),radial-gradient(circle at top right, rgba(97,165,255,.10), transparent 20%),linear-gradient(180deg,#0b1220,#0f1727 72%,#0a111d)}
     .fridge-editor-topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 22px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(9,14,24,.82);backdrop-filter:blur(16px);position:sticky;top:0;z-index:20}
+    .fridge-mobile-only{display:none}
+    .fridge-desktop-only{display:block}
     .fridge-editor-kicker{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#7d8ca3;margin-bottom:6px}
     .fridge-editor-title{font-size:34px;font-weight:900;letter-spacing:-.04em;color:#f5f7fb;margin:0}
     .fridge-editor-sub{font-size:14px;color:#8d9bb0;margin-top:6px;line-height:1.5}
@@ -1556,6 +1558,9 @@ HTML = r"""
     .fridge-unit-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 4px 8px}
     .fridge-unit-name{font-size:17px;font-weight:900;letter-spacing:-.03em;color:#f6f8fb}
     .fridge-unit-note{font-size:12px;color:#94a3b8}
+    .fridge-cooler-tabs{display:none;margin-bottom:10px;gap:8px;flex-wrap:wrap}
+    .fridge-cooler-tab{min-height:38px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:#121d30;color:#dfe7f3;font-weight:800;cursor:pointer}
+    .fridge-cooler-tab.active{background:#ff7a11;border-color:#ff7a11;color:#fff;box-shadow:0 8px 20px rgba(255,122,17,.24)}
     .fridge-bank{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;position:relative}
     .fridge-door{position:relative;border-radius:20px;padding:8px;background:linear-gradient(180deg,#0d1421,#131d2d);border:1px solid rgba(255,255,255,.08);min-height:520px;display:grid;grid-template-rows:auto 1fr auto;overflow:hidden}
     .fridge-door::before{content:'';position:absolute;inset:8px;border-radius:16px;border:1px solid rgba(255,255,255,.04);pointer-events:none}
@@ -1640,48 +1645,55 @@ HTML = r"""
     .mobile-sheet-sub{font-size:13px;color:#97a6bb;line-height:1.45;margin-top:2px}
     .mobile-sheet-close{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#fff;display:grid;place-items:center}
     @media (max-width: 900px){
-      .fridge-editor-topbar{padding:14px 14px 12px;align-items:flex-start}
-      .fridge-editor-title{font-size:24px;line-height:1.02;max-width:100%}
-      .fridge-editor-sub{font-size:13px;max-width:100%;padding-right:0}
-      .fridge-editor-actions{width:100%;justify-content:flex-start}
-      .fridge-editor-btn{min-height:40px;padding:0 14px;border-radius:12px;font-size:13px}
-      .fridge-editor-body{grid-template-columns:1fr;padding:8px}
+      .fridge-mobile-only{display:block}
+      .fridge-desktop-only{display:none !important}
+      .fridge-editor-topbar{padding:12px 14px 10px;align-items:flex-start;gap:12px}
+      .fridge-editor-kicker{font-size:10px;margin-bottom:4px}
+      .fridge-editor-title{font-size:18px;line-height:1.05;max-width:100%}
+      .fridge-editor-sub{font-size:12px;line-height:1.35;max-width:100%;padding-right:0;margin-top:4px;color:#9aabc0}
+      .fridge-editor-actions{width:100%;justify-content:stretch;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+      .fridge-editor-btn{min-height:44px;padding:0 14px;border-radius:14px;font-size:14px;width:100%}
+      .fridge-editor-body{grid-template-columns:1fr;padding:0}
       .fridge-editor-panel{display:none !important}
-      .fridge-editor-canvas{padding:10px}
-      .fridge-editor-toolbar{flex-direction:column;align-items:stretch;gap:10px;margin-bottom:8px}
-      .fridge-editor-toolbar-left{display:grid;grid-template-columns:minmax(108px,140px) 1fr;gap:8px;align-items:center}
+      .fridge-editor-canvas,.layout-readonly-shell{padding:0;border:none;box-shadow:none;background:transparent;border-radius:0}
+      .fridge-editor-toolbar,.layout-readonly-toolbar{flex-direction:column;align-items:stretch;gap:8px;margin-bottom:8px;padding:12px 12px 0}
+      .fridge-editor-toolbar-left,.layout-readonly-toolbar-left{display:grid;grid-template-columns:1fr;gap:8px;align-items:center}
       .fridge-editor-toolbar .actions{display:none}
-      .fridge-editor-select{min-height:42px}
-      .fridge-editor-stage{overflow:visible;padding-bottom:0}
-      .fridge-unit{padding:10px;border-radius:18px}
-      .fridge-unit-top{padding:0 2px 8px}
+      .fridge-editor-select{min-height:44px;font-size:16px;border-radius:14px}
+      .fridge-editor-stage{overflow:visible;padding:0 12px 14px}
+      .fridge-unit{padding:8px 0 12px;border-radius:0;border:none;box-shadow:none;background:transparent}
+      .fridge-unit-top{padding:0 0 6px}
       .fridge-unit-name{font-size:18px}
-      .fridge-unit-note{font-size:12px;line-height:1.4}
+      .fridge-unit-note{font-size:11px;line-height:1.35;max-width:38ch}
       .fridge-door-badge{display:none}
-      .fridge-bank{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(84vw,84vw);gap:10px;overflow-x:auto;overflow-y:hidden;padding-bottom:10px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
-      .fridge-bank::-webkit-scrollbar{height:6px}
-      .fridge-bank::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
-      .fridge-door{min-height:0;scroll-snap-align:start;padding:7px;border-radius:18px}
-      .fridge-door-frame{padding:8px 8px 7px;border-radius:14px}
-      .fridge-door-window{min-height:300px;padding:9px 6px 8px;border-radius:12px}
-      .fridge-handle{top:52px;height:120px}
-      .fridge-door-title{font-size:11px}
+      .fridge-cooler-tabs{display:flex}
+      .fridge-bank{display:block;overflow:visible;padding-bottom:0}
+      .fridge-door{min-height:0;padding:6px;border-radius:18px;width:100%}
+      .fridge-door-frame{padding:6px 6px 5px;border-radius:14px}
+      .fridge-door-window{min-height:0;padding:8px 5px 6px;border-radius:12px}
+      .fridge-handle{top:48px;right:2px;width:9px;height:112px}
+      .fridge-door-title{font-size:12px}
       .fridge-door-header{margin-bottom:4px}
-      .fridge-door-shelves{gap:7px;padding-top:8px}
-      .fridge-shelf{padding-bottom:12px}
-      .fridge-shelf-track{padding:8px 3px 10px;border-radius:12px}
-      .fridge-shelf-products{gap:4px}
-      .fridge-item{min-width:0;border-radius:10px}
-      .fridge-item-thumb{padding:2px}
-      .fridge-item-thumb img{max-height:64px}
+      .fridge-door-shelves{gap:6px;padding-top:6px}
+      .fridge-shelf{padding-bottom:10px}
+      .fridge-shelf-name{font-size:8px;margin-bottom:3px}
+      .fridge-shelf-track{padding:6px 3px 8px;border-radius:12px;min-height:var(--shelf-height,72px)}
+      .fridge-shelf-products{gap:3px}
+      .fridge-item{min-width:0;border-radius:8px}
+      .fridge-item-thumb{padding:1px}
+      .fridge-item-thumb img{max-height:52px;transform:translateY(3px) scale(1.06)}
+      .fridge-shelf-beam{height:7px;bottom:4px}
+      .fridge-base{margin-top:4px;height:40px;border-radius:0 0 16px 16px}
+      .fridge-base::before{width:64px;height:14px;bottom:10px}
       .fridge-rotate-hint{display:none !important}
-      .fridge-editor-mobile-tip{display:block;margin-bottom:10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.45}
+      .fridge-editor-mobile-tip{display:block;margin:10px 12px 0;padding:9px 11px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.4}
       .fridge-panel-section,.fridge-panel-block{margin-bottom:12px}
       .fridge-panel-grid{grid-template-columns:1fr !important}
       .fridge-facing-grid{grid-template-columns:repeat(4,minmax(0,1fr)) !important}
       .fridge-product-preview{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
       .fridge-preview-card{min-height:96px}
       .fridge-preview-name{font-size:11px}
+      .fridge-preview-thumb{height:72px}
     }
 
 </style>
@@ -2057,7 +2069,7 @@ HTML = r"""
           <div>
             <div class="fridge-editor-kicker">Bar · Indeling · Kijkmodus</div>
             <h1 class="fridge-editor-title" id="barLayoutViewTitle">Indeling bekijken</h1>
-            <div class="fridge-editor-sub">Gebruik deze pagina op de vloer om snel te zien hoe een unit opgebouwd moet worden. Geen knoppen om per ongeluk iets te wijzigen.</div>
+            <div class="fridge-editor-sub">Kies op telefoon één koelkast tegelijk en bekijk rustig hoe de unit opgebouwd moet worden.</div>
           </div>
           <div class="fridge-editor-actions">
             <button class="fridge-editor-btn" onclick="openPage('bar-indeling')">Terug</button>
@@ -2070,7 +2082,8 @@ HTML = r"""
             <div class="fridge-editor-toolbar">
               <div class="fridge-editor-toolbar-left">
                 <select id="barLayoutReadonlyUnitSelect" class="fridge-editor-select" onchange="changeBarLayoutReadonlyUnit(this.value)"></select>
-                <span class="badge accent" id="barLayoutReadonlyBadge">3 koelkastjes · kijkmodus</span>
+                <select id="barLayoutReadonlyCoolerSelect" class="fridge-editor-select fridge-mobile-only" onchange="changeBarLayoutReadonlyCooler(this.value)"></select>
+                <span class="badge accent fridge-desktop-only" id="barLayoutReadonlyBadge">3 koelkastjes · kijkmodus</span>
               </div>
               <div class="actions">
                 <button class="btn" onclick="openPage('bar-indeling')">Overzicht</button>
@@ -2089,7 +2102,7 @@ HTML = r"""
           <div>
             <div class="fridge-editor-kicker">Bar · Indeling · Full editor</div>
             <h1 class="fridge-editor-title" id="fridgeEditorTitle">Indeling editor</h1>
-            <div class="fridge-editor-sub">Werk per unit met 3 brede koelkastjes naast elkaar. Klik op een plank en stel rechts het product, de facings en het beeld van die hele rij in.</div>
+            <div class="fridge-editor-sub">Werk op telefoon per keer in één koelkast. Tik op een plank om onderin direct product, facings en plankinstellingen te openen.</div>
           </div>
           <div class="fridge-editor-actions">
             <button class="fridge-editor-btn" onclick="openPage('bar-indeling')">Terug</button>
@@ -2098,12 +2111,13 @@ HTML = r"""
         </div>
         <div class="fridge-editor-body">
           <div class="fridge-editor-canvas">
-            <div class="fridge-editor-mobile-tip">Op telefoon swipe je nu tussen de 3 koelkastjes. Tik op een plank om onderin direct product, facings en plankinstellingen te openen.</div>
+            <div class="fridge-editor-mobile-tip">Op telefoon werk je nu per keer in één koelkast. Kies hierboven Koelkast 1, 2 of 3 en tik daarna op een plank.</div>
             <div class="fridge-rotate-hint">Voor het beste overzicht gebruik je deze editor op telefoon in liggende stand.</div>
             <div class="fridge-editor-toolbar">
               <div class="fridge-editor-toolbar-left">
                 <select id="fridgeEditorUnitSelect" class="fridge-editor-select" onchange="changeBarLayoutEditorUnit(this.value)"></select>
-                <span class="badge accent" id="fridgeEditorActiveBadge">3 koelkastjes · 9 facings per plank</span>
+                <select id="fridgeEditorCoolerSelect" class="fridge-editor-select fridge-mobile-only" onchange="changeBarLayoutEditorCooler(this.value)"></select>
+                <span class="badge accent fridge-desktop-only" id="fridgeEditorActiveBadge">3 koelkastjes · 9 facings per plank</span>
               </div>
               <div class="actions">
                 <button class="btn" onclick="openPage('bar-indeling')">Overzicht indelingen</button>
@@ -3842,6 +3856,7 @@ function renderKitchenListDetail(){
   function changeBarLayoutReadonlyUnit(value){
     currentBarLayoutReadonlyUnitIndex = Number(value || 0);
     window.currentBarLayoutReadonlyUnitIndex = currentBarLayoutReadonlyUnitIndex;
+    window.currentBarLayoutReadonlyCoolerIndex = 0;
     renderBarLayoutReadonlyView();
   }
 
@@ -3854,6 +3869,8 @@ function renderKitchenListDetail(){
     if(!layout){
       stage.innerHTML = `<div class="fridge-editor-empty">Kies of maak eerst een indeling aan. Daarna kun je hier dezelfde koelkastweergave bekijken als in de editor, maar dan zonder edit-controls.</div>`;
       if(unitSelect) unitSelect.innerHTML = '';
+      const coolerSelect = document.getElementById('barLayoutReadonlyCoolerSelect');
+      if(coolerSelect) coolerSelect.innerHTML = '';
       if(badge) badge.textContent = '3 koelkastjes · kijkmodus';
       return;
     }
@@ -3864,7 +3881,10 @@ function renderKitchenListDetail(){
     if(unitSelect){
       unitSelect.innerHTML = safeArray(layout.units).map((entry, idx) => `<option value="${idx}" ${idx === unitIndex ? 'selected' : ''}>${escapeHtml(entry.name || `GB${idx + 1}`)}</option>`).join('');
     }
-    if(badge) badge.textContent = `${layout.name || 'Indeling'} · ${unit?.name || `GB${unitIndex + 1}`} · kijkmodus`;
+    syncBarLayoutCoolerSelect(layout, unitIndex, true);
+    const activeCoolerIndex = getBarLayoutCoolerIndex(layout, unitIndex, true);
+    const activeCooler = safeArray(unit?.coolers)[activeCoolerIndex];
+    if(badge) badge.textContent = `${layout.name || 'Indeling'} · ${activeCooler?.name || `Koelkast ${activeCoolerIndex + 1}`} · kijkmodus`;
     stage.innerHTML = renderBarLayoutStageHtml(layout, unitIndex, null, true);
   }
 
@@ -3873,17 +3893,34 @@ function renderKitchenListDetail(){
     if(!unit){
       return `<div class="fridge-editor-empty">Geen unit gevonden.</div>`;
     }
+    const mobile = isBarLayoutMobile();
+    const allCoolers = safeArray(unit.coolers);
+    const activeCoolerIndex = getBarLayoutCoolerIndex(layout, unitIndex, readonly);
+    const visibleCoolers = mobile ? [allCoolers[activeCoolerIndex]].filter(Boolean) : allCoolers;
+    const coolerTabsHtml = mobile && allCoolers.length > 1 ? `
+      <div class="fridge-cooler-tabs">
+        ${allCoolers.map((cooler, coolerIndex) => `
+          <button type="button" class="fridge-cooler-tab ${coolerIndex === activeCoolerIndex ? 'active' : ''}" onclick="${readonly ? `changeBarLayoutReadonlyCooler(${coolerIndex})` : `changeBarLayoutEditorCooler(${coolerIndex})`}">${escapeHtml(cooler?.name || `Koelkast ${coolerIndex + 1}`)}</button>
+        `).join('')}
+      </div>
+    ` : '';
+    const unitNote = readonly
+      ? (mobile ? 'Kijkmodus · één koelkast tegelijk voor snel overzicht op telefoon' : 'Kijkmodus · zelfde weergave als editor, maar zonder aanpasbare controls')
+      : (mobile ? 'Editor · kies hierboven een koelkast en tik daarna op een plank' : '3 brede koelkastjes naast elkaar · klik op een plank om direct die hele rij te vullen');
     return `
       <div class="fridge-unit ${readonly ? 'readonly' : ''}">
         <div class="fridge-unit-top">
           <div>
             <div class="fridge-unit-name">${escapeHtml(unit.name || `GB${unitIndex + 1}`)}</div>
-            <div class="fridge-unit-note">${readonly ? 'Kijkmodus · zelfde weergave als editor, maar zonder aanpasbare controls' : '3 brede koelkastjes naast elkaar · klik op een plank om direct die hele rij te vullen'}</div>
+            <div class="fridge-unit-note">${escapeHtml(unitNote)}</div>
           </div>
-          <span class="fridge-door-badge">${readonly ? 'Bekijk op de vloer' : 'Breed overzicht zoals op de vloer'}</span>
+          <span class="fridge-door-badge">${readonly ? 'Kijkmodus' : 'Editor'}</span>
         </div>
-        <div class="fridge-bank">
-          ${safeArray(unit.coolers).map((cooler, coolerIndex) => `
+        ${coolerTabsHtml}
+        <div class="fridge-bank ${mobile ? 'single-cooler-mobile' : ''}">
+          ${visibleCoolers.map((cooler, visibleIndex) => {
+            const coolerIndex = mobile ? activeCoolerIndex : visibleIndex;
+            return `
             <div class="fridge-door">
               <div class="fridge-door-header">
                 <div class="fridge-door-title">${escapeHtml(cooler.name || `Koelkast ${coolerIndex + 1}`)}</div>
@@ -3897,42 +3934,42 @@ function renderKitchenListDetail(){
                       .map((shelf, shelfIndex) => ({ shelf, shelfIndex }))
                       .sort((a, b) => Number(Boolean(a.shelf?.is_floor)) - Number(Boolean(b.shelf?.is_floor)))
                       .map(({ shelf, shelfIndex }) => {
-                      const active = !readonly && target && target.coolerIndex === coolerIndex && target.shelfIndex === shelfIndex;
-                      const facings = Math.max(1, Math.min(Number(shelf?.facings || 9) || 9, 9));
-                      const shelfHeight = getShelfHeightPx(shelf?.height || 'medium');
-                      const slots = safeArray(shelf.slots).slice(0, facings);
-                      while(slots.length < facings) slots.push(defaultClientBarSlot(slots.length + 1));
-                      const shelfClick = readonly ? '' : ` onclick="selectBarLayoutShelf(${unitIndex}, ${coolerIndex}, ${shelfIndex}, 0)"`;
-                      return `
-                        <div class="fridge-shelf ${shelf?.is_floor ? 'floor' : ''} ${active ? 'active' : ''}"${shelfClick}>
-                          <div class="fridge-shelf-name">${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${shelfIndex + 1}`))}</div>
-                          <div class="fridge-shelf-track" style="--slot-count:${facings};--shelf-height:${shelfHeight}px">
-                            <div class="fridge-shelf-products">
-                              ${slots.map((slot, slotIndex) => {
-                                const filled = !!(slot.product_name || slot.product_id || slot.image_url);
-                                const label = slot.product_name || '';
-                                const isSelectedSlot = !readonly && target && target.coolerIndex === coolerIndex && target.shelfIndex === shelfIndex && target.slotIndex === slotIndex;
-                                const resolvedImage = getResolvedSlotImage(slot);
-                                const thumb = resolvedImage
-                                  ? `<div class="fridge-item-thumb"><img src="${escapeHtml(resolvedImage)}" alt="${escapeHtml(label || 'Product')}"></div>`
-                                  : `<div class="fridge-item-thumb">${filled ? `<span class="fridge-item-pill">${escapeHtml((label || '•').slice(0,2).toUpperCase())}</span>` : ''}</div>`;
-                                if(readonly){
-                                  return `<div class="fridge-item ${filled ? '' : 'empty'}" aria-hidden="true">${thumb}</div>`;
-                                }
-                                return `<button type="button" class="fridge-item ${filled ? '' : 'empty'} ${isSelectedSlot ? 'selected' : ''}" onclick="event.stopPropagation(); selectBarLayoutShelf(${unitIndex}, ${coolerIndex}, ${shelfIndex}, ${slotIndex})" aria-label="Plek ${slotIndex + 1}">${thumb}</button>`;
-                              }).join('')}
+                        const active = !readonly && target && target.coolerIndex === coolerIndex && target.shelfIndex === shelfIndex;
+                        const facings = Math.max(1, Math.min(Number(shelf?.facings || 9) || 9, 9));
+                        const shelfHeight = getShelfHeightPx(shelf?.height || 'medium');
+                        const slots = safeArray(shelf.slots).slice(0, facings);
+                        while(slots.length < facings) slots.push(defaultClientBarSlot(slots.length + 1));
+                        const shelfClick = readonly ? '' : ` onclick="selectBarLayoutShelf(${unitIndex}, ${coolerIndex}, ${shelfIndex}, 0)"`;
+                        return `
+                          <div class="fridge-shelf ${shelf?.is_floor ? 'floor' : ''} ${active ? 'active' : ''}"${shelfClick}>
+                            <div class="fridge-shelf-name">${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${shelfIndex + 1}`))}</div>
+                            <div class="fridge-shelf-track" style="--slot-count:${facings};--shelf-height:${shelfHeight}px">
+                              <div class="fridge-shelf-products">
+                                ${slots.map((slot, slotIndex) => {
+                                  const filled = !!(slot.product_name || slot.product_id || slot.image_url);
+                                  const label = slot.product_name || '';
+                                  const isSelectedSlot = !readonly && target && target.coolerIndex === coolerIndex && target.shelfIndex === shelfIndex && target.slotIndex === slotIndex;
+                                  const resolvedImage = getResolvedSlotImage(slot);
+                                  const thumb = resolvedImage
+                                    ? `<div class="fridge-item-thumb"><img src="${escapeHtml(resolvedImage)}" alt="${escapeHtml(label || 'Product')}"></div>`
+                                    : `<div class="fridge-item-thumb">${filled ? `<span class="fridge-item-pill">${escapeHtml((label || '•').slice(0,2).toUpperCase())}</span>` : ''}</div>`;
+                                  if(readonly){
+                                    return `<div class="fridge-item ${filled ? '' : 'empty'}" aria-hidden="true">${thumb}</div>`;
+                                  }
+                                  return `<button type="button" class="fridge-item ${filled ? '' : 'empty'} ${isSelectedSlot ? 'selected' : ''}" onclick="event.stopPropagation(); selectBarLayoutShelf(${unitIndex}, ${coolerIndex}, ${shelfIndex}, ${slotIndex})" aria-label="Plek ${slotIndex + 1}">${thumb}</button>`;
+                                }).join('')}
+                              </div>
                             </div>
+                            <div class="fridge-shelf-beam"></div>
                           </div>
-                          <div class="fridge-shelf-beam"></div>
-                        </div>
-                      `;
-                    }).join('')}
+                        `;
+                      }).join('')}
                   </div>
                 </div>
               </div>
               <div class="fridge-base"></div>
             </div>
-          `).join('')}
+          `;}).join('')}
         </div>
       </div>
     `;
@@ -4091,6 +4128,49 @@ function openBarLayoutModal(layoutId=null){
     return window.matchMedia('(max-width: 900px)').matches;
   }
 
+  function getBarLayoutCoolerIndex(layout, unitIndex, readonly=false){
+    const unit = layout?.units?.[unitIndex] || layout?.units?.[0];
+    const count = Math.max(1, safeArray(unit?.coolers).length || 1);
+    const raw = readonly ? window.currentBarLayoutReadonlyCoolerIndex : window.currentBarLayoutEditorCoolerIndex;
+    const index = Math.max(0, Math.min(Number(raw || 0), count - 1));
+    if(readonly){
+      window.currentBarLayoutReadonlyCoolerIndex = index;
+    }else{
+      window.currentBarLayoutEditorCoolerIndex = index;
+    }
+    return index;
+  }
+
+  function syncBarLayoutCoolerSelect(layout, unitIndex, readonly=false){
+    const selectId = readonly ? 'barLayoutReadonlyCoolerSelect' : 'fridgeEditorCoolerSelect';
+    const select = document.getElementById(selectId);
+    if(!select) return;
+    const unit = layout?.units?.[unitIndex] || layout?.units?.[0];
+    const coolers = safeArray(unit?.coolers);
+    const activeIndex = getBarLayoutCoolerIndex(layout, unitIndex, readonly);
+    select.innerHTML = coolers.map((cooler, idx) => `<option value="${idx}" ${idx === activeIndex ? 'selected' : ''}>${escapeHtml(cooler?.name || `Koelkast ${idx + 1}`)}</option>`).join('');
+  }
+
+  function changeBarLayoutReadonlyCooler(value){
+    window.currentBarLayoutReadonlyCoolerIndex = Number(value || 0);
+    renderBarLayoutReadonlyView();
+  }
+
+  function changeBarLayoutEditorCooler(value){
+    const layout = getSelectedBarLayout();
+    const unitIndex = getSelectedEditorUnitIndex(layout);
+    const coolerIndex = Number(value || 0);
+    window.currentBarLayoutEditorCoolerIndex = coolerIndex;
+    const shelves = safeArray(layout?.units?.[unitIndex]?.coolers?.[coolerIndex]?.shelves);
+    if(shelves.length){
+      window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex: 0, slotIndex: 0 };
+    }else{
+      window.currentBarLayoutShelfTarget = null;
+    }
+    closeBarLayoutMobileSheet();
+    renderBarLayoutEditor();
+  }
+
   function closeBarLayoutMobileSheet(){
     document.getElementById('barLayoutShelfMobile')?.classList.remove('open');
     document.getElementById('barLayoutShelfMobileBackdrop')?.classList.remove('open');
@@ -4130,6 +4210,7 @@ function openBarLayoutEditor(layoutId=null){
   function changeBarLayoutEditorUnit(value){
     window.currentBarLayoutUnitIndex = Number(value || 0);
     window.currentBarLayoutShelfTarget = null;
+    window.currentBarLayoutEditorCoolerIndex = 0;
     closeBarLayoutMobileSheet();
         renderBarLayoutEditor();
   }
@@ -4557,16 +4638,21 @@ function openBarLayoutEditor(layoutId=null){
       renderBarLayoutShelfPanel(null, null);
       if(title) title.textContent = 'Indeling editor';
       if(unitSelect) unitSelect.innerHTML = '';
+      const coolerSelect = document.getElementById('fridgeEditorCoolerSelect');
+      if(coolerSelect) coolerSelect.innerHTML = '';
       return;
     }
     const unitIndex = getSelectedEditorUnitIndex(layout);
     const target = ensureSelectedShelf(layout);
     const unit = layout.units[unitIndex] || layout.units[0];
     if(title) title.textContent = `Indeling editor · ${layout.name || 'Indeling'} · ${unit?.name || ''}`;
-    if(activeBadge) activeBadge.textContent = `${layout.name || 'Indeling'} · ${safeArray(layout.units).length} unit${safeArray(layout.units).length === 1 ? '' : 's'} · 9 facings per rij`;
     if(unitSelect){
       unitSelect.innerHTML = safeArray(layout.units).map((entry, idx) => `<option value="${idx}" ${idx === unitIndex ? 'selected' : ''}>${escapeHtml(entry.name || `GB${idx + 1}`)}</option>`).join('');
     }
+    syncBarLayoutCoolerSelect(layout, unitIndex, false);
+    const activeCoolerIndex = getBarLayoutCoolerIndex(layout, unitIndex, false);
+    const activeCooler = safeArray(unit?.coolers)[activeCoolerIndex];
+    if(activeBadge) activeBadge.textContent = `${layout.name || 'Indeling'} · ${activeCooler?.name || `Koelkast ${activeCoolerIndex + 1}`} · 9 facings per rij`;
     stage.innerHTML = renderBarLayoutStageHtml(layout, unitIndex, target, false);
     renderBarLayoutShelfPanel(layout, target);
   }
