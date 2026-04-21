@@ -2,6 +2,7 @@
 from flask import Blueprint, render_template_string, jsonify, request, session, redirect
 import json
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 casa_cara = Blueprint("casa_cara", __name__)
@@ -17,8 +18,17 @@ LOCATIONS_FILE = DATA_DIR / "locaties.json"
 DIENST_TYPES_FILE = DATA_DIR / "dienst_soorten.json"
 KITCHEN_FILE = DATA_DIR / "kitchen_tasks.json"
 BAR_TASKS_FILE = DATA_DIR / "bar_tasks.json"
+BAR_LAYOUTS_FILE = DATA_DIR / "bar_indelingen.json"
 RECIPES_FILE = DATA_DIR / "recipes.json"
 CASA_AUTH_FILE = DATA_DIR / "casa_auth.json"
+CASA_AUTH_CANDIDATES = []
+for _candidate in [
+    CASA_AUTH_FILE,
+    Path(__file__).resolve().parent / "data" / "casa_cara" / "casa_auth.json",
+    Path(__file__).resolve().parent / "Data" / "Casa Cara" / "casa_auth.json",
+]:
+    if _candidate not in CASA_AUTH_CANDIDATES:
+        CASA_AUTH_CANDIDATES.append(_candidate)
 
 def load_json(path: Path, default):
     try:
@@ -29,6 +39,27 @@ def load_json(path: Path, default):
 def save_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+AMSTERDAM_TZ = ZoneInfo("Europe/Amsterdam")
+TASKLIST_DAYS = ["altijd", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
+
+def get_local_now():
+    return datetime.now(AMSTERDAM_TZ)
+
+def get_today_iso():
+    return get_local_now().date().isoformat()
+
+def get_now_iso_minutes():
+    return get_local_now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+
+def get_current_task_day_label():
+    weekday = get_local_now().weekday()
+    mapping = {2: "woensdag", 3: "donderdag", 4: "vrijdag", 5: "zaterdag", 6: "zondag"}
+    return mapping.get(weekday, "altijd")
+
+def normalize_task_day(value):
+    value = (value or "").strip().lower()
+    return value if value in TASKLIST_DAYS else "altijd"
 
 DEFAULT_PERMISSIONS = {
     "access_general": True,
@@ -41,6 +72,8 @@ DEFAULT_PERMISSIONS = {
     "adjust_stock": True,
     "view_recipes": True,
     "use_tasklists": True,
+    "use_kitchen_tasklists": True,
+    "use_bar_tasklists": True,
     "manage_dienst_types": False,
     "manage_users": False,
     "manage_products": False,
@@ -48,6 +81,8 @@ DEFAULT_PERMISSIONS = {
     "manage_locations": False,
     "manage_recipes": False,
     "manage_tasklists": False,
+    "manage_kitchen_tasklists": False,
+    "manage_bar_tasklists": False,
     "manage_coolers": False,
 }
 
@@ -65,6 +100,32 @@ def normalize_permissions(role: str, permissions=None):
         for key in base:
             if key in permissions:
                 base[key] = bool(permissions.get(key))
+
+        legacy_use = permissions.get("use_tasklists") if "use_tasklists" in permissions else None
+        legacy_manage = permissions.get("manage_tasklists") if "manage_tasklists" in permissions else None
+
+        if "use_kitchen_tasklists" in permissions:
+            base["use_kitchen_tasklists"] = bool(permissions.get("use_kitchen_tasklists"))
+        elif legacy_use is not None:
+            base["use_kitchen_tasklists"] = bool(legacy_use)
+
+        if "use_bar_tasklists" in permissions:
+            base["use_bar_tasklists"] = bool(permissions.get("use_bar_tasklists"))
+        elif legacy_use is not None:
+            base["use_bar_tasklists"] = bool(legacy_use)
+
+        if "manage_kitchen_tasklists" in permissions:
+            base["manage_kitchen_tasklists"] = bool(permissions.get("manage_kitchen_tasklists"))
+        elif legacy_manage is not None:
+            base["manage_kitchen_tasklists"] = bool(legacy_manage)
+
+        if "manage_bar_tasklists" in permissions:
+            base["manage_bar_tasklists"] = bool(permissions.get("manage_bar_tasklists"))
+        elif legacy_manage is not None:
+            base["manage_bar_tasklists"] = bool(legacy_manage)
+
+        base["use_tasklists"] = bool(base.get("use_kitchen_tasklists") or base.get("use_bar_tasklists") or base.get("use_tasklists"))
+        base["manage_tasklists"] = bool(base.get("manage_kitchen_tasklists") or base.get("manage_bar_tasklists") or base.get("manage_tasklists"))
     return base
 
 
@@ -80,6 +141,8 @@ def permission_labels():
         "adjust_stock": "Koelingvoorraad aanpassen",
         "view_recipes": "Recepten openen",
         "use_tasklists": "Takenlijsten openen en afvinken",
+        "use_kitchen_tasklists": "Keuken takenlijsten openen",
+        "use_bar_tasklists": "Bar takenlijsten openen",
         "manage_dienst_types": "Dienstsoorten beheren",
         "manage_users": "Medewerkers beheren",
         "manage_products": "Producten toevoegen en bewerken",
@@ -87,31 +150,38 @@ def permission_labels():
         "manage_locations": "Locaties beheren",
         "manage_recipes": "Recepten beheren",
         "manage_tasklists": "Takenlijsten beheren",
+        "manage_kitchen_tasklists": "Keuken takenlijsten beheren",
+        "manage_bar_tasklists": "Bar takenlijsten beheren",
         "manage_coolers": "Koelingen beheren",
     }
 
 
 def load_casa_auth_data():
-    data = load_json(CASA_AUTH_FILE, {"users": []})
-    if not isinstance(data, dict):
-        data = {"users": []}
-    users = []
-    for item in data.get("users", []):
-        if not isinstance(item, dict):
+    merged_users = []
+    seen_pins = set()
+    for auth_path in CASA_AUTH_CANDIDATES:
+        data = load_json(auth_path, {"users": []})
+        if not isinstance(data, dict):
             continue
-        pin = str(item.get("pin") or "").strip()
-        if not pin:
-            continue
-        role = "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker"
-        users.append({
-            "name": (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker",
-            "pin": pin,
-            "role": role,
-            "active": bool(item.get("active", True)),
-            "permissions": normalize_permissions(role, item.get("permissions")),
-        })
-    data["users"] = users
-    return data
+        for item in data.get("users", []):
+            if not isinstance(item, dict):
+                continue
+            pin = str(item.get("pin") or item.get("code") or "").strip()
+            pin = "".join(ch for ch in pin if ch.isdigit())
+            if len(pin) != 4 or pin in seen_pins:
+                continue
+            role = "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker"
+            merged_users.append({
+                "name": (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker",
+                "username": (item.get("username") or item.get("name") or "Gebruiker").strip() or "Gebruiker",
+                "pin": pin,
+                "code": pin,
+                "role": role,
+                "active": bool(item.get("active", True)),
+                "permissions": normalize_permissions(role, item.get("permissions")),
+            })
+            seen_pins.add(pin)
+    return {"users": merged_users}
 
 
 def save_casa_auth_data(data):
@@ -119,18 +189,27 @@ def save_casa_auth_data(data):
     for item in data.get("users", []):
         if not isinstance(item, dict):
             continue
-        pin = str(item.get("pin") or "").strip()
-        if not pin:
-            continue
+        pin = str(item.get("pin") or item.get("code") or "").strip()
         role = "admin" if (item.get("role") or "").strip().lower() == "admin" else "medewerker"
+        clean_pin = "".join(ch for ch in pin if ch.isdigit())
+        if len(clean_pin) != 4:
+            continue
+        clean_name = (item.get("name") or item.get("username") or "Gebruiker").strip() or "Gebruiker"
         users.append({
-            "name": (item.get("name") or "Gebruiker").strip() or "Gebruiker",
-            "pin": pin,
+            "name": clean_name,
+            "username": clean_name,
+            "pin": clean_pin,
+            "code": clean_pin,
             "role": role,
             "active": bool(item.get("active", True)),
             "permissions": normalize_permissions(role, item.get("permissions")),
         })
-    save_json(CASA_AUTH_FILE, {"users": users})
+    payload = {"users": users}
+    for auth_path in CASA_AUTH_CANDIDATES:
+        try:
+            save_json(auth_path, payload)
+        except Exception:
+            pass
 
 
 def get_casa_user_by_pin(pin: str):
@@ -162,6 +241,18 @@ def has_casa_permission(key: str):
     if is_casa_admin():
         return True
     return bool(current_permissions().get(key))
+
+
+def has_tasklist_access(section: str, manage: bool = False):
+    if is_casa_admin():
+        return True
+    section = (section or "").strip().lower()
+    permissions = current_permissions()
+    if section == "bar":
+        return bool(permissions.get("manage_bar_tasklists" if manage else "use_bar_tasklists"))
+    if section == "kitchen":
+        return bool(permissions.get("manage_kitchen_tasklists" if manage else "use_kitchen_tasklists"))
+    return bool(permissions.get("manage_tasklists" if manage else "use_tasklists"))
 
 
 def is_casa_admin():
@@ -349,6 +440,7 @@ def normalize_tasklist_data(path: Path):
     changed = False
     for item in data.get("lists", []):
         item.setdefault("tasks", [])
+        item["day"] = normalize_task_day(item.get("day"))
         for task in item.get("tasks", []):
             if "last_checked_by" not in task:
                 task["last_checked_by"] = ""
@@ -407,6 +499,182 @@ def get_bar_tasks_data():
 
 def save_bar_tasks_data(data):
     save_json(BAR_TASKS_FILE, data)
+
+def default_layout_slot(index: int):
+    return {
+        "id": f"slot_{index}",
+        "label": f"Vak {index}",
+        "product_id": "",
+        "product_name": "",
+        "image_url": "",
+        "note": "",
+    }
+
+
+def default_layout_shelf(index: int, slots_per_shelf: int = 9, *, name: str = "", height: str = "medium", is_floor: bool = False):
+    slots_per_shelf = max(1, min(int(slots_per_shelf or 9), 9))
+    height = (height or "medium").strip().lower()
+    if height not in {"low", "medium", "high", "wine"}:
+        height = "medium"
+    return {
+        "id": f"shelf_{index}",
+        "name": (name or ("Bodem" if is_floor else f"Plank {index}")).strip() or ("Bodem" if is_floor else f"Plank {index}"),
+        "facings": slots_per_shelf,
+        "height": height,
+        "is_floor": bool(is_floor),
+        "slots": [default_layout_slot(i + 1) for i in range(slots_per_shelf)],
+    }
+
+
+def default_layout_cooler(index: int, cooler_name: str = ""):
+    return {
+        "id": f"cooler_{index}",
+        "name": cooler_name or f"Koelkast {index}",
+        "shelves": [
+            default_layout_shelf(1, name="Plank 1"),
+            default_layout_shelf(2, name="Plank 2"),
+            default_layout_shelf(3, name="Plank 3"),
+            default_layout_shelf(4, slots_per_shelf=9, name="Bodem", height="low", is_floor=True),
+        ],
+    }
+
+
+def default_layout_unit(index: int):
+    return {
+        "id": f"unit_{index}",
+        "name": f"GB{index}",
+        "coolers": [default_layout_cooler(i + 1) for i in range(3)],
+    }
+
+
+def default_bar_layout_structure():
+    return [default_layout_unit(i + 1) for i in range(4)]
+
+
+def normalize_layout_slot(item, index: int):
+    item = item if isinstance(item, dict) else {}
+    product_name = (item.get("product_name") or item.get("product") or item.get("name") or "").strip()
+    return {
+        "id": (item.get("id") or f"slot_{index}").strip() or f"slot_{index}",
+        "label": (item.get("label") or f"Vak {index}").strip() or f"Vak {index}",
+        "product_id": str(item.get("product_id") or item.get("productId") or "").strip(),
+        "product_name": product_name,
+        "image_url": str(item.get("image_url") or item.get("image") or item.get("photo") or item.get("thumb") or "").strip(),
+        "note": str(item.get("note") or "").strip(),
+    }
+
+
+def normalize_layout_shelf(item, index: int):
+    item = item if isinstance(item, dict) else {}
+    facings = max(1, min(int(item.get("facings") or item.get("slots_per_shelf") or item.get("slot_count") or 9), 9))
+    inferred_name = str(item.get("name") or "").strip().lower()
+    is_floor = bool(item.get("is_floor") or item.get("isFloor") or inferred_name == "bodem")
+    default_height = "low" if is_floor else "medium"
+    height = str(item.get("height") or item.get("shelf_height") or item.get("height_level") or default_height).strip().lower()
+    if height not in {"low", "medium", "high", "wine"}:
+        height = default_height
+    raw_slots = item.get("slots") if isinstance(item.get("slots"), list) else []
+    slots = [normalize_layout_slot(slot, i + 1) for i, slot in enumerate(raw_slots[:facings])]
+    while len(slots) < facings:
+        slots.append(default_layout_slot(len(slots) + 1))
+    return {
+        "id": (item.get("id") or f"shelf_{index}").strip() or f"shelf_{index}",
+        "name": (item.get("name") or ("Bodem" if is_floor else f"Plank {index}")).strip() or ("Bodem" if is_floor else f"Plank {index}"),
+        "facings": facings,
+        "height": height,
+        "is_floor": is_floor,
+        "slots": slots,
+    }
+
+
+def normalize_layout_cooler(item, index: int):
+    item = item if isinstance(item, dict) else {}
+    raw_shelves = item.get("shelves") if isinstance(item.get("shelves"), list) else []
+    shelves = [normalize_layout_shelf(shelf, i + 1) for i, shelf in enumerate(raw_shelves)]
+    if not shelves:
+        shelves = [
+            default_layout_shelf(1, name="Plank 1"),
+            default_layout_shelf(2, name="Plank 2"),
+            default_layout_shelf(3, name="Plank 3"),
+            default_layout_shelf(4, slots_per_shelf=9, name="Bodem", height="low", is_floor=True),
+        ]
+    if not any(bool(shelf.get("is_floor")) for shelf in shelves):
+        shelves.append(default_layout_shelf(len(shelves) + 1, slots_per_shelf=9, name="Bodem", height="low", is_floor=True))
+    return {
+        "id": (item.get("id") or f"cooler_{index}").strip() or f"cooler_{index}",
+        "name": (item.get("name") or f"Koelkast {index}").strip() or f"Koelkast {index}",
+        "shelves": shelves,
+    }
+
+
+def normalize_layout_unit(item, index: int):
+    item = item if isinstance(item, dict) else {}
+    raw_coolers = item.get("coolers") if isinstance(item.get("coolers"), list) else []
+    coolers = [normalize_layout_cooler(cooler, i + 1) for i, cooler in enumerate(raw_coolers[:3])]
+    while len(coolers) < 3:
+        coolers.append(default_layout_cooler(len(coolers) + 1))
+    return {
+        "id": (item.get("id") or f"unit_{index}").strip() or f"unit_{index}",
+        "name": (item.get("name") or f"GB{index}").strip() or f"GB{index}",
+        "coolers": coolers[:3],
+    }
+
+
+def normalize_layout_units(raw_units):
+    units = [normalize_layout_unit(unit, i + 1) for i, unit in enumerate(raw_units or [])]
+    if not units:
+        units = default_layout_units()
+    return units[:8]
+
+
+def get_bar_layouts_data():
+    data = load_json(BAR_LAYOUTS_FILE, {"items": [], "active_id": ""})
+    if not isinstance(data, dict):
+        data = {"items": [], "active_id": ""}
+    items = []
+    for item in data.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        items.append({
+            "id": (item.get("id") or slugify(name)).strip() or slugify(name),
+            "name": name,
+            "note": (item.get("note") or "").strip(),
+            "created_at": (item.get("created_at") or "").strip(),
+            "units": normalize_layout_units(item.get("units")),
+        })
+    data["items"] = items
+    data["active_id"] = str(data.get("active_id") or "").strip()
+    if data["active_id"] and not any(item["id"] == data["active_id"] for item in items):
+        data["active_id"] = ""
+    return data
+
+
+def save_bar_layouts_data(data):
+    clean = {"items": [], "active_id": str(data.get("active_id") or "").strip()}
+    seen = set()
+    for item in data.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        item_id = (item.get("id") or slugify(name)).strip() or slugify(name)
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        clean["items"].append({
+            "id": item_id,
+            "name": name,
+            "note": (item.get("note") or "").strip(),
+            "created_at": (item.get("created_at") or "").strip(),
+            "units": normalize_layout_units(item.get("units")),
+        })
+    if clean["active_id"] and not any(item["id"] == clean["active_id"] for item in clean["items"]):
+        clean["active_id"] = ""
+    save_json(BAR_LAYOUTS_FILE, clean)
 
 def get_recipes_data():
     data = load_json(RECIPES_FILE, {"items": []})
@@ -474,6 +742,7 @@ def serialize_app_data():
         "dienst_types": get_dienst_types(),
         "kitchen": get_kitchen_data(),
         "bar_tasks": get_bar_tasks_data(),
+        "bar_layouts": get_bar_layouts_data(),
         "recipes": get_recipes_data(),
         "auth": {
             "user_name": user.get("name", ""),
@@ -661,12 +930,30 @@ HTML = r"""
     .panel-title{margin:0;font-size:16px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
     .actions{display:flex;flex-wrap:wrap;gap:8px}
     .btn{
-      min-height:40px;padding:0 14px;border-radius:14px;border:1px solid var(--line);
-      background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;
+      min-height:36px;padding:0 12px;border-radius:12px;border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.025);color:var(--text);cursor:pointer;font-size:13px;font-weight:700;
     }
-    .btn.accent{background:rgba(212,176,106,.12);border-color:rgba(212,176,106,.24);color:#f3dfbc}
-    .btn.danger{background:rgba(224,107,107,.10);border-color:rgba(224,107,107,.22);color:#ffd7d7}
-    .btn.good{background:rgba(111,202,147,.10);border-color:rgba(111,202,147,.22);color:#d8ffe7}
+    .btn.accent{background:rgba(212,176,106,.10);border-color:rgba(212,176,106,.18);color:#f3dfbc}
+    .btn.danger{background:rgba(224,107,107,.08);border-color:rgba(224,107,107,.18);color:#ffd7d7}
+    .btn.good{background:rgba(111,202,147,.08);border-color:rgba(111,202,147,.18);color:#d8ffe7}
+    .hero{position:relative}
+    .hero-tools{position:absolute;right:16px;top:16px;display:flex;gap:8px}
+    .icon-gear-btn{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.025);color:var(--text);display:grid;place-items:center;cursor:pointer;font-size:16px;box-shadow:0 8px 18px rgba(0,0,0,.16)}
+    .icon-gear-btn:hover{border-color:rgba(212,176,106,.24);background:rgba(212,176,106,.08);color:#f3dfbc}
+    .panel-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .sidebar-kicker{padding:0 4px 8px;color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:800;opacity:.88}
+    .nav{gap:6px}
+    .nav-btn,.sub-btn,.logout-btn,.home-btn{min-height:42px;border-radius:14px;background:rgba(255,255,255,.018);border-color:rgba(255,255,255,.07)}
+    .nav-btn:hover,.sub-btn:hover,.home-btn:hover{border-color:rgba(255,255,255,.13);background:rgba(255,255,255,.03)}
+    .nav-label{font-size:14px;font-weight:750}
+    .sub-btn{min-height:38px;font-size:13px;padding:0 12px}
+    .drawer-brand .big{font-size:20px}
+    .drawer{background:linear-gradient(180deg,#0a111a,#091019)}
+    @media (max-width:640px){
+      .hero-tools{right:12px;top:12px}
+      .icon-gear-btn{width:34px;height:34px;border-radius:10px}
+      .btn{min-height:34px;padding:0 11px;font-size:12px}
+    }
 
     .badge{
       display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:999px;
@@ -691,7 +978,7 @@ HTML = r"""
       min-height:28px;display:inline-flex;align-items:center;padding:0 10px;border-radius:999px;
       border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);font-size:12px;
     }
-    .permission-grid{display:grid;grid-template-columns:1fr;gap:10px}.permission-panel{border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.02)}.permission-kicker{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800}.permission-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.05)}.permission-row:first-child{border-top:none;padding-top:0}.permission-row:last-child{padding-bottom:0}.permission-inline-label{font-size:13px;line-height:1.25;color:var(--text)}.permission-grid select{width:100%;min-height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}.permission-grid input[type='checkbox']{width:16px;height:16px;accent-color:#d4b06a;flex:0 0 auto}
+    .permission-grid{display:grid;grid-template-columns:1fr;gap:10px}.permission-grid.compact{gap:12px}.permission-sections{display:grid;grid-template-columns:1fr;gap:10px}.permission-panel{border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.02)}.permission-kicker{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800}.permission-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.permission-chip{min-height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}.permission-chip:hover{border-color:rgba(212,176,106,.24);background:rgba(212,176,106,.08);color:#f3dfbc}.permission-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.05)}.permission-row:first-child{border-top:none;padding-top:0}.permission-row:last-child{padding-bottom:0}.permission-inline-label{font-size:13px;line-height:1.25;color:var(--text)}.permission-help{font-size:12px;color:var(--muted);line-height:1.4;margin-top:-2px;margin-bottom:6px}.permission-grid select{width:100%;min-height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}.permission-grid input[type='checkbox']{width:16px;height:16px;accent-color:#d4b06a;flex:0 0 auto}@media (min-width:760px){.permission-sections{grid-template-columns:repeat(2,minmax(0,1fr))}}
     .perm-item{display:flex;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
     .perm-item input{margin-top:1px;width:15px;height:15px}
     .perm-label{font-size:12px;color:var(--text);line-height:1.3}
@@ -755,6 +1042,17 @@ HTML = r"""
     .sub-list{display:none;gap:8px;padding:4px 0 2px 12px;margin:0 0 4px;border-left:1px solid rgba(255,255,255,.06)}
     .sub-list.open{display:grid}
     .sub-btn{min-height:42px;font-size:14px;border-radius:14px}
+    .sub-section-label{
+      margin:8px 2px 2px;
+      font-size:11px;
+      line-height:1;
+      font-weight:800;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:var(--muted);
+      opacity:.9;
+    }
+    .sub-section-label:first-child{margin-top:2px}
     .logout-wrap{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:grid;gap:8px}
     .home-btn{justify-content:flex-start;gap:10px;background:rgba(255,255,255,.03)}
     .logout-btn{justify-content:flex-start;gap:10px;color:#ffd9d9;background:rgba(224,107,107,.10);border-color:rgba(224,107,107,.18)}
@@ -973,6 +1271,12 @@ HTML = r"""
       gap:12px;
       margin-bottom:14px;
     }
+    .task-switcher{margin-top:2px;padding-top:2px}
+    .task-switcher-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;font-weight:800;margin-bottom:8px}
+    .task-switcher-row{display:flex;gap:8px;overflow:auto;padding-bottom:2px;scrollbar-width:none}
+    .task-switcher-row::-webkit-scrollbar{display:none}
+    .task-switcher-btn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);border-radius:999px;min-height:34px;padding:0 12px;white-space:nowrap;cursor:pointer}
+    .task-switcher-btn.active{background:rgba(212,176,106,.12);border-color:rgba(212,176,106,.24);color:#f5dfb5}
     .khead-top{
       display:flex;
       align-items:center;
@@ -1176,7 +1480,153 @@ HTML = r"""
         linear-gradient(180deg,#070b12,#0b111a 60%,#070b12);
     }
 
-</style>
+
+    .layout-shell{display:grid;gap:16px}
+    .layout-editor-wrap{display:grid;gap:14px}
+    .layout-editor-empty{padding:18px;border:1px dashed var(--line-strong);border-radius:18px;color:var(--muted);background:rgba(255,255,255,.02)}
+    .layout-tools{display:flex;flex-wrap:wrap;gap:8px}
+    .layout-note{font-size:13px;color:var(--muted);line-height:1.45}
+    .layout-unit-card{border:1px solid var(--line);border-radius:22px;padding:14px;background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));box-shadow:0 16px 34px rgba(0,0,0,.2)}
+    .layout-unit-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .layout-unit-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+    .layout-unit-main input,.layout-cooler-name{width:100%;min-height:40px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}
+    .layout-unit-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-weight:800}
+    .layout-orientation-hint{display:none;padding:10px 12px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.4}
+    .layout-plan-wrap{overflow-x:auto;padding-bottom:6px}
+    .layout-plan-wrap::-webkit-scrollbar{height:8px}.layout-plan-wrap::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:999px}
+    .layout-plan{display:grid;grid-template-columns:repeat(3,minmax(240px,1fr));gap:14px;min-width:780px}
+    .layout-cooler{position:relative;border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:10px;background:linear-gradient(180deg, rgba(8,13,22,.98), rgba(12,19,30,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.04), 0 14px 28px rgba(0,0,0,.18)}
+    .layout-cooler::after{content:'';position:absolute;inset:10px;pointer-events:none;border-radius:12px;border:1px solid rgba(255,255,255,.05)}
+    .layout-cooler-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+    .layout-cooler-heading{display:grid;gap:4px;min-width:0;flex:1}
+    .layout-cooler-meta{font-size:12px;color:var(--muted)}
+    .layout-cooler-window{position:relative;border-radius:14px;padding:12px 10px 10px;background:linear-gradient(180deg, rgba(230,236,244,.18), rgba(210,219,232,.08) 22%, rgba(193,206,222,.10) 48%, rgba(230,236,244,.14) 100%);border:1px solid rgba(255,255,255,.10);overflow:hidden;min-height:560px}
+    .layout-cooler-window::before{content:'';position:absolute;left:10px;right:10px;top:8px;height:14px;border-radius:999px;background:linear-gradient(180deg, rgba(255,255,255,.20), rgba(255,255,255,.02));opacity:.55}
+    .layout-door-handle{position:absolute;top:46px;right:10px;width:8px;height:132px;border-radius:999px;background:linear-gradient(180deg, rgba(10,14,20,.98), rgba(24,28,36,.92));box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 6px 12px rgba(0,0,0,.25);z-index:2}
+    .layout-shelves{display:grid;gap:12px;position:relative;z-index:1;padding-right:18px;padding-top:18px}
+    .layout-shelf{position:relative;padding-top:6px}
+    .layout-shelf::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;border-radius:999px;background:linear-gradient(180deg, rgba(110,120,132,.95), rgba(185,197,212,.55));box-shadow:0 1px 0 rgba(255,255,255,.24)}
+    .layout-shelf:first-child{padding-top:0}.layout-shelf:first-child::before{display:none}
+    .layout-shelf-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+    .layout-shelf-title{font-size:12px;font-weight:900;color:#dce7f5;letter-spacing:.06em;text-transform:uppercase}
+    .layout-slots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .layout-slot{position:relative;min-height:112px;border-radius:12px;border:1px solid rgba(8,12,18,.25);background:linear-gradient(180deg, rgba(255,255,255,.78), rgba(240,244,248,.62));padding:8px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;cursor:pointer;box-shadow:0 10px 18px rgba(4,8,12,.14)}
+    .layout-slot.has-image{background-size:cover;background-position:center}
+    .layout-slot.has-image::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg, rgba(8,12,18,.18), rgba(8,12,18,.58));}
+    .layout-slot > *{position:relative;z-index:1}
+    .layout-slot-label{font-size:10px;color:rgba(31,43,58,.72);text-transform:uppercase;letter-spacing:.08em;font-weight:800}
+    .layout-slot.has-image .layout-slot-label,.layout-slot.has-image .layout-slot-name,.layout-slot.has-image .layout-slot-note{color:#fff}
+    .layout-slot-name{font-size:13px;font-weight:900;color:#17212d;line-height:1.15}
+    .layout-slot-note{font-size:11px;color:#5a6777;line-height:1.25}
+    .layout-slot-thumb{width:38px;height:38px;border-radius:10px;border:1px solid rgba(212,176,106,.22);background:rgba(212,176,106,.12);display:grid;place-items:center;font-size:12px;font-weight:900;color:#b37515;margin-bottom:6px;overflow:hidden}
+    .layout-slot-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .layout-slot-empty{color:#6d7886;font-size:12px;font-weight:700}
+    .layout-cooler-footer{display:flex;justify-content:center;gap:8px;margin-top:10px}
+
+    .layout.fullscreen-editor-mode{max-width:none;padding:0}
+    .topbar.fullscreen-editor-mode,.drawer.fullscreen-editor-mode,.drawer-backdrop.fullscreen-editor-mode{display:none !important}
+    .fridge-editor-page{padding:0;max-width:none;width:100%;margin:0;background:#0b1220}
+    .fridge-editor-shell{min-height:100dvh;display:grid;grid-template-rows:auto 1fr;background:radial-gradient(circle at top left, rgba(255,122,17,.10), transparent 18%),radial-gradient(circle at top right, rgba(97,165,255,.10), transparent 20%),linear-gradient(180deg,#0b1220,#0f1727 72%,#0a111d)}
+    .fridge-editor-topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 22px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(9,14,24,.82);backdrop-filter:blur(16px);position:sticky;top:0;z-index:20}
+    .fridge-editor-kicker{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#7d8ca3;margin-bottom:6px}
+    .fridge-editor-title{font-size:34px;font-weight:900;letter-spacing:-.04em;color:#f5f7fb;margin:0}
+    .fridge-editor-sub{font-size:14px;color:#8d9bb0;margin-top:6px;line-height:1.5}
+    .fridge-editor-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+    .fridge-editor-btn{min-height:46px;padding:0 18px;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);color:#f5f7fb;cursor:pointer;font-weight:800;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+    .fridge-editor-btn.primary{background:#ff7a11;border-color:#ff7a11;color:#fff}
+    .fridge-editor-body{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;padding:10px;align-items:start;min-height:calc(100dvh - 76px)}
+    .fridge-editor-body.single-canvas{grid-template-columns:minmax(0,1fr)}
+    .readonly-mode-shell .fridge-editor-canvas{max-width:none}
+    .fridge-editor-panel{position:sticky;top:10px}
+    .fridge-editor-canvas{border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:8px;background:linear-gradient(180deg,#0f1727,#101a2b);box-shadow:0 20px 48px rgba(0,0,0,.22)}
+    .fridge-editor-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;padding:4px 2px}
+    .fridge-editor-toolbar-left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .fridge-editor-select,.fridge-editor-input,.fridge-editor-panel select,.fridge-editor-panel input{min-height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:#121d30;color:#f5f7fb;padding:0 12px;outline:none}
+    .fridge-editor-select option,.fridge-editor-panel select option{background:#121d30;color:#f5f7fb}
+    .fridge-editor-stage{overflow:auto;padding-bottom:8px}
+    .fridge-editor-stage::-webkit-scrollbar{height:10px;width:10px}.fridge-editor-stage::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:999px}
+    .layout-readonly-shell{border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:8px;background:linear-gradient(180deg,#0f1727,#101a2b);box-shadow:0 20px 48px rgba(0,0,0,.16)}
+    .layout-readonly-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;padding:4px 2px;flex-wrap:wrap}
+    .layout-readonly-toolbar-left{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .layout-readonly-stage .fridge-item{cursor:default}
+    .layout-readonly-stage .fridge-shelf{cursor:default}
+    .layout-readonly-stage .fridge-shelf.active{box-shadow:none;border-color:rgba(255,255,255,.08)}
+    
+    .fridge-unit{width:100%;min-width:0;border-radius:22px;padding:10px 10px 12px;background:linear-gradient(180deg,#111a2b,#0e1624);box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 22px 50px rgba(0,0,0,.26);border:1px solid rgba(255,255,255,.07)}
+    .fridge-unit-top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 4px 8px}
+    .fridge-unit-name{font-size:17px;font-weight:900;letter-spacing:-.03em;color:#f6f8fb}
+    .fridge-unit-note{font-size:12px;color:#94a3b8}
+    .fridge-bank{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;position:relative}
+    .fridge-door{position:relative;border-radius:20px;padding:8px;background:linear-gradient(180deg,#0d1421,#131d2d);border:1px solid rgba(255,255,255,.08);min-height:520px;display:grid;grid-template-rows:auto 1fr auto;overflow:hidden}
+    .fridge-door::before{content:'';position:absolute;inset:8px;border-radius:16px;border:1px solid rgba(255,255,255,.04);pointer-events:none}
+    .fridge-door-frame{position:relative;border-radius:16px;padding:10px 10px 8px;background:linear-gradient(180deg,#182336,#101827)}
+    .fridge-door-window{position:relative;min-height:410px;border-radius:14px;padding:12px 8px 10px;background:linear-gradient(180deg,rgba(242,247,252,.96),rgba(233,239,246,.93) 28%,rgba(228,235,244,.91) 60%,rgba(244,248,252,.95) 100%);border:2px solid rgba(255,255,255,.34);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08), inset 0 20px 28px rgba(255,255,255,.10);display:flex;flex-direction:column}
+    .fridge-door-window::before{content:'';position:absolute;left:12px;right:12px;top:8px;height:22px;border-radius:999px;background:linear-gradient(180deg, rgba(255,255,255,.68), rgba(255,255,255,.08));opacity:.58}
+    .fridge-handle{position:absolute;top:62px;right:1px;width:10px;height:138px;border-radius:999px;background:linear-gradient(180deg,#1c2735,#404c5d);box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 8px 16px rgba(0,0,0,.22)}
+    .fridge-door-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+    .fridge-door-title{font-size:12px;font-weight:900;color:#f5f7fa}
+    .fridge-door-shelves{display:flex;flex-direction:column;justify-content:flex-end;gap:8px;position:relative;padding-top:10px;min-height:100%;height:100%;flex:1}
+    .fridge-shelf{position:relative;padding:0 0 14px 0;cursor:pointer}.fridge-shelf.floor{margin-top:auto}.fridge-shelf.floor .fridge-shelf-track{align-self:end}
+    .fridge-shelf.active .fridge-shelf-name{color:#ff7a11}
+    .fridge-shelf.active .fridge-shelf-track{box-shadow:0 0 0 3px rgba(255,122,17,.20),0 10px 18px rgba(0,0,0,.10)}
+    .fridge-shelf.active .fridge-shelf-beam{box-shadow:0 0 0 2px rgba(255,122,17,.24), 0 8px 16px rgba(0,0,0,.14);border-color:rgba(255,122,17,.42)}
+    .fridge-shelf-name{margin-bottom:4px;font-size:9px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#617185}
+    .fridge-shelf-track{position:relative;min-height:var(--shelf-height,92px);border-radius:14px;padding:8px 4px 12px;background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.10));border:1px solid rgba(132,148,166,.22);display:flex;align-items:flex-end}
+    .fridge-shelf-track::before{content:'';position:absolute;left:8px;right:8px;top:6px;height:12px;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,0));opacity:.55}
+    .fridge-shelf-products{display:grid;grid-template-columns:repeat(var(--slot-count,9),minmax(0,1fr));gap:2px;align-items:end;height:100%;width:100%}
+    .fridge-item{min-height:0;height:100%;align-self:end;border-radius:8px;padding:0 1px 0;background:transparent;border:none;display:flex;align-items:flex-end;justify-content:center;box-shadow:none;overflow:visible;position:relative}
+    .fridge-item.selected{outline:2px solid rgba(255,122,17,.85);outline-offset:-2px;box-shadow:0 0 0 3px rgba(255,122,17,.18),0 8px 14px rgba(31,41,55,.12)}
+    .fridge-item-thumb{width:100%;height:100%;min-height:0;border-radius:8px 8px 4px 4px;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;background:transparent;position:relative}
+    .fridge-item-thumb img{width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;object-position:center bottom;background:transparent;display:block;align-self:flex-end;transform:translateY(4px) scale(1.18);transform-origin:center bottom;filter:drop-shadow(0 2px 2px rgba(0,0,0,.12))}
+    .fridge-item-pill{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:34px;padding:0 8px;border-radius:999px;background:linear-gradient(180deg,#e9eef5,#dbe3ec);color:#1d2937;font-size:10px;font-weight:900}
+    .fridge-item-label{display:none}
+    .fridge-item.empty{min-height:44px;height:100%;background:transparent;border:1px dashed rgba(98,114,130,.12);box-shadow:none;border-radius:8px}
+    .fridge-item.empty .fridge-item-thumb{background:transparent;border:1px dashed rgba(98,114,130,.12)}
+    .fridge-item.empty .fridge-item-label{color:#8b97a6}
+    .fridge-shelf-beam{position:absolute;left:-1px;right:-1px;bottom:5px;height:8px;border-radius:999px;border:1px solid rgba(120,128,140,.42);background:linear-gradient(180deg,#c5ced8,#7f8b9b 36%,#cbd4de 100%);box-shadow:0 3px 8px rgba(0,0,0,.10)}
+    .fridge-base{margin-top:6px;height:58px;border-radius:0 0 18px 18px;background:linear-gradient(180deg,#121720,#0d1118);border-top:1px solid rgba(255,255,255,.06);position:relative}
+    .fridge-base::before{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:14px;width:82px;height:18px;border-radius:6px;background:linear-gradient(180deg,#444b55,#21262f);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+    .fridge-editor-panel{border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:14px;background:linear-gradient(180deg,#111a2b,#0e1625);box-shadow:0 16px 40px rgba(0,0,0,.18);position:sticky;top:78px;color:#f5f7fb}
+    .fridge-editor-panel h3{margin:0 0 4px;font-size:21px;color:#f5f7fb}
+    .fridge-editor-panel p{margin:0 0 14px;color:#8d9bb0;font-size:13px;line-height:1.5}
+    .fridge-panel-block{display:grid;gap:10px;margin-bottom:16px}
+    .fridge-panel-section{border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:12px;background:#121d30;margin-bottom:14px}
+    .fridge-panel-section-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+    .fridge-panel-section-title{font-size:13px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#d8e0ec}
+    .fridge-panel-collapse{min-height:34px;padding:0 12px;border-radius:10px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);color:#f5f7fb;font-weight:800;cursor:pointer}
+    .fridge-panel-save{min-height:40px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,122,17,.22);background:rgba(255,122,17,.14);color:#ffd6b3;font-weight:900;cursor:pointer}
+    .fridge-panel-grid{display:grid;gap:10px}
+    .fridge-panel-label{font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:#718198}
+    .fridge-facing-grid{display:grid;grid-template-columns:repeat(9,1fr);gap:8px}
+    .fridge-facing-btn{min-height:42px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:#162236;color:#f5f7fb;cursor:pointer;font-weight:900}
+    .fridge-facing-btn.active{background:#ff7a11;border-color:#ff7a11;color:#fff}
+    .fridge-product-preview{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+    .fridge-preview-card{border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:8px;background:#121d30;display:grid;gap:6px;cursor:pointer;color:#f5f7fb;min-width:0}
+    .fridge-preview-card.active{border-color:#ff7a11;box-shadow:0 0 0 2px rgba(255,122,17,.18)}
+    .fridge-preview-thumb{height:86px;border-radius:10px;background:linear-gradient(180deg,#233149,#182338);display:flex;align-items:center;justify-content:center;overflow:hidden;color:#d9e2ef;font-weight:800;padding:4px}
+    .fridge-preview-thumb img{width:100%;height:100%;object-fit:contain;object-position:center bottom;background:#fff;border-radius:8px;transform:scale(1.14)}
+    .fridge-image-lock{display:block}
+    .fridge-image-lock-thumb{height:120px;border-radius:14px;background:linear-gradient(180deg,#233149,#182338);display:flex;align-items:flex-end;justify-content:center;overflow:hidden;padding:6px}
+    .fridge-image-lock-thumb img{width:100%;height:100%;object-fit:contain;object-position:center bottom;background:transparent}
+    .fridge-image-lock-empty{min-height:64px;border-radius:12px;border:1px dashed rgba(255,255,255,.14);display:grid;place-items:center;color:#8d9bb0;background:rgba(255,255,255,.03);font-size:13px;text-align:center;padding:10px}
+    .fridge-editor-mini-note{font-size:12px;color:#8d9bb0;line-height:1.45}
+    .fridge-preview-name{display:none}
+    .fridge-editor-note{padding:12px 14px;border-radius:16px;background:#121d30;border:1px solid rgba(255,255,255,.08);font-size:12px;color:#8d9bb0;line-height:1.5}
+    .fridge-editor-empty{padding:20px;border-radius:18px;border:1px dashed rgba(255,255,255,.16);color:#8d9bb0;background:#111a2b}
+    .fridge-rotate-hint{display:none;margin-bottom:14px;padding:12px 14px;border-radius:16px;background:rgba(255,122,17,.10);border:1px solid rgba(255,122,17,.22);color:#ffb77d;font-size:13px;line-height:1.45}.fridge-panel-inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.fridge-inline-neutral,.fridge-inline-accent,.fridge-inline-danger{min-height:38px;padding:0 12px;border-radius:10px;font-weight:800;cursor:pointer}.fridge-inline-neutral{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text)}.fridge-inline-accent{border:1px solid rgba(212,176,106,.26);background:rgba(212,176,106,.14);color:#f5dfb5}.fridge-inline-danger{border:1px solid rgba(224,107,107,.28);background:rgba(224,107,107,.12);color:#ffd7d7}
+    .fridge-door-badge{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);font-size:12px;color:#c5cdd8}
+    @media (max-width: 1280px){.fridge-editor-body{grid-template-columns:1fr}.fridge-editor-panel{position:relative;top:auto}.fridge-unit{min-width:980px}}
+    @media (max-width: 900px){.fridge-editor-title{font-size:28px}.fridge-rotate-hint{display:block}.fridge-editor-body{grid-template-columns:1fr;padding:8px}.fridge-editor-panel{position:static}.fridge-editor-topbar{padding:14px 12px}.fridge-unit{min-width:980px}.fridge-editor-shell{min-height:100dvh}}
+
+    @media (min-width: 901px){.fridge-editor-stage{overflow-x:hidden}.fridge-bank{overflow:hidden}}
+
+
+    .layout-mini-btn{min-height:32px;padding:0 10px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font-size:12px;cursor:pointer}
+    .layout-mini-btn.danger{background:rgba(224,107,107,.10);border-color:rgba(224,107,107,.20);color:#ffd7d7}
+    @media (max-width: 820px){.layout-orientation-hint{display:block}.layout-unit-top{align-items:flex-start;flex-direction:column}.layout-plan{min-width:760px}}
+    @media (max-width: 560px){.layout-slot{min-height:100px}.layout-cooler-window{min-height:520px}}
+
+  </style>
 </head>
 <body>
 <div class="app">
@@ -1220,13 +1670,19 @@ HTML = r"""
         <span class="nav-caret">›</span>
       </button>
       <div class="sub-list" id="group-bar">
+        <div class="sub-section-label">Werkvloer</div>
         <button class="sub-btn" data-page="bar-overzicht" onclick="openPage('bar-overzicht'); closeDrawer();">Overzicht</button>
-        <button class="sub-btn" data-page="bar-koelingen" onclick="openPage('bar-koelingen'); closeDrawer();">Koelingen</button>
         <button class="sub-btn" data-page="bar-takenlijsten" onclick="openPage('bar-takenlijsten'); closeDrawer();">Takenlijsten</button>
-        <button class="sub-btn admin-only" data-page="bar-productsoorten" onclick="openPage('bar-productsoorten'); closeDrawer();">Productsoorten</button>
-        <button class="sub-btn admin-only" data-page="bar-locaties" onclick="openPage('bar-locaties'); closeDrawer();">Locaties</button>
+        <button class="sub-btn" data-page="bar-indeling" onclick="openPage('bar-indeling'); closeDrawer();">Indeling</button>
+
+        <div class="sub-section-label">Voorraad</div>
+        <button class="sub-btn" data-page="bar-koelingen" onclick="openPage('bar-koelingen'); closeDrawer();">Koelingen</button>
         <button class="sub-btn" data-page="bar-oplijst" onclick="openPage('bar-oplijst'); closeDrawer();">Op / niet op voorraad</button>
         <button class="sub-btn" data-page="bar-bijvullen" onclick="openPage('bar-bijvullen'); closeDrawer();">Bijvuloverzicht</button>
+
+        <div class="sub-section-label admin-only">Beheer</div>
+        <button class="sub-btn admin-only" data-page="bar-productsoorten" onclick="openPage('bar-productsoorten'); closeDrawer();">Productsoorten</button>
+        <button class="sub-btn admin-only" data-page="bar-locaties" onclick="openPage('bar-locaties'); closeDrawer();">Locaties</button>
       </div>
     </nav>
 
@@ -1382,8 +1838,8 @@ HTML = r"""
     </section>
 
     <section class="page admin-only-page" id="page-gebruikers">
-      <div class="hero"><h1>👥 Medewerkers</h1><p>Alleen admin kan Casa Cara medewerkers en codes beheren.</p></div>
-      <div class="panel"><div class="panel-head"><h3 class="panel-title">Medewerkers</h3><button class="btn accent admin-only-action" onclick="openUserModal()">Medewerker toevoegen</button></div><div class="list" id="usersList"></div></div>
+      <div class="hero"><div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openUserModal()" title="Medewerker toevoegen">⚙️</button></div><h1>👥 Medewerkers</h1><p>Alleen admin kan Casa Cara medewerkers en codes beheren.</p></div>
+      <div class="panel"><div class="panel-head"><h3 class="panel-title">Medewerkers</h3></div><div class="list" id="usersList"></div></div>
     </section>
 
     <section class="page" id="page-keuken-overzicht">
@@ -1405,20 +1861,22 @@ HTML = r"""
 
     <section class="page" id="page-keuken-takenlijsten">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openKitchenListModal()" title="Takenlijst toevoegen">⚙️</button></div>
         <h1>☑ Keuken · Takenlijsten</h1>
         <p>Kies een lijst om hem rustig te openen. Zo blijft dit scherm schoon en overzichtelijk.</p>
       </div>
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Takenlijsten</h3>
-          <button class="btn accent admin-only-action" onclick="openKitchenListModal()">Takenlijst toevoegen</button>
         </div>
+        <div id="kitchenDaySwitcher"></div>
         <div class="list" id="kitchenLists"></div>
       </div>
     </section>
 
     <section class="page" id="page-keuken-takenlijst-detail">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openKitchenManagePage(window.currentKitchenListId)" title="Takenlijst beheren">⚙️</button></div>
         <h1 id="kitchenDetailTitle">☑ Takenlijst</h1>
         <p>Werk deze lijst stap voor stap af. De lijst blijft bestaan, maar de vinkjes resetten per nieuwe dag.</p>
       </div>
@@ -1428,7 +1886,6 @@ HTML = r"""
           <h3 class="panel-title">Taken</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('keuken-takenlijsten')">Terug naar lijsten</button>
-            <button class="btn accent admin-only-action" onclick="openKitchenManagePage(window.currentKitchenListId)">⚙️ Beheer</button>
           </div>
         </div>
         <div class="list" id="kitchenDetailList"></div>
@@ -1437,6 +1894,7 @@ HTML = r"""
 
     <section class="page admin-only-page" id="page-keuken-takenlijst-beheer">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openKitchenTaskModal(window.currentKitchenListId)" title="Taak toevoegen">⚙️</button></div>
         <h1 id="kitchenManageTitle">⚙️ Takenlijst beheren</h1>
         <p>Pas hier alleen de inhoud van deze takenlijst aan. De checklist zelf blijft rustig voor gebruik op de werkvloer.</p>
       </div>
@@ -1445,7 +1903,6 @@ HTML = r"""
           <h3 class="panel-title">Beheer</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('keuken-takenlijst-detail')">Terug naar checklist</button>
-            <button class="btn accent admin-only-action" onclick="openKitchenTaskModal(window.currentKitchenListId)">+ Taak toevoegen</button>
           </div>
         </div>
         <div class="list" id="kitchenManageList"></div>
@@ -1483,22 +1940,142 @@ HTML = r"""
       </div>
     </section>
 
+    <section class="page" id="page-bar-indeling">
+      <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openBarLayoutModal()" title="Nieuwe indeling">⚙️</button></div>
+        <h1>🧊 Bar · Indeling</h1>
+        <p>Werk hier per event met duidelijke presets. Kies een indeling, bekijk hem op de vloer en open de editor alleen als je echt iets wilt aanpassen.</p>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3 class="panel-title">Indelingen</h3>
+              <div class="section-kicker">Overzichtelijk overzicht voor presets, actieve indeling en snelle acties</div>
+            </div>
+
+          </div>
+          <div class="overview-note" id="barLayoutInfo">Kies hieronder een indeling. Daarna kun je hem bekijken op een aparte pagina of openen in de editor.</div>
+          <div class="list" id="barLayoutsList"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3 class="panel-title">Info</h3>
+              <div class="section-kicker">Snelle samenvatting van wat je hier kunt doen</div>
+            </div>
+            <button class="btn" onclick="scrollToBarLayouts()">Bekijk alle indelingen</button>
+          </div>
+          <div class="mini-list">
+            <div class="mini-row">
+              <div>
+                <strong id="barLayoutSelectedBadge">Geen indeling gekozen</strong>
+                <span>Geselecteerde indeling voor kijken of bewerken</span>
+              </div>
+              <span class="badge accent" id="barLayoutInfoCount">0 presets</span>
+            </div>
+            <div class="mini-row">
+              <div>
+                <strong>Kijkmodus</strong>
+                <span>Gebruik Bekijken tijdens het ombouwen op de vloer</span>
+              </div>
+              <button class="btn" onclick="openBarLayoutView()">Bekijken</button>
+            </div>
+            <div class="mini-row admin-only-action">
+              <div>
+                <strong>Bewerkmodus</strong>
+                <span>Pas units, koelkastjes, planken en producten aan in de editor</span>
+              </div>
+              <button class="btn accent" id="barLayoutOpenEditorBtn" onclick="openBarLayoutEditor()">Bewerken</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page fridge-editor-page" id="page-bar-indeling-view">
+      <div class="fridge-editor-shell readonly-mode-shell">
+        <div class="fridge-editor-topbar">
+          <div>
+            <div class="fridge-editor-kicker">Bar · Indeling · Kijkmodus</div>
+            <h1 class="fridge-editor-title" id="barLayoutViewTitle">Indeling bekijken</h1>
+            <div class="fridge-editor-sub">Gebruik deze pagina op de vloer om snel te zien hoe een unit opgebouwd moet worden. Geen knoppen om per ongeluk iets te wijzigen.</div>
+          </div>
+          <div class="fridge-editor-actions">
+            <button class="fridge-editor-btn" onclick="openPage('bar-indeling')">Terug</button>
+            <button class="fridge-editor-btn primary" onclick="openBarLayoutEditor()">Bewerken</button>
+          </div>
+        </div>
+        <div class="fridge-editor-body single-canvas">
+          <div class="fridge-editor-canvas">
+            <div class="fridge-rotate-hint">Voor het beste overzicht gebruik je deze kijkmodus op telefoon in liggende stand.</div>
+            <div class="fridge-editor-toolbar">
+              <div class="fridge-editor-toolbar-left">
+                <select id="barLayoutReadonlyUnitSelect" class="fridge-editor-select" onchange="changeBarLayoutReadonlyUnit(this.value)"></select>
+                <span class="badge accent" id="barLayoutReadonlyBadge">3 koelkastjes · kijkmodus</span>
+              </div>
+              <div class="actions">
+                <button class="btn" onclick="openPage('bar-indeling')">Overzicht</button>
+                <button class="btn accent" onclick="openBarLayoutEditor()">Open editor</button>
+              </div>
+            </div>
+            <div class="fridge-editor-stage layout-readonly-stage" id="barLayoutReadonlyStage"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page fridge-editor-page" id="page-bar-indeling-editor">
+      <div class="fridge-editor-shell">
+        <div class="fridge-editor-topbar">
+          <div>
+            <div class="fridge-editor-kicker">Bar · Indeling · Full editor</div>
+            <h1 class="fridge-editor-title" id="fridgeEditorTitle">Indeling editor</h1>
+            <div class="fridge-editor-sub">Werk per unit met 3 brede koelkastjes naast elkaar. Klik op een plank en stel rechts het product, de facings en het beeld van die hele rij in.</div>
+          </div>
+          <div class="fridge-editor-actions">
+            <button class="fridge-editor-btn" onclick="openPage('bar-indeling')">Terug</button>
+            <button class="fridge-editor-btn primary admin-only-action" onclick="saveCurrentBarLayoutStructure()">Opslaan</button>
+          </div>
+        </div>
+        <div class="fridge-editor-body">
+          <div class="fridge-editor-canvas">
+            <div class="fridge-rotate-hint">Voor het beste overzicht gebruik je deze editor op telefoon in liggende stand.</div>
+            <div class="fridge-editor-toolbar">
+              <div class="fridge-editor-toolbar-left">
+                <select id="fridgeEditorUnitSelect" class="fridge-editor-select" onchange="changeBarLayoutEditorUnit(this.value)"></select>
+                <span class="badge accent" id="fridgeEditorActiveBadge">3 koelkastjes · 9 facings per plank</span>
+              </div>
+              <div class="actions">
+                <button class="btn" onclick="openPage('bar-indeling')">Overzicht indelingen</button>
+                <button class="btn danger admin-only-action" onclick="requestRemoveBarLayoutUnit()">Unit verwijderen</button>
+              </div>
+            </div>
+            <div class="fridge-editor-stage" id="barLayoutFridgeStage"></div>
+          </div>
+          <aside class="fridge-editor-panel" id="barLayoutShelfPanel"></aside>
+        </div>
+      </div>
+    </section>
+
     <section class="page" id="page-bar-takenlijsten">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openBarListModal()" title="Takenlijst toevoegen">⚙️</button></div>
         <h1>☑ Bar · Takenlijsten</h1>
         <p>Kies een lijst voor je barshift. Compact, snel af te vinken en fijn op telefoon.</p>
       </div>
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Takenlijsten</h3>
-          <button class="btn accent admin-only-action" onclick="openBarListModal()">Takenlijst toevoegen</button>
         </div>
+        <div id="barDaySwitcher"></div>
         <div class="list" id="barTaskLists"></div>
       </div>
     </section>
 
     <section class="page" id="page-bar-takenlijst-detail">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openBarManagePage(window.currentBarListId)" title="Bar takenlijst beheren">⚙️</button></div>
         <h1 id="barDetailTitle">☑ Bar checklist</h1>
         <p>Werk deze barlijst stap voor stap af. De lijst blijft staan, de vinkjes resetten per nieuwe dag.</p>
       </div>
@@ -1508,7 +2085,6 @@ HTML = r"""
           <h3 class="panel-title">Taken</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('bar-takenlijsten')">Terug naar lijsten</button>
-            <button class="btn accent admin-only-action" onclick="openBarManagePage(window.currentBarListId)">⚙️ Beheer</button>
           </div>
         </div>
         <div class="list" id="barDetailList"></div>
@@ -1517,6 +2093,7 @@ HTML = r"""
 
     <section class="page admin-only-page" id="page-bar-takenlijst-beheer">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openBarTaskModal(window.currentBarListId)" title="Taak toevoegen">⚙️</button></div>
         <h1 id="barManageTitle">⚙️ Bar takenlijst beheren</h1>
         <p>Pas hier alleen de inhoud aan. De checklist op de werkvloer blijft compact en rustig.</p>
       </div>
@@ -1525,7 +2102,6 @@ HTML = r"""
           <h3 class="panel-title">Beheer</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('bar-takenlijst-detail')">Terug naar checklist</button>
-            <button class="btn accent admin-only-action" onclick="openBarTaskModal(window.currentBarListId)">+ Taak toevoegen</button>
           </div>
         </div>
         <div class="list" id="barManageList"></div>
@@ -1534,13 +2110,13 @@ HTML = r"""
 
     <section class="page" id="page-bar-koelingen">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openKoelingModal()" title="Koeling toevoegen">⚙️</button></div>
         <h1>❄️ Bar · Koelingen</h1>
         <p>Los overzicht per koeling, met aantallen, status en beheerknoppen.</p>
       </div>
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Koelingen</h3>
-          <button class="btn accent admin-only-action" onclick="openKoelingModal()">Koeling toevoegen</button>
         </div>
         <div class="actions" style="margin-bottom:12px">
           <select id="koelingFilterLocatie" class="btn" onchange="renderCoolers()"></select>
@@ -1552,13 +2128,13 @@ HTML = r"""
 
     <section class="page admin-only-page" id="page-bar-productsoorten">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openTypeModal()" title="Productsoort toevoegen">⚙️</button></div>
         <h1>🏷️ Bar · Productsoorten</h1>
         <p>Je productsoorten in een vaste volgorde, met de gekoppelde locatie erbij.</p>
       </div>
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Productsoorten</h3>
-          <button class="btn accent admin-only-action" onclick="openTypeModal()">Productsoort toevoegen</button>
         </div>
         <div class="list" id="typesList"></div>
       </div>
@@ -1566,13 +2142,13 @@ HTML = r"""
 
     <section class="page admin-only-page" id="page-bar-locaties">
       <div class="hero">
+        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openLocationModal()" title="Locatie toevoegen">⚙️</button></div>
         <h1>📍 Bar · Locaties</h1>
         <p>Alle locaties overzichtelijk onder elkaar, nu ook direct bewerkbaar.</p>
       </div>
       <div class="panel">
         <div class="panel-head">
           <h3 class="panel-title">Locaties</h3>
-          <button class="btn accent admin-only-action" onclick="openLocationModal()">Locatie toevoegen</button>
         </div>
         <div class="list" id="locationsList"></div>
       </div>
@@ -1612,7 +2188,7 @@ HTML = r"""
           <h3 class="panel-title">Producten</h3>
           <div class="actions">
             <button class="btn" onclick="openPage('bar-koelingen')">Terug naar koelingen</button>
-            <button class="btn accent admin-only-action" onclick="openProductModal(window.currentKoelingId)">Product toevoegen</button>
+<button class="icon-gear-btn admin-only-action" onclick="openProductModal(window.currentKoelingId)" title="Product toevoegen">⚙️</button>
           </div>
         </div>
         <div class="actions" style="margin-bottom:12px">
@@ -1641,15 +2217,23 @@ HTML = r"""
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
-  let appData = { bar: { koelingen: [], fill_items: [] }, bar_tasks: { lists: [] }, general: { fooienpot: 0, diensten: [] }, kitchen: { lists: [] }, recipes: { items: [] }, types: [], locations: [] };
+  let appData = { bar: { koelingen: [], fill_items: [] }, bar_tasks: { lists: [] }, bar_layouts: { items: [], active_id: '' }, general: { fooienpot: 0, diensten: [] }, kitchen: { lists: [] }, recipes: { items: [] }, types: [], locations: [] };
   let currentPage = 'dashboard';
   let currentKoelingId = null;
   let currentKitchenListId = null;
   let currentBarListId = null;
+  let currentKitchenTaskDay = 'altijd';
+  let currentBarTaskDay = 'altijd';
+  let currentBarLayoutId = null;
+  let currentBarLayoutReadonlyUnitIndex = 0;
   const groupState = { algemeen:false, keuken:false, bar:false };
   window.currentKoelingId = null;
   window.currentKitchenListId = null;
   window.currentBarListId = null;
+  currentKitchenTaskDay = getAmsterdamDayLabel();
+  currentBarTaskDay = getAmsterdamDayLabel();
+  window.currentBarLayoutId = null;
+  window.currentBarLayoutReadonlyUnitIndex = 0;
 
   function euro(value){
     const num = Number(value || 0);
@@ -1682,15 +2266,18 @@ HTML = r"""
       'fooienpot': hasPermission('access_general') && hasPermission('manage_tips'),
       'gebruikers': hasPermission('manage_users'),
       'keuken-overzicht': hasPermission('access_kitchen'),
-      'keuken-takenlijsten': hasPermission('access_kitchen') && hasPermission('use_tasklists'),
-      'keuken-takenlijst-detail': hasPermission('access_kitchen') && hasPermission('use_tasklists'),
-      'keuken-takenlijst-beheer': hasPermission('access_kitchen') && hasPermission('manage_tasklists'),
+      'keuken-takenlijsten': hasPermission('access_kitchen') && hasPermission('use_kitchen_tasklists'),
+      'keuken-takenlijst-detail': hasPermission('access_kitchen') && hasPermission('use_kitchen_tasklists'),
+      'keuken-takenlijst-beheer': hasPermission('access_kitchen') && hasPermission('manage_kitchen_tasklists'),
       'keuken-recepten': hasPermission('access_kitchen') && hasPermission('view_recipes'),
       'bar-overzicht': hasPermission('access_bar'),
       'bar-koelingen': hasPermission('access_bar') && (hasPermission('adjust_stock') || hasPermission('manage_products') || hasPermission('manage_coolers')),
-      'bar-takenlijsten': hasPermission('access_bar') && hasPermission('use_tasklists'),
-      'bar-takenlijst-detail': hasPermission('access_bar') && hasPermission('use_tasklists'),
-      'bar-takenlijst-beheer': hasPermission('access_bar') && hasPermission('manage_tasklists'),
+      'bar-takenlijsten': hasPermission('access_bar') && hasPermission('use_bar_tasklists'),
+      'bar-takenlijst-detail': hasPermission('access_bar') && hasPermission('use_bar_tasklists'),
+      'bar-takenlijst-beheer': hasPermission('access_bar') && hasPermission('manage_bar_tasklists'),
+      'bar-indeling': hasPermission('access_bar'),
+      'bar-indeling-view': hasPermission('access_bar'),
+      'bar-indeling-editor': hasPermission('access_bar'),
       'bar-productsoorten': hasPermission('manage_types'),
       'bar-locaties': hasPermission('manage_locations'),
       'bar-oplijst': hasPermission('access_bar') && hasPermission('view_oplijst'),
@@ -1792,6 +2379,8 @@ HTML = r"""
       'bar-takenlijsten': ['Bar', 'Takenlijsten'],
       'bar-takenlijst-detail': ['Bar', 'Takenlijst'],
       'bar-takenlijst-beheer': ['Bar', 'Takenlijst beheren'],
+      'bar-indeling': ['Bar', 'Indeling'],
+      'bar-indeling-editor': ['Bar', 'Indeling editor'],
       'bar-productsoorten': ['Bar', 'Productsoorten'],
       'bar-locaties': ['Bar', 'Locaties'],
       'bar-oplijst': ['Bar', 'Op / niet op voorraad'],
@@ -1814,6 +2403,11 @@ HTML = r"""
     if (page.startsWith('algemeen')) setGroupState('algemeen', true);
     if (page.startsWith('keuken')) setGroupState('keuken', true);
     if (page.startsWith('bar')) setGroupState('bar', true);
+    const layoutWrap = document.querySelector('.layout');
+    const topbar = document.querySelector('.topbar');
+    const fullscreenEditor = page === 'bar-indeling-editor';
+    if (layoutWrap) layoutWrap.classList.toggle('fullscreen-editor-mode', fullscreenEditor);
+    if (topbar) topbar.classList.toggle('fullscreen-editor-mode', fullscreenEditor);
     window.scrollTo({ top: 0, behavior: 'instant' });
     if(page === 'bar-bijvullen' && !window.selectedCooler){
       openRefillSelector();
@@ -1837,7 +2431,13 @@ HTML = r"""
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data || {})
     });
-    const json = await res.json();
+    const raw = await res.text();
+    let json = null;
+    try {
+      json = raw ? JSON.parse(raw) : {};
+    } catch (err) {
+      throw new Error('De server gaf geen geldige JSON terug. Probeer de pagina te verversen.');
+    }
     if (!res.ok || json.ok === false){
       throw new Error(json.message || 'Er ging iets mis.');
     }
@@ -2520,7 +3120,50 @@ HTML = r"""
 
 
   function getTodayString(){
-    return new Date().toISOString().slice(0,10);
+    try{
+      const parts = new Intl.DateTimeFormat('sv-SE', { timeZone:'Europe/Amsterdam', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+      const get = type => (parts.find(p => p.type === type) || {}).value || '';
+      return `${get('year')}-${get('month')}-${get('day')}`;
+    }catch(err){
+      return new Date().toISOString().slice(0,10);
+    }
+  }
+
+  function getAmsterdamDayLabel(){
+    try{
+      const day = new Intl.DateTimeFormat('en-GB', { timeZone:'Europe/Amsterdam', weekday:'long' }).format(new Date()).toLowerCase();
+      const mapping = { wednesday:'woensdag', thursday:'donderdag', friday:'vrijdag', saturday:'zaterdag', sunday:'zondag' };
+      return mapping[day] || 'altijd';
+    }catch(err){
+      return 'altijd';
+    }
+  }
+
+  function getTaskDayOptions(){
+    return ['altijd','woensdag','donderdag','vrijdag','zaterdag','zondag'];
+  }
+
+  function formatTaskDayLabel(day){
+    const labels = { altijd:'Altijd', woensdag:'Woensdag', donderdag:'Donderdag', vrijdag:'Vrijdag', zaterdag:'Zaterdag', zondag:'Zondag' };
+    return labels[day] || 'Altijd';
+  }
+
+  function taskListMatchesDay(list, selectedDay){
+    const day = ((list && list.day) || 'altijd').toLowerCase();
+    return day === 'altijd' || day === selectedDay;
+  }
+
+  function renderTaskDaySwitcher(targetId, selectedDay, changeFnName){
+    const html = `
+      <div class="task-switcher">
+        <div class="task-switcher-label">Dag</div>
+        <div class="task-switcher-row">
+          ${getTaskDayOptions().map(day => `<button class="task-switcher-btn ${day === selectedDay ? 'active' : ''}" onclick="${changeFnName}('${day}')">${formatTaskDayLabel(day)}</button>`).join('')}
+        </div>
+      </div>
+    `;
+    const target = document.getElementById(targetId);
+    if (target) target.innerHTML = html;
   }
 
   function kitchenTaskIsChecked(task){
@@ -2618,29 +3261,36 @@ HTML = r"""
   }
 
   function renderChecklistSections(targetId, tasks, options){
-    const enriched = safeArray(tasks).map(task => ({ task, progress: getTaskProgress(task, options.taskCheckedFn, options.subtaskCheckedFn) }));
-    const openItems = enriched.filter(item => item.progress.status === 'open');
-    const progressItems = enriched.filter(item => item.progress.status === 'progress');
-    const doneItems = enriched.filter(item => item.progress.status === 'done');
-    const html = `
-      <div class="task-sections">
-        ${renderTaskGroup('Direct doen', openItems.length ? `${openItems.length} taak${openItems.length === 1 ? '' : 'en'} nog volledig open` : 'Alles uit deze groep is gestart', 'warn', String(openItems.length), openItems.map(item => renderChecklistTaskCard(item.task, options)).join(''), true, 'open-group')}
-        ${renderTaskGroup('Bijna klaar', progressItems.length ? `${progressItems.length} taak${progressItems.length === 1 ? '' : 'en'} is al deels gedaan` : 'Nog geen taken half afgerond', 'accent', String(progressItems.length), progressItems.map(item => renderChecklistTaskCard(item.task, options)).join(''), true, 'progress-group')}
-        ${renderTaskGroup('Klaar', doneItems.length ? `${doneItems.length} taak${doneItems.length === 1 ? '' : 'en'} al afgerond vandaag` : 'Nog niets afgerond vandaag', 'good', String(doneItems.length), doneItems.map(item => renderChecklistTaskCard(item.task, options)).join(''), false, 'done-group')}
+    const items = safeArray(tasks);
+    const html = items.map(task => renderChecklistTaskCard(task, options)).join('');
+    document.getElementById(targetId).innerHTML = html || '<div class="empty">Nog geen taken in deze lijst.</div>';
+  }
+
+  function renderTasklistSwitcher(lists, currentId, openCallName){
+    const items = safeArray(lists);
+    if (items.length <= 1) return '';
+    return `
+      <div class="task-switcher">
+        <div class="task-switcher-label">Snel wisselen tussen lijsten</div>
+        <div class="task-switcher-row">
+          ${items.map(list => `<button class="task-switcher-btn ${list.id === currentId ? 'active' : ''}" onclick="${openCallName}('${list.id}')">${list.name || 'Takenlijst'}</button>`).join('')}
+        </div>
       </div>
     `;
-    document.getElementById(targetId).innerHTML = (openItems.length || progressItems.length || doneItems.length) ? html : '<div class="empty">Nog geen taken in deze lijst.</div>';
   }
 
   function renderKitchen(){
     const kitchen = appData.kitchen || { lists: [] };
-    const lists = safeArray(kitchen.lists);
+    const allLists = safeArray(kitchen.lists);
+    if (!currentKitchenTaskDay) currentKitchenTaskDay = getAmsterdamDayLabel();
+    const lists = allLists.filter(list => taskListMatchesDay(list, currentKitchenTaskDay));
     const taskCount = lists.reduce((total, lst) => total + safeArray(lst.tasks).length, 0);
-    const canManageTasklists = hasPermission('manage_tasklists');
+    const canManageTasklists = hasPermission('manage_kitchen_tasklists');
 
     setText('kitchenListCount', String(lists.length));
     setText('kitchenTaskCount', String(taskCount));
     setText('recipeCount', String(safeArray(appData.recipes?.items).length));
+    renderTaskDaySwitcher('kitchenDaySwitcher', currentKitchenTaskDay, 'setKitchenTaskDay');
 
     renderList(
       'kitchenLists',
@@ -2656,7 +3306,7 @@ HTML = r"""
                 <div class="klist-icon">☑</div>
                 <div>
                   <div class="klist-name">${list.name}</div>
-                  <div class="klist-sub">${done} van ${tasks.length} taken gedaan</div>
+                  <div class="klist-sub">${formatTaskDayLabel(list.day || 'altijd')} · ${done} van ${tasks.length} taken gedaan</div>
                 </div>
               </div>
               <span class="badge accent">${percent}%</span>
@@ -2673,13 +3323,21 @@ HTML = r"""
           </div>
         `;
       },
-      'Nog geen takenlijsten gevonden.'
+      'Nog geen takenlijsten gevonden voor deze dag.'
     );
   }
 
-  function renderKitchenListDetail(){
+  
+  function setKitchenTaskDay(day){
+    currentKitchenTaskDay = day || 'altijd';
+    renderKitchen();
+  }
+
+function renderKitchenListDetail(){
     const kitchen = appData.kitchen || { lists: [] };
-    const list = safeArray(kitchen.lists).find(item => item.id === currentKitchenListId) || { tasks: [], name: 'Takenlijst' };
+    const allLists = safeArray(kitchen.lists);
+    const visibleLists = allLists.filter(item => taskListMatchesDay(item, currentKitchenTaskDay));
+    const list = allLists.find(item => item.id === currentKitchenListId) || { tasks: [], name: 'Takenlijst' };
     const tasks = safeArray(list.tasks);
     const done = tasks.filter(t => kitchenTaskIsChecked(t)).length;
     const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
@@ -2697,6 +3355,7 @@ HTML = r"""
             <span class="badge accent">${percent}%</span>
           </div>
           <div class="kprogress"><span style="width:${percent}%"></span></div>
+          ${renderTasklistSwitcher(visibleLists, list.id, 'openBarListDetail')}
         </div>
       `;
     }
@@ -2722,7 +3381,7 @@ HTML = r"""
 
 
   function openKitchenManagePage(listId){
-    if (!hasPermission('manage_tasklists')) return;
+    if (!hasPermission('manage_kitchen_tasklists')) return;
     currentKitchenListId = listId;
     window.currentKitchenListId = listId;
     const list = safeArray(appData.kitchen?.lists).find(item => item.id === listId) || {};
@@ -2780,6 +3439,7 @@ HTML = r"""
       `
         <div class="form-grid">
           <div class="field"><label>Naam takenlijst</label><input id="kitchenListName" placeholder="Bijv. Opening keuken"></div>
+          <div class="field"><label>Dag</label><select id="kitchenListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === currentKitchenTaskDay ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
           <div class="form-actions">
             <button class="btn" onclick="closeModal()">Annuleren</button>
             <button class="btn accent" onclick="saveKitchenList()">Opslaan</button>
@@ -2791,7 +3451,7 @@ HTML = r"""
 
   async function saveKitchenList(){
     try{
-      await postJSON('/api/kitchen/list-save', { name: document.getElementById('kitchenListName').value });
+      await postJSON('/api/kitchen/list-save', { name: document.getElementById('kitchenListName').value, day: document.getElementById('kitchenListDay').value });
       closeModal();
       await loadData();
       renderKitchen();
@@ -2923,10 +3583,899 @@ HTML = r"""
     renderBarTaskListDetail();
   }
 
+
+  function defaultClientBarSlot(index){
+    return { id: `slot_${index}`, label: `Vak ${index}`, product_id: '', product_name: '', image_url: '', note: '' };
+  }
+
+  function defaultClientBarShelf(index){
+    return { id: `shelf_${index}`, name: `Plank ${index}`, facings: 9, height: 'medium', slots: Array.from({length:9}, (_,i) => defaultClientBarSlot(i + 1)) };
+  }
+
+  function defaultClientBarCooler(index){
+    const shelves = [1,2,3].map(i => defaultClientBarShelf(i));
+    shelves.push({ id: `shelf_4`, name: 'Bodem', facings: 9, height: 'low', is_floor: true, slots: Array.from({length:9}, (_,i) => defaultClientBarSlot(i + 1)) });
+    return { id: `cooler_${index}`, name: `Koelkast ${index}`, shelves };
+  }
+
+  function defaultClientBarUnit(index){
+    return { id: `unit_${index}`, name: `GB${index}`, coolers: [1,2,3].map(i => defaultClientBarCooler(i)) };
+  }
+
+  function normalizeClientBarLayout(layout){
+    const item = layout || {};
+    const rawUnits = safeArray(item.units);
+    const units = rawUnits.slice(0,8).map((unit, unitIndex) => ({
+      id: unit?.id || `unit_${unitIndex+1}`,
+      name: unit?.name || `GB${unitIndex+1}`,
+      coolers: safeArray(unit?.coolers).slice(0,3).map((cooler, coolerIndex) => ({
+        id: cooler?.id || `cooler_${coolerIndex+1}`,
+        name: cooler?.name || `Koelkast ${coolerIndex+1}`,
+        shelves: safeArray(cooler?.shelves).map((shelf, shelfIndex) => ({
+          id: shelf?.id || `shelf_${shelfIndex+1}`,
+          name: shelf?.name || `Plank ${shelfIndex+1}`,
+          facings: Math.max(1, Math.min(Number(shelf?.facings || shelf?.slots_per_shelf || shelf?.slot_count || 9) || 9, 9)),
+          height: ["low","medium","high","wine"].includes(String(shelf?.height || shelf?.shelf_height || shelf?.height_level || 'medium')) ? String(shelf?.height || shelf?.shelf_height || shelf?.height_level || 'medium') : 'medium',
+          slots: safeArray(shelf?.slots).map((slot, slotIndex) => ({
+            id: slot?.id || `slot_${slotIndex+1}`,
+            label: slot?.label || `Vak ${slotIndex+1}`,
+            product_id: slot?.product_id || '',
+            product_name: slot?.product_name || '',
+            image_url: slot?.image_url || '',
+            note: slot?.note || ''
+          }))
+        }))
+      }))
+    }));
+    if(!units.length) units.push(...Array.from({length:4}, (_,i) => defaultClientBarUnit(i + 1)));
+    units.forEach(unit => {
+      while((unit.coolers || []).length < 3) unit.coolers.push(defaultClientBarCooler(unit.coolers.length + 1));
+      unit.coolers = unit.coolers.slice(0,3);
+      unit.coolers.forEach(cooler => {
+        if(!safeArray(cooler.shelves).length){
+          cooler.shelves = [1,2,3].map(i => defaultClientBarShelf(i));
+          cooler.shelves.push({ id: 'shelf_4', name: 'Bodem', facings: 9, height: 'low', is_floor: true, slots: Array.from({length:9}, (_,i) => defaultClientBarSlot(i + 1)) });
+        }
+        cooler.shelves = safeArray(cooler.shelves).map((shelf, shelfIndex) => ({
+          ...shelf,
+          is_floor: Boolean(shelf?.is_floor || String(shelf?.name || '').trim().toLowerCase() === 'bodem')
+        }));
+        cooler.shelves.forEach((shelf, shelfIndex) => {
+          const facings = Math.max(1, Math.min(Number(shelf?.facings || shelf?.slots_per_shelf || shelf?.slot_count || 9) || 9, 9));
+          shelf.facings = facings;
+          shelf.height = ["low","medium","high","wine"].includes(String(shelf?.height || shelf?.shelf_height || shelf?.height_level || 'medium')) ? String(shelf?.height || shelf?.shelf_height || shelf?.height_level || 'medium') : 'medium';
+          if(!safeArray(shelf.slots).length) shelf.slots = Array.from({length:facings}, (_,i) => defaultClientBarSlot(i + 1));
+          shelf.slots = shelf.slots.slice(0, facings).map((slot, slotIndex) => ({
+            id: slot?.id || `slot_${slotIndex+1}`,
+            label: slot?.label || `Vak ${slotIndex+1}`,
+            product_id: slot?.product_id || '',
+            product_name: slot?.product_name || '',
+            image_url: slot?.image_url || '',
+            note: slot?.note || ''
+          }));
+          while(shelf.slots.length < facings) shelf.slots.push(defaultClientBarSlot(shelf.slots.length + 1));
+          shelf.name = shelf?.name || (shelf.is_floor ? 'Bodem' : `Plank ${shelfIndex+1}`);
+          shelf.height = shelf.is_floor ? 'low' : shelf.height;
+          shelf.id = shelf?.id || `shelf_${shelfIndex+1}`;
+        });
+        const floorShelves = cooler.shelves.filter(shelf => shelf.is_floor);
+        const topShelves = cooler.shelves.filter(shelf => !shelf.is_floor).map((shelf, idx) => normalizeShelfShape({
+          ...shelf,
+          is_floor: false,
+          id: shelf?.id || `shelf_${idx + 1}`,
+          name: (shelf?.name || '').trim() || `Plank ${idx + 1}`,
+        }));
+        const keptFloor = normalizeShelfShape({
+          ...(floorShelves[0] || { id: `shelf_${topShelves.length + 1}`, name: 'Bodem', facings: 9, height: 'low', is_floor: true, slots: Array.from({length:9}, (_,i) => defaultClientBarSlot(i + 1)) }),
+          is_floor: true,
+          name: ((floorShelves[0]?.name) || 'Bodem').trim() || 'Bodem',
+          facings: Math.max(1, Math.min(Number(floorShelves[0]?.facings || 9) || 9, 9)),
+          height: 'low'
+        });
+        cooler.shelves = [...topShelves, keptFloor];
+      });
+    });
+    return {
+      id: item.id || '',
+      name: item.name || 'Indeling',
+      note: item.note || '',
+      created_at: item.created_at || '',
+      units
+    };
+  }
+
+  function ensureBarLayoutSelection(){
+    const items = safeArray(appData.bar_layouts?.items);
+    if(!items.length){
+      currentBarLayoutId = null;
+      window.currentBarLayoutId = null;
+      return null;
+    }
+    const wanted = currentBarLayoutId || appData.bar_layouts?.active_id || items[0]?.id;
+    const found = items.find(item => item.id === wanted) || items[0];
+    currentBarLayoutId = found?.id || null;
+    window.currentBarLayoutId = currentBarLayoutId;
+    return found || null;
+  }
+
+  function getSelectedBarLayout(){
+    const selected = ensureBarLayoutSelection();
+    return selected ? normalizeClientBarLayout(selected) : null;
+  }
+
+  function selectBarLayout(layoutId){
+    currentBarLayoutId = layoutId || null;
+    window.currentBarLayoutId = currentBarLayoutId;
+    renderBarLayouts();
+  }
+
+  function escapeHtml(value=''){
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+
+  function renderBarLayouts(){
+    const data = appData.bar_layouts || { items: [], active_id: '' };
+    const items = safeArray(data.items).map(normalizeClientBarLayout);
+    const activeId = data.active_id || '';
+    const listEl = document.getElementById('barLayoutsList');
+    const activeBadge = document.getElementById('barLayoutActiveBadge');
+    const info = document.getElementById('barLayoutInfo');
+    const selectedBadge = document.getElementById('barLayoutSelectedBadge');
+    const openEditorBtn = document.getElementById('barLayoutOpenEditorBtn');
+    ensureBarLayoutSelection();
+    const selected = items.find(x => x.id === currentBarLayoutId) || null;
+    if(activeBadge) if(activeBadge) activeBadge.textContent = items.find(x => x.id === activeId)?.name || 'Geen actief';
+    if(selectedBadge) selectedBadge.textContent = selected?.name || 'Geen indeling gekozen';
+    if(openEditorBtn) openEditorBtn.disabled = !selected;
+    if(info){
+      info.textContent = selected ? ((selected.note || 'Preset voor een event of standaard baropstelling.') + ' Gebruik Bekijken op de vloer en open de editor alleen voor echte wijzigingen.') : 'Kies een indeling uit de lijst. Daarna kun je direct naar Bekijken of Bewerken.';
+    }
+    renderBarLayoutReadonlyView();
+    if(!listEl) return;
+    if(!items.length){
+      listEl.innerHTML = `<div class="empty">Nog geen indelingen opgeslagen. Maak er één aan voor bijvoorbeeld standaard, Koningsdag of eventavond.</div>`;
+      return;
+    }
+    listEl.innerHTML = items.map(item => `
+      <div class="list-item ${item.id === currentBarLayoutId ? 'is-selected' : ''}" onclick="selectBarLayout('${item.id}')">
+        <div class="item-top">
+          <div>
+            <div class="item-title">${escapeHtml(item.name || 'Indeling')}</div>
+            <div class="item-sub">${escapeHtml(item.note || 'Preset voor een event of standaard baropstelling.')}</div>
+          </div>
+          <span class="badge ${item.id === activeId ? 'accent' : ''}">${item.id === activeId ? 'Actief' : 'Preset'}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-chip">${escapeHtml(item.created_at || 'Zonder datum')}</span>
+          <span class="meta-chip">${safeArray(item.units).length} unit${safeArray(item.units).length === 1 ? '' : 's'}</span>
+          <span class="meta-chip">3 koelkastjes per unit</span>
+        </div>
+        <div class="item-actions" onclick="event.stopPropagation()">
+          <button class="btn" onclick="openBarLayoutView('${item.id}')">Bekijken</button>
+          <button class="btn accent" onclick="openBarLayoutEditor('${item.id}')">Bewerken</button>
+          ${adminOnly(`${item.id === activeId ? `<span class="badge accent">Actief</span>` : `<button class="btn good" onclick="setActiveBarLayout('${item.id}')">Maak actief</button>`}<button class="btn" onclick="openBarLayoutModal('${item.id}')">Gegevens</button><button class="btn danger" onclick="confirmAction('Indeling verwijderen','Weet je zeker dat je deze indeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteBarLayout','${item.id}')&quot;)">Verwijderen</button>`) }
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function changeBarLayoutReadonlyUnit(value){
+    currentBarLayoutReadonlyUnitIndex = Number(value || 0);
+    window.currentBarLayoutReadonlyUnitIndex = currentBarLayoutReadonlyUnitIndex;
+    renderBarLayoutReadonlyView();
+  }
+
+  function renderBarLayoutReadonlyView(){
+    const layout = getSelectedBarLayout();
+    const stage = document.getElementById('barLayoutReadonlyStage');
+    const unitSelect = document.getElementById('barLayoutReadonlyUnitSelect');
+    const badge = document.getElementById('barLayoutReadonlyBadge');
+    if(!stage) return;
+    if(!layout){
+      stage.innerHTML = `<div class="fridge-editor-empty">Kies of maak eerst een indeling aan. Daarna kun je hier dezelfde koelkastweergave bekijken als in de editor, maar dan zonder edit-controls.</div>`;
+      if(unitSelect) unitSelect.innerHTML = '';
+      if(badge) badge.textContent = '3 koelkastjes · kijkmodus';
+      return;
+    }
+    const unitIndex = Math.max(0, Math.min(Number(currentBarLayoutReadonlyUnitIndex || 0), safeArray(layout.units).length - 1));
+    currentBarLayoutReadonlyUnitIndex = unitIndex;
+    window.currentBarLayoutReadonlyUnitIndex = unitIndex;
+    const unit = layout.units[unitIndex] || layout.units[0];
+    if(unitSelect){
+      unitSelect.innerHTML = safeArray(layout.units).map((entry, idx) => `<option value="${idx}" ${idx === unitIndex ? 'selected' : ''}>${escapeHtml(entry.name || `GB${idx + 1}`)}</option>`).join('');
+    }
+    if(badge) badge.textContent = `${layout.name || 'Indeling'} · ${unit?.name || `GB${unitIndex + 1}`} · kijkmodus`;
+    stage.innerHTML = renderBarLayoutStageHtml(layout, unitIndex, null, true);
+  }
+
+  function renderBarLayoutStageHtml(layout, unitIndex, target=null, readonly=false){
+    const unit = layout?.units?.[unitIndex] || layout?.units?.[0];
+    if(!unit){
+      return `<div class="fridge-editor-empty">Geen unit gevonden.</div>`;
+    }
+    return `
+      <div class="fridge-unit ${readonly ? 'readonly' : ''}">
+        <div class="fridge-unit-top">
+          <div>
+            <div class="fridge-unit-name">${escapeHtml(unit.name || `GB${unitIndex + 1}`)}</div>
+            <div class="fridge-unit-note">${readonly ? 'Kijkmodus · zelfde weergave als editor, maar zonder aanpasbare controls' : '3 brede koelkastjes naast elkaar · klik op een plank om direct die hele rij te vullen'}</div>
+          </div>
+          <span class="fridge-door-badge">${readonly ? 'Bekijk op de vloer' : 'Breed overzicht zoals op de vloer'}</span>
+        </div>
+        <div class="fridge-bank">
+          ${safeArray(unit.coolers).map((cooler, coolerIndex) => `
+            <div class="fridge-door">
+              <div class="fridge-door-header">
+                <div class="fridge-door-title">${escapeHtml(cooler.name || `Koelkast ${coolerIndex + 1}`)}</div>
+                <span class="fridge-door-badge">deur ${coolerIndex + 1}</span>
+              </div>
+              <div class="fridge-door-frame">
+                <div class="fridge-door-window">
+                  <div class="fridge-handle"></div>
+                  <div class="fridge-door-shelves">
+                    ${safeArray(cooler.shelves)
+                      .map((shelf, shelfIndex) => ({ shelf, shelfIndex }))
+                      .sort((a, b) => Number(Boolean(a.shelf?.is_floor)) - Number(Boolean(b.shelf?.is_floor)))
+                      .map(({ shelf, shelfIndex }) => {
+                      const active = !readonly && target && target.coolerIndex === coolerIndex && target.shelfIndex === shelfIndex;
+                      const facings = Math.max(1, Math.min(Number(shelf?.facings || 9) || 9, 9));
+                      const shelfHeight = getShelfHeightPx(shelf?.height || 'medium');
+                      const slots = safeArray(shelf.slots).slice(0, facings);
+                      while(slots.length < facings) slots.push(defaultClientBarSlot(slots.length + 1));
+                      const shelfClick = readonly ? '' : ` onclick="selectBarLayoutShelf(${unitIndex}, ${coolerIndex}, ${shelfIndex}, 0)"`;
+                      return `
+                        <div class="fridge-shelf ${shelf?.is_floor ? 'floor' : ''} ${active ? 'active' : ''}"${shelfClick}>
+                          <div class="fridge-shelf-name">${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${shelfIndex + 1}`))}</div>
+                          <div class="fridge-shelf-track" style="--slot-count:${facings};--shelf-height:${shelfHeight}px">
+                            <div class="fridge-shelf-products">
+                              ${slots.map((slot, slotIndex) => {
+                                const filled = !!(slot.product_name || slot.product_id || slot.image_url);
+                                const label = slot.product_name || '';
+                                const isSelectedSlot = !readonly && target && target.coolerIndex === coolerIndex && target.shelfIndex === shelfIndex && target.slotIndex === slotIndex;
+                                const resolvedImage = getResolvedSlotImage(slot);
+                                const thumb = resolvedImage
+                                  ? `<div class="fridge-item-thumb"><img src="${escapeHtml(resolvedImage)}" alt="${escapeHtml(label || 'Product')}"></div>`
+                                  : `<div class="fridge-item-thumb">${filled ? `<span class="fridge-item-pill">${escapeHtml((label || '•').slice(0,2).toUpperCase())}</span>` : ''}</div>`;
+                                if(readonly){
+                                  return `<div class="fridge-item ${filled ? '' : 'empty'}" aria-hidden="true">${thumb}</div>`;
+                                }
+                                return `<button type="button" class="fridge-item ${filled ? '' : 'empty'} ${isSelectedSlot ? 'selected' : ''}" onclick="event.stopPropagation(); selectBarLayoutShelf(${unitIndex}, ${coolerIndex}, ${shelfIndex}, ${slotIndex})" aria-label="Plek ${slotIndex + 1}">${thumb}</button>`;
+                              }).join('')}
+                            </div>
+                          </div>
+                          <div class="fridge-shelf-beam"></div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              </div>
+              <div class="fridge-base"></div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+function openBarLayoutModal(layoutId=null){
+    const items = safeArray(appData.bar_layouts?.items).map(normalizeClientBarLayout);
+    const item = layoutId ? (items.find(entry => entry.id === layoutId) || {}) : {};
+    openModal(
+      layoutId ? 'Indeling bewerken' : 'Nieuwe indeling',
+      'Sla hier een event- of standaardindeling op. Daarna kun je hem openen in de visuele koelkast-editor.',
+      `
+        <div class="field"><label>Naam indeling</label><input id="barLayoutName" value="${escapeHtml(item.name || '')}" placeholder="Bijv. Koningsdag"></div>
+        <div class="field"><label>Korte notitie</label><input id="barLayoutNote" value="${escapeHtml(item.note || '')}" placeholder="Bijv. Buitenbar + extra bier vooraan"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="closeModal()">Annuleren</button>
+          <button class="btn accent" onclick="saveBarLayout('${layoutId || ''}')">Opslaan</button>
+        </div>
+      `
+    );
+  }
+
+  async function saveBarLayout(layoutId=''){
+    try{
+      const name = (document.getElementById('barLayoutName')?.value || '').trim();
+      const note = (document.getElementById('barLayoutNote')?.value || '').trim();
+      await postJSON('/api/manage/bar-layout-save', {
+        layout_id: layoutId || null,
+        name,
+        note
+      });
+      closeModal();
+      await loadData();
+      const items = safeArray(appData.bar_layouts?.items).map(normalizeClientBarLayout);
+      if (layoutId){
+        currentBarLayoutId = layoutId;
+      } else {
+        const match = items.find(item => (item.name || '').trim().toLowerCase() === name.toLowerCase());
+        currentBarLayoutId = match?.id || currentBarLayoutId;
+      }
+      window.currentBarLayoutId = currentBarLayoutId;
+      openPage('bar-indeling');
+      toast('Indeling opgeslagen');
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  }
+
+  async function setActiveBarLayout(layoutId){
+    try{
+      await postJSON('/api/manage/bar-layout-set-active', { layout_id: layoutId });
+      await loadData();
+      currentBarLayoutId = layoutId;
+      openPage('bar-indeling');
+      toast('Actieve indeling aangepast');
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  }
+
+  async function deleteBarLayout(layoutId){
+    try{
+      await postJSON('/api/manage/bar-layout-delete', { layout_id: layoutId });
+      await loadData();
+      openPage('bar-indeling');
+      toast('Indeling verwijderd');
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  }
+
+  function getBarProductOptions(){
+    const products = [];
+    const seen = new Set();
+    safeArray(appData.bar?.koelingen).forEach(koeling => {
+      safeArray(koeling?.producten).forEach(product => {
+        const id = String(product?.id || slugifyText(product?.naam || '') || '').trim();
+        const name = String(product?.naam || '').trim();
+        if(!name) return;
+        const key = `${id}__${name.toLowerCase()}`;
+        if(seen.has(key)) return;
+        seen.add(key);
+        products.push({
+          id,
+          name,
+          image_url: product?.image_url || product?.image || product?.photo || product?.thumb || ''
+        });
+      });
+    });
+    return products.sort((a,b) => a.name.localeCompare(b.name, 'nl'));
+  }
+
+
+  function getBarProductImageByRef(productId='', productName=''){
+    const id = String(productId || '').trim();
+    const name = String(productName || '').trim().toLowerCase();
+    const products = getBarProductOptions();
+    const byId = id ? products.find(item => item.id === id && item.image_url) : null;
+    if(byId?.image_url) return byId.image_url;
+    const byName = name ? products.find(item => item.name.trim().toLowerCase() === name && item.image_url) : null;
+    return byName?.image_url || '';
+  }
+
+  function getResolvedSlotImage(slot){
+    return String(slot?.image_url || getBarProductImageByRef(slot?.product_id, slot?.product_name) || '').trim();
+  }
+
+  function slugifyText(value=''){
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || 'item';
+  }
+
+  function updateSelectedBarLayout(mutator){
+    const items = safeArray(appData.bar_layouts?.items);
+    const index = items.findIndex(item => item.id === currentBarLayoutId);
+    if(index < 0) return null;
+    const clone = JSON.parse(JSON.stringify(normalizeClientBarLayout(items[index])));
+    mutator(clone);
+    items[index] = clone;
+    appData.bar_layouts.items = items;
+    return clone;
+  }
+
+  
+  function getSelectedEditorUnitIndex(layout){
+    const total = safeArray(layout?.units).length || 0;
+    if(!total) return 0;
+    if(typeof window.currentBarLayoutUnitIndex !== 'number') window.currentBarLayoutUnitIndex = 0;
+    if(window.currentBarLayoutUnitIndex < 0) window.currentBarLayoutUnitIndex = 0;
+    if(window.currentBarLayoutUnitIndex >= total) window.currentBarLayoutUnitIndex = total - 1;
+    return window.currentBarLayoutUnitIndex;
+  }
+
+  function ensureSelectedShelf(layout){
+    const unitIndex = getSelectedEditorUnitIndex(layout);
+    const unit = safeArray(layout?.units)[unitIndex] || null;
+    const defaultTarget = { unitIndex, coolerIndex: 0, shelfIndex: 0, slotIndex: 0 };
+    if(!unit){
+      window.currentBarLayoutShelfTarget = defaultTarget;
+      return defaultTarget;
+    }
+    const target = window.currentBarLayoutShelfTarget || defaultTarget;
+    const coolerCount = safeArray(unit.coolers).length || 1;
+    const coolerIndex = Math.min(Math.max(Number(target.coolerIndex || 0), 0), coolerCount - 1);
+    const shelfCount = safeArray(unit.coolers[coolerIndex]?.shelves).length || 1;
+    const shelfIndex = Math.min(Math.max(Number(target.shelfIndex || 0), 0), shelfCount - 1);
+    const shelf = unit.coolers[coolerIndex]?.shelves?.[shelfIndex] || { slots: [] };
+    const slotCount = safeArray(shelf.slots).length || 9;
+    const slotIndex = Math.min(Math.max(Number(target.slotIndex || 0), 0), slotCount - 1);
+    const normalized = { unitIndex, coolerIndex, shelfIndex, slotIndex };
+    window.currentBarLayoutShelfTarget = normalized;
+    return normalized;
+  }
+
+  function openBarLayoutEditor(layoutId=null){
+    if(layoutId) currentBarLayoutId = layoutId;
+    window.currentBarLayoutId = currentBarLayoutId;
+    window.currentBarLayoutShelfTarget = null;
+        openPage('bar-indeling-editor');
+    renderBarLayoutEditor();
+  }
+
+  function changeBarLayoutEditorUnit(value){
+    window.currentBarLayoutUnitIndex = Number(value || 0);
+    window.currentBarLayoutShelfTarget = null;
+        renderBarLayoutEditor();
+  }
+  function requestRemoveBarLayoutUnit(){
+    const layout = getSelectedBarLayout();
+    const unitIndex = getSelectedEditorUnitIndex(layout);
+    if(!layout || safeArray(layout.units).length <= 1){
+      toast('Er moet minimaal 1 unit overblijven.', 'error');
+      return;
+    }
+    const unitName = layout.units?.[unitIndex]?.name || `GB${unitIndex + 1}`;
+    confirmAction('Unit verwijderen',`Weet je zeker dat je ${escapeHtml(unitName)} wilt verwijderen?`,'Verwijderen', 'doConfirmed(\'confirmRemoveBarLayoutUnit\')');
+  }
+
+  function confirmRemoveBarLayoutUnit(){
+    const layout = getSelectedBarLayout();
+    const unitIndex = getSelectedEditorUnitIndex(layout);
+    if(!layout || safeArray(layout.units).length <= 1){
+      toast('Er moet minimaal 1 unit overblijven.', 'error');
+      return;
+    }
+    updateSelectedBarLayout(current => {
+      current.units.splice(unitIndex, 1);
+      current.units = safeArray(current.units).map((unit, index) => ({
+        ...unit,
+        id: unit?.id || `unit_${index + 1}`,
+        name: (unit?.name || `GB${index + 1}`).trim() || `GB${index + 1}`
+      }));
+    });
+    window.currentBarLayoutUnitIndex = Math.max(0, Math.min(unitIndex, safeArray(getSelectedBarLayout()?.units).length - 1));
+    window.currentBarLayoutShelfTarget = null;
+    renderBarLayoutEditor();
+  }
+
+
+  function openBarLayoutView(layoutId=null){
+    if(layoutId) currentBarLayoutId = layoutId;
+    window.currentBarLayoutId = currentBarLayoutId;
+    openPage('bar-indeling-view');
+    renderBarLayoutReadonlyView();
+  }
+
+  function renameBarUnit(unitIndex, value){
+    updateSelectedBarLayout(layout => {
+      layout.units[unitIndex].name = String(value || '').trim() || `GB${unitIndex + 1}`;
+    });
+    renderBarLayoutEditor();
+  }
+
+  function renameBarCooler(unitIndex, coolerIndex, value){
+    updateSelectedBarLayout(layout => {
+      layout.units[unitIndex].coolers[coolerIndex].name = String(value || '').trim() || `Koelkast ${coolerIndex + 1}`;
+    });
+    renderBarLayoutEditor();
+  }
+
+  function getShelfHeightPx(height){
+    const key = String(height || 'medium').toLowerCase();
+    if(key === 'low') return 74;
+    if(key === 'high') return 112;
+    if(key === 'wine') return 132;
+    return 92;
+  }
+
+  function normalizeShelfShape(shelf){
+    const facings = Math.max(1, Math.min(Number(shelf?.facings || shelf?.slots_per_shelf || shelf?.slot_count || 9) || 9, 9));
+    shelf.facings = facings;
+    const defaultHeight = shelf?.is_floor ? 'low' : 'medium';
+    shelf.height = ["low","medium","high","wine"].includes(String(shelf?.height || defaultHeight)) ? String(shelf.height || defaultHeight) : defaultHeight;
+    shelf.slots = safeArray(shelf?.slots).slice(0, facings);
+    while(shelf.slots.length < facings) shelf.slots.push(defaultClientBarSlot(shelf.slots.length + 1));
+    return shelf;
+  }
+
+  function getPreferredShelfSlotIndex(shelf){
+    const slots = safeArray(shelf?.slots).slice(0,9);
+    const firstEmpty = slots.findIndex(slot => !(slot && (slot.product_name || slot.product_id || slot.image_url)));
+    return firstEmpty >= 0 ? firstEmpty : 0;
+  }
+
+  function selectBarLayoutShelf(unitIndex, coolerIndex, shelfIndex, slotIndex=0){
+    window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex, slotIndex };
+        renderBarLayoutEditor();
+  }
+
+  function setBarShelfSlotProduct(unitIndex, coolerIndex, shelfIndex, slotIndex, productId){
+    const product = getBarProductOptions().find(item => item.id === productId) || null;
+    updateSelectedBarLayout(layout => {
+      const slots = layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex].slots;
+      slots[slotIndex] = slots[slotIndex] || defaultClientBarSlot(slotIndex + 1);
+      const slot = slots[slotIndex];
+      slot.product_id = product ? product.id : '';
+      slot.product_name = product ? product.name : '';
+      slot.image_url = product ? (product.image_url || getBarProductImageByRef(product.id, product.name) || '') : '';
+    });
+    renderBarLayoutEditor();
+  }
+
+  function clearBarShelfSlot(unitIndex, coolerIndex, shelfIndex, slotIndex){
+    updateSelectedBarLayout(layout => {
+      layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex].slots[slotIndex] = defaultClientBarSlot(slotIndex + 1);
+    });
+    renderBarLayoutEditor();
+  }
+
+  function setBarShelfSlotImage(unitIndex, coolerIndex, shelfIndex, slotIndex, value){
+    updateSelectedBarLayout(layout => {
+      layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex].slots[slotIndex].image_url = String(value || '').trim();
+    });
+    renderBarLayoutEditor();
+  }
+
+  function setBarShelfSlotName(unitIndex, coolerIndex, shelfIndex, slotIndex, value){
+    updateSelectedBarLayout(layout => {
+      layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex].slots[slotIndex].product_name = String(value || '').trim();
+    });
+    renderBarLayoutEditor();
+  }
+
+  function setBarShelfSlotNote(unitIndex, coolerIndex, shelfIndex, slotIndex, value){
+    updateSelectedBarLayout(layout => {
+      const slots = layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex].slots;
+      slots[slotIndex] = slots[slotIndex] || defaultClientBarSlot(slotIndex + 1);
+      slots[slotIndex].note = String(value || '').trim();
+    });
+    renderBarLayoutEditor();
+  }
+
+  function applyBarShelfFacing(unitIndex, coolerIndex, shelfIndex, facingCount){
+    const productId = document.getElementById('barShelfSelectedProduct')?.value || '';
+    const manualName = (document.getElementById('barShelfManualName')?.value || '').trim();
+    const manualNote = (document.getElementById('barShelfManualNote')?.value || '').trim();
+    const selectedProduct = getBarProductOptions().find(item => item.id === productId) || null;
+    const shelfCap = Math.max(1, Math.min(Number(getSelectedBarLayout()?.units?.[unitIndex]?.coolers?.[coolerIndex]?.shelves?.[shelfIndex]?.facings || 9) || 9, 9));
+    const startSlot = Math.max(0, Math.min(Number(window.currentBarLayoutShelfTarget?.slotIndex || 0), shelfCap - 1));
+    updateSelectedBarLayout(layout => {
+      const shelf = layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex];
+      normalizeShelfShape(shelf);
+      for(let offset = 0; offset < facingCount; offset += 1){
+        const index = startSlot + offset;
+        if(index > shelfCap - 1) break;
+        shelf.slots[index] = shelf.slots[index] || defaultClientBarSlot(index + 1);
+        shelf.slots[index].product_id = selectedProduct ? selectedProduct.id : '';
+        shelf.slots[index].product_name = manualName || (selectedProduct ? selectedProduct.name : '');
+        shelf.slots[index].image_url = selectedProduct ? (selectedProduct.image_url || getBarProductImageByRef(selectedProduct.id, selectedProduct.name) || '') : '';
+        shelf.slots[index].note = manualNote;
+      }
+    });
+    window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex, slotIndex: startSlot };
+    renderBarLayoutEditor();
+  }
+
+  function renderBarLayoutShelfPanel(layout, target){
+    const panel = document.getElementById('barLayoutShelfPanel');
+    if(!panel) return;
+    if(!layout){
+      panel.innerHTML = `<div class="fridge-editor-empty">Selecteer een indeling om de editor te gebruiken.</div>`;
+      return;
+    }
+    if(!target){
+      panel.innerHTML = `<div class="fridge-editor-empty">Selecteer een plank om rechts producten, facings en afbeeldingen te beheren.</div>`;
+      return;
+    }
+    const unit = layout?.units?.[target.unitIndex];
+    const cooler = unit?.coolers?.[target.coolerIndex];
+    const shelf = cooler?.shelves?.[target.shelfIndex];
+    if(!unit || !cooler || !shelf){
+      panel.innerHTML = `<div class="fridge-editor-empty">Selecteer een plank in de editor om rechts producten en facings aan te passen.</div>`;
+      return;
+    }
+    const selectedSlot = safeArray(shelf.slots)[target.slotIndex] || defaultClientBarSlot(target.slotIndex + 1);
+    const options = getBarProductOptions();
+    const selectedProductId = selectedSlot.product_id || '';
+    const selectedProduct = options.find(opt => opt.id === selectedProductId) || null;
+    const maxFacings = Math.max(1, Math.min(Number(shelf.facings || 9) || 9, 9));
+    const activeFacingCount = Math.max(1, Math.min(Number(document.getElementById('barShelfFacingCount')?.value || 1) || 1, maxFacings));
+    panel.innerHTML = `
+      <h3>${escapeHtml(unit.name || `GB${target.unitIndex + 1}`)} · ${escapeHtml(cooler.name || `Koelkast ${target.coolerIndex + 1}`)}</h3>
+      <p>${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${target.shelfIndex + 1}`))} · plek ${target.slotIndex + 1}</p>
+      <div class="fridge-panel-section">
+        <div class="fridge-panel-section-top">
+          <div class="fridge-panel-section-title">Plank instellingen</div>
+        </div>
+        <div class="fridge-panel-grid">
+          <div class="fridge-panel-block">
+            <div class="fridge-panel-label">Unitnaam</div>
+            <input id="barUnitNameInput" value="${escapeHtml(unit.name || `GB${target.unitIndex + 1}`)}" placeholder="Bijv. GB1">
+          </div>
+          <div class="fridge-panel-block">
+            <div class="fridge-panel-label">Naam koelkastje</div>
+            <input id="barCoolerNameInput" value="${escapeHtml(cooler.name || `Koelkast ${target.coolerIndex + 1}`)}" placeholder="Bijv. Wijn links">
+          </div>
+          <div class="fridge-panel-block">
+            <div class="fridge-panel-label">Planknaam</div>
+            <input id="barShelfNameInput" value="${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${target.shelfIndex + 1}`))}" placeholder="Bijv. Wijn boven">
+          </div>
+          <div class="fridge-panel-block">
+            <div class="fridge-panel-label">Plankhoogte</div>
+            <select id="barShelfHeightInput">
+              <option value="low" ${String(shelf.height||'medium') === 'low' ? 'selected' : ''}>Laag</option>
+              <option value="medium" ${String(shelf.height||'medium') === 'medium' ? 'selected' : ''}>Normaal</option>
+              <option value="high" ${String(shelf.height||'medium') === 'high' ? 'selected' : ''}>Hoog</option>
+              <option value="wine" ${String(shelf.height||'medium') === 'wine' ? 'selected' : ''}>Wijn / extra hoog</option>
+            </select>
+          </div>
+          <div class="fridge-panel-block">
+            <div class="fridge-panel-label">Aantal vakken op deze plank</div>
+            <select id="barShelfFacingsInput">
+              ${Array.from({length:9}, (_,i) => `<option value="${i+1}" ${maxFacings === (i+1) ? 'selected' : ''}>${i+1} van max 9</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="fridge-panel-inline-actions fridge-panel-inline-actions--simple">
+          <button class="fridge-inline-accent" onclick="addBarShelf(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex})">+ Plank toevoegen</button>
+          <button class="fridge-inline-danger" onclick="requestRemoveBarShelf(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex})">${shelf.is_floor ? 'Verwijder bodem' : 'Verwijder plank'}</button>
+          <button class="fridge-panel-save" onclick="applyBarShelfSettings(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex})">Wijzigingen opslaan</button>
+        </div>
+      </div>
+      <div class="fridge-panel-block">
+        <div class="fridge-panel-label">Product voor geselecteerde plek</div>
+        <select id="barShelfSelectedProduct" onchange="setBarShelfSlotProduct(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex}, ${target.slotIndex}, this.value)">
+          <option value="">Handmatig invullen</option>
+          ${options.map(opt => `<option value="${escapeHtml(opt.id)}" ${opt.id === selectedProductId ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fridge-panel-block">
+        <div class="fridge-panel-label">Naam / label (optioneel)</div>
+        <input id="barShelfManualName" value="${escapeHtml(selectedSlot.product_name || '')}" onchange="setBarShelfSlotName(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex}, ${target.slotIndex}, this.value)" placeholder="Bijv. Corona Extra">
+      </div>
+      <div class="fridge-panel-block">
+        <div class="fridge-panel-label">Notitie (optioneel)</div>
+        <input id="barShelfManualNote" value="${escapeHtml(selectedSlot.note || '')}" onchange="setBarShelfSlotNote(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex}, ${target.slotIndex}, this.value)" placeholder="Bijv. hardloper vooraan">
+        <div class="fridge-panel-inline-actions">
+          <button class="fridge-inline-danger" onclick="clearBarShelfSlot(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex}, ${target.slotIndex})">Maak geselecteerde plek leeg</button>
+        </div>
+      </div>
+      <div class="fridge-panel-block">
+        <div class="fridge-panel-label">Aantal facings vanaf geselecteerde plek</div>
+        <div class="fridge-facing-grid">
+          ${Array.from({length:maxFacings}, (_,i) => `<button class="fridge-facing-btn ${activeFacingCount === (i+1) ? 'active' : ''}" onclick="applyBarShelfFacing(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex}, ${i+1})">${i+1}</button>`).join('')}
+        </div>
+      </div>
+      <div class="fridge-panel-block">
+        <div class="fridge-panel-label">Plekken op deze plank</div>
+        <div class="fridge-product-preview">
+          ${safeArray(shelf.slots).slice(0,maxFacings).map((slot, index) => {
+            const active = index === target.slotIndex;
+            const resolvedImage = getResolvedSlotImage(slot);
+            const thumb = resolvedImage ? `<img src="${escapeHtml(resolvedImage)}" alt="${escapeHtml(slot.product_name || slot.label || '')}">` : `<span>${escapeHtml((slot.product_name || slot.label || 'Vak').slice(0,2).toUpperCase())}</span>`;
+            return `<button class="fridge-preview-card ${active ? 'active' : ''}" onclick="selectBarLayoutShelf(${target.unitIndex}, ${target.coolerIndex}, ${target.shelfIndex}, ${index})">
+              <div class="fridge-preview-thumb">${thumb}</div>
+              <div class="fridge-preview-name">${escapeHtml(slot.product_name || `Vak ${index + 1}`)}</div>
+            </button>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="fridge-editor-note">Klik links op een plek in de plank. Kies rechts het product en gebruik facings om vanaf die plek door te vullen.</div>
+    `;
+  }
+
+  function applyBarShelfSettings(unitIndex, coolerIndex, shelfIndex){
+    const unitName = (document.getElementById('barUnitNameInput')?.value || '').trim();
+    const coolerName = (document.getElementById('barCoolerNameInput')?.value || '').trim();
+    const shelfName = (document.getElementById('barShelfNameInput')?.value || '').trim();
+    const height = (document.getElementById('barShelfHeightInput')?.value || 'medium').trim();
+    const facings = Math.max(1, Math.min(Number(document.getElementById('barShelfFacingsInput')?.value || 9) || 9, 9));
+    updateSelectedBarLayout(layout => {
+      const unit = layout.units[unitIndex];
+      const cooler = unit.coolers[coolerIndex];
+      const shelf = cooler.shelves[shelfIndex];
+      unit.name = unitName || `GB${unitIndex + 1}`;
+      cooler.name = coolerName || `Koelkast ${coolerIndex + 1}`;
+      shelf.name = shelfName || (shelf.is_floor ? 'Bodem' : `Plank ${shelfIndex + 1}`);
+      shelf.height = ['low','medium','high','wine'].includes(height) ? height : (shelf.is_floor ? 'low' : 'medium');
+      shelf.facings = Math.max(1, Math.min(facings, 9));
+      normalizeShelfShape(shelf);
+      const floorShelf = cooler.shelves.find(entry => entry?.is_floor);
+      if(floorShelf){
+        floorShelf.facings = Math.max(1, Math.min(Number(floorShelf.facings || 9) || 9, 9));
+        normalizeShelfShape(floorShelf);
+      }
+    });
+    const nextSlot = Math.min(Number(window.currentBarLayoutShelfTarget?.slotIndex || 0), facings - 1);
+    window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex, slotIndex: nextSlot };
+    window.barShelfSettingsExpanded = false;
+    renderBarLayoutEditor();
+  }
+
+  function setBarShelfHeight(unitIndex, coolerIndex, shelfIndex, value){
+    const allowed = ['low','medium','high','wine'];
+    updateSelectedBarLayout(layout => {
+      const shelf = layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex];
+      shelf.height = allowed.includes(String(value || '').toLowerCase()) ? String(value).toLowerCase() : 'medium';
+      normalizeShelfShape(shelf);
+    });
+    renderBarLayoutEditor();
+  }
+
+  function setBarShelfFacings(unitIndex, coolerIndex, shelfIndex, value){
+    const facings = Math.max(1, Math.min(Number(value || 9) || 9, 9));
+    updateSelectedBarLayout(layout => {
+      const shelf = layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex];
+      shelf.facings = facings;
+      normalizeShelfShape(shelf);
+    });
+    const nextSlot = Math.min(Number(window.currentBarLayoutShelfTarget?.slotIndex || 0), facings - 1);
+    window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex, slotIndex: nextSlot };
+    renderBarLayoutEditor();
+  }
+
+  function renameBarShelf(unitIndex, coolerIndex, shelfIndex, value){
+    updateSelectedBarLayout(layout => {
+      layout.units[unitIndex].coolers[coolerIndex].shelves[shelfIndex].name = String(value || '').trim() || `Plank ${shelfIndex + 1}`;
+    });
+    renderBarLayoutEditor();
+  }
+
+  function requestRemoveBarShelf(unitIndex, coolerIndex, shelfIndex){
+    const selected = getSelectedBarLayout();
+    const cooler = selected?.units?.[unitIndex]?.coolers?.[coolerIndex];
+    if(!cooler) return;
+    const shelves = safeArray(cooler.shelves);
+    if(shelves.length <= 1){
+      toast('Elke koelkast moet minstens 1 rij houden.', 'error');
+      return;
+    }
+    const label = shelves[shelfIndex]?.is_floor ? 'bodem' : 'plank';
+    confirmAction('Rij verwijderen',`Weet je zeker dat je deze ${label} wilt verwijderen?`,'Verwijderen', `doConfirmed('confirmRemoveBarShelf', ${unitIndex}, ${coolerIndex}, ${shelfIndex})`);
+  }
+
+  function confirmRemoveBarShelf(unitIndex, coolerIndex, shelfIndex){
+    return removeBarShelf(unitIndex, coolerIndex, shelfIndex);
+  }
+
+  function addBarShelf(unitIndex, coolerIndex, shelfIndex){
+    updateSelectedBarLayout(layout => {
+      const cooler = layout.units[unitIndex].coolers[coolerIndex];
+      let shelves = safeArray(cooler.shelves).map(shelf => normalizeShelfShape({ ...(shelf || {}) }));
+      const floorIndex = shelves.findIndex(shelf => shelf?.is_floor);
+      const insertAt = Math.max(0, Math.min(Number(shelfIndex || 0) + 1, floorIndex >= 0 ? floorIndex : shelves.length));
+      const newShelfNumber = shelves.filter(shelf => !shelf?.is_floor).length + 1;
+      shelves.splice(insertAt, 0, normalizeShelfShape({
+        ...defaultClientBarShelf(newShelfNumber),
+        id: `shelf_${Date.now()}`,
+        name: `Plank ${newShelfNumber}`,
+        facings: 9,
+        height: 'medium',
+        is_floor: false,
+        slots: Array.from({length:9}, (_, idx) => defaultClientBarSlot(idx + 1)),
+      }));
+      const floorShelf = shelves.find(shelf => shelf?.is_floor);
+      const topShelves = shelves.filter(shelf => !shelf?.is_floor).map((shelf, idx) => ({
+        ...shelf,
+        id: shelf?.id || `shelf_${idx + 1}`,
+        name: (shelf?.name || '').trim() || `Plank ${idx + 1}`,
+        is_floor: false,
+      }));
+      cooler.shelves = floorShelf ? [...topShelves, normalizeShelfShape({ ...floorShelf, is_floor: true, name: (floorShelf?.name || 'Bodem').trim() || 'Bodem', facings: Math.max(1, Math.min(Number(floorShelf?.facings || 9) || 9, 9)) })] : topShelves;
+    });
+    window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex: Number(shelfIndex || 0) + 1, slotIndex: 0 };
+    renderBarLayoutEditor();
+  }
+
+  function removeBarShelf(unitIndex, coolerIndex, shelfIndex){
+    const selected = getSelectedBarLayout();
+    const cooler = selected?.units?.[unitIndex]?.coolers?.[coolerIndex];
+    if(!cooler) return;
+    const shelves = safeArray(cooler.shelves);
+    if(shelves.length <= 1){
+      toast('Elke koelkast moet minstens 1 rij houden.', 'error');
+      return;
+    }
+    updateSelectedBarLayout(layout => {
+      const targetCooler = layout.units[unitIndex].coolers[coolerIndex];
+      targetCooler.shelves.splice(shelfIndex, 1);
+      targetCooler.shelves = safeArray(targetCooler.shelves).map((shelf, index) => {
+        const facings = Math.max(1, Math.min(Number(shelf?.facings || 9) || 9, 9));
+        const slots = safeArray(shelf?.slots).slice(0, facings).map((slot, slotIndex) => ({
+          ...defaultClientBarSlot(slotIndex + 1),
+          ...(slot || {}),
+          facing: slotIndex + 1,
+        }));
+        while(slots.length < facings) slots.push(defaultClientBarSlot(slots.length + 1));
+        return {
+          ...shelf,
+          id: shelf?.id || `shelf_${index + 1}`,
+          name: (shelf?.name || '').trim() || (shelf?.is_floor ? 'Bodem' : `Plank ${index + 1}`),
+          facings,
+          height: shelf?.is_floor ? 'low' : (['low','medium','high','wine'].includes(String(shelf?.height || 'medium')) ? String(shelf.height || 'medium') : 'medium'),
+          is_floor: Boolean(shelf?.is_floor),
+          slots,
+        };
+      });
+    });
+    const freshShelves = safeArray(getSelectedBarLayout()?.units?.[unitIndex]?.coolers?.[coolerIndex]?.shelves);
+    const nextIndex = Math.max(0, Math.min(shelfIndex - 1, freshShelves.length - 1));
+    window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex: nextIndex, slotIndex: 0 };
+    renderBarLayoutEditor();
+  }
+
+  function renderBarLayoutEditor(){
+    const layout = getSelectedBarLayout();
+    const legacyWrap = document.getElementById('barLayoutEditor');
+    if(legacyWrap){
+      legacyWrap.innerHTML = layout ? `<div class="layout-editor-empty">Gebruik hieronder de kijkmodus. Open pas de editor als je echt iets wilt wijzigen.</div>` : `<div class="layout-editor-empty">Maak eerst een indeling aan. Daarna kun je hem fullscreen openen.</div>`;
+    }
+    const stage = document.getElementById('barLayoutFridgeStage');
+    const title = document.getElementById('fridgeEditorTitle');
+    const unitSelect = document.getElementById('fridgeEditorUnitSelect');
+    const activeBadge = document.getElementById('fridgeEditorActiveBadge');
+    if(!stage) return;
+    if(!layout){
+      stage.innerHTML = `<div class="fridge-editor-empty">Maak eerst een indeling aan vanuit het overzicht. Daarna kun je hier de 3 koelkastjes per unit visueel invullen.</div>`;
+      renderBarLayoutShelfPanel(null, null);
+      if(title) title.textContent = 'Indeling editor';
+      if(unitSelect) unitSelect.innerHTML = '';
+      return;
+    }
+    const unitIndex = getSelectedEditorUnitIndex(layout);
+    const target = ensureSelectedShelf(layout);
+    const unit = layout.units[unitIndex] || layout.units[0];
+    if(title) title.textContent = `Indeling editor · ${layout.name || 'Indeling'} · ${unit?.name || ''}`;
+    if(activeBadge) activeBadge.textContent = `${layout.name || 'Indeling'} · ${safeArray(layout.units).length} unit${safeArray(layout.units).length === 1 ? '' : 's'} · 9 facings per rij`;
+    if(unitSelect){
+      unitSelect.innerHTML = safeArray(layout.units).map((entry, idx) => `<option value="${idx}" ${idx === unitIndex ? 'selected' : ''}>${escapeHtml(entry.name || `GB${idx + 1}`)}</option>`).join('');
+    }
+    stage.innerHTML = renderBarLayoutStageHtml(layout, unitIndex, target, false);
+    renderBarLayoutShelfPanel(layout, target);
+  }
+
+async function saveCurrentBarLayoutStructure(){
+    const layout = getSelectedBarLayout();
+    if(!layout){
+      toast('Kies eerst een indeling', 'error');
+      return;
+    }
+    try{
+      await postJSON('/api/manage/bar-layout-structure-save', { layout_id: layout.id, units: layout.units });
+      await loadData();
+      currentBarLayoutId = layout.id;
+      openPage(currentPage === 'bar-indeling-editor' ? 'bar-indeling-editor' : (currentPage === 'bar-indeling-view' ? 'bar-indeling-view' : 'bar-indeling'));
+      toast('Visuele indeling opgeslagen');
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  }
+
   function renderBarTasks(){
     const data = appData.bar_tasks || { lists: [] };
-    const lists = safeArray(data.lists);
-    const canManageTasklists = hasPermission('manage_tasklists');
+    const allLists = safeArray(data.lists);
+    if (!currentBarTaskDay) currentBarTaskDay = getAmsterdamDayLabel();
+    const lists = allLists.filter(list => taskListMatchesDay(list, currentBarTaskDay));
+    const canManageTasklists = hasPermission('manage_bar_tasklists');
+    renderTaskDaySwitcher('barDaySwitcher', currentBarTaskDay, 'setBarTaskDay');
     renderList(
       'barTaskLists',
       lists,
@@ -2941,7 +4490,7 @@ HTML = r"""
                 <div class="klist-icon">✓</div>
                 <div>
                   <div class="klist-name">${list.name}</div>
-                  <div class="klist-sub">${done} van ${tasks.length} taken gedaan</div>
+                  <div class="klist-sub">${formatTaskDayLabel(list.day || 'altijd')} · ${done} van ${tasks.length} taken gedaan</div>
                 </div>
               </div>
               <span class="badge accent">${percent}%</span>
@@ -2958,13 +4507,21 @@ HTML = r"""
           </div>
         `;
       },
-      'Nog geen bartakenlijsten gevonden.'
+      'Nog geen bartakenlijsten gevonden voor deze dag.'
     );
   }
 
-  function renderBarTaskListDetail(){
+  
+  function setBarTaskDay(day){
+    currentBarTaskDay = day || 'altijd';
+    renderBarTasks();
+  }
+
+function renderBarTaskListDetail(){
     const data = appData.bar_tasks || { lists: [] };
-    const list = safeArray(data.lists).find(item => item.id === currentBarListId) || { tasks: [], name: 'Bar checklist' };
+    const allLists = safeArray(data.lists);
+    const visibleLists = allLists.filter(item => taskListMatchesDay(item, currentBarTaskDay));
+    const list = allLists.find(item => item.id === currentBarListId) || { tasks: [], name: 'Bar checklist' };
     const tasks = safeArray(list.tasks);
     const done = tasks.filter(t => barTaskIsChecked(t)).length;
     const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
@@ -2978,6 +4535,7 @@ HTML = r"""
             <span class="badge accent">${percent}%</span>
           </div>
           <div class="kprogress"><span style="width:${percent}%"></span></div>
+          ${renderTasklistSwitcher(data.lists, list.id, 'openBarListDetail')}
         </div>
       `;
     }
@@ -2990,7 +4548,7 @@ HTML = r"""
   }
 
   function openBarManagePage(listId){
-    if (!hasPermission('manage_tasklists')) return;
+    if (!hasPermission('manage_bar_tasklists')) return;
     currentBarListId = listId;
     window.currentBarListId = listId;
     const list = safeArray(appData.bar_tasks?.lists).find(item => item.id === listId) || {};
@@ -3044,6 +4602,7 @@ HTML = r"""
     openModal('Bartakenlijst toevoegen','Maak een blijvende lijst aan voor je barwerkzaamheden.',`
       <div class="form-grid">
         <div class="field"><label>Naam takenlijst</label><input id="barListName" placeholder="Bijv. Bar opstart"></div>
+        <div class="field"><label>Dag</label><select id="barListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === currentBarTaskDay ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
         <div class="form-actions">
           <button class="btn" onclick="closeModal()">Annuleren</button>
           <button class="btn accent" onclick="saveBarList()">Opslaan</button>
@@ -3053,7 +4612,7 @@ HTML = r"""
 
   async function saveBarList(){
     try{
-      await postJSON('/api/bar-tasks/list-save', { name: document.getElementById('barListName').value });
+      await postJSON('/api/bar-tasks/list-save', { name: document.getElementById('barListName').value, day: document.getElementById('barListDay').value });
       closeModal();
       await loadData();
       renderBarTasks();
@@ -3301,14 +4860,14 @@ HTML = r"""
   }
 
 
-  function derivePermissionPreset(user){
+  
+function derivePermissionPreset(user){
     if ((user?.role || 'medewerker') === 'admin') return 'admin';
     const p = user?.permissions || {};
-    const general = !!p.access_general || !!p.manage_diensten || !!p.manage_tips;
-    const bar = !!p.access_bar || !!p.adjust_stock || !!p.view_bijvullen || !!p.view_oplijst;
-    const kitchen = !!p.access_kitchen || !!p.view_recipes || !!p.use_tasklists;
-    if (bar && !general && !kitchen) return 'bar';
-    if (kitchen && !general && !bar) return 'keuken';
+    const isBarOnly = !!p.access_bar && !p.access_kitchen && (!!p.view_bijvullen || !!p.view_oplijst || !!p.adjust_stock || !!p.use_bar_tasklists);
+    const isKitchenOnly = !!p.access_kitchen && !p.access_bar && (!!p.view_recipes || !!p.use_kitchen_tasklists);
+    if (isBarOnly) return 'bar';
+    if (isKitchenOnly) return 'keuken';
     return 'medewerker';
   }
 
@@ -3316,141 +4875,162 @@ HTML = r"""
     const empty = {
       access_general:false, access_bar:false, access_kitchen:false,
       manage_diensten:false, manage_tips:false, view_bijvullen:false, view_oplijst:false,
-      adjust_stock:false, view_recipes:false, use_tasklists:false,
+      adjust_stock:false, view_recipes:false, use_tasklists:false, use_kitchen_tasklists:false, use_bar_tasklists:false,
       manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false,
-      manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_coolers:false
+      manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_kitchen_tasklists:false, manage_bar_tasklists:false, manage_coolers:false
     };
     if (preset === 'medewerker'){
       return { ...empty,
         access_general:true, access_bar:true, access_kitchen:true,
         manage_diensten:true, manage_tips:true,
         view_bijvullen:true, view_oplijst:true, adjust_stock:true,
-        view_recipes:true, use_tasklists:true
+        view_recipes:true, use_tasklists:true, use_kitchen_tasklists:true, use_bar_tasklists:true
       };
     }
     if (preset === 'bar'){
       return { ...empty,
-        access_general:true,
-        manage_diensten:true, manage_tips:true,
-        access_bar:true,
-        view_bijvullen:true, view_oplijst:true, adjust_stock:true
+        access_general:true, manage_diensten:true, manage_tips:true,
+        access_bar:true, view_bijvullen:true, view_oplijst:true, adjust_stock:true,
+        use_tasklists:true, use_bar_tasklists:true
       };
     }
     if (preset === 'keuken'){
       return { ...empty,
-        access_general:true,
-        manage_diensten:true, manage_tips:true,
-        access_kitchen:true,
-        view_recipes:true, use_tasklists:true
+        access_general:true, manage_diensten:true, manage_tips:true,
+        access_kitchen:true, view_recipes:true,
+        use_tasklists:true, use_kitchen_tasklists:true
       };
     }
     return { ...empty };
   }
 
-  function applyVisibilityOverrides(base, general, bar, kitchen){
-    const result = { ...base };
-    if (general){
-      result.access_general = true;
-      result.manage_diensten = true;
-      result.manage_tips = true;
-    } else {
-      result.access_general = false;
-      result.manage_diensten = false;
-      result.manage_tips = false;
-    }
-    if (bar){
-      result.access_bar = true;
-      result.view_bijvullen = true;
-      result.view_oplijst = true;
-      result.adjust_stock = true;
-    } else {
-      result.access_bar = false;
-      result.view_bijvullen = false;
-      result.view_oplijst = false;
-      result.adjust_stock = false;
-    }
-    if (kitchen){
-      result.access_kitchen = true;
-      result.view_recipes = true;
-      result.use_tasklists = true;
-    } else {
-      result.access_kitchen = false;
-      result.view_recipes = false;
-      result.use_tasklists = false;
-    }
-    return result;
+  function setChecked(id, value){
+    const el = document.getElementById(id);
+    if (el) el.checked = !!value;
+  }
+
+  function applyPermissionPreset(preset){
+    const base = preset === 'custom' ? basePermissionsForPreset('custom') : basePermissionsForPreset(preset);
+    Object.keys(base).forEach(key => setChecked(`perm_${key}`, !!base[key]));
+    const presetSelect = document.getElementById('permissionPreset');
+    if (presetSelect) presetSelect.value = preset;
+  }
+
+  function syncPermissionPresetInfo(){
+    const preset = document.getElementById('permissionPreset')?.value || 'medewerker';
+    applyPermissionPreset(preset);
+  }
+
+  function togglePermissionFields(){
+    const role = document.getElementById('userRole')?.value || 'medewerker';
+    const wrap = document.getElementById('userPermissionsWrap');
+    if (wrap) wrap.style.display = role === 'admin' ? 'none' : '';
+  }
+
+  function permissionRow(id, label, checked){
+    return `<div class="permission-row"><span class="permission-inline-label">${label}</span><input type="checkbox" id="${id}" ${checked ? 'checked' : ''}></div>`;
   }
 
   function permissionCheckboxes(user){
     const preset = derivePermissionPreset(user);
     const p = user?.permissions || {};
-    const general = !!p.access_general || !!p.manage_diensten || !!p.manage_tips;
-    const bar = !!p.access_bar || !!p.adjust_stock || !!p.view_bijvullen || !!p.view_oplijst;
-    const kitchen = !!p.access_kitchen || !!p.view_recipes || !!p.use_tasklists;
     return `
-      <div class="permission-panel">
-        <div class="permission-kicker">Snelle rechten</div>
-        <div class="field" style="margin-bottom:8px">
-          <label>Kies een basisprofiel</label>
-          <select id="permissionPreset" onchange="syncPermissionPresetInfo()">
-            <option value="medewerker" ${preset === 'medewerker' ? 'selected' : ''}>Medewerker · alles voor dagelijks gebruik</option>
-            <option value="bar" ${preset === 'bar' ? 'selected' : ''}>Bar medewerker · alleen bar</option>
-            <option value="keuken" ${preset === 'keuken' ? 'selected' : ''}>Keuken medewerker · alleen keuken</option>
-          </select>
+      <div class="permission-grid compact">
+        <div class="permission-panel">
+          <div class="permission-kicker">Snelle rechten</div>
+          <div class="permission-help">Kies een basisprofiel en verfijn daarna wat iemand wel of niet mag doen.</div>
+          <div class="field" style="margin-bottom:8px">
+            <label>Basisprofiel</label>
+            <select id="permissionPreset" onchange="syncPermissionPresetInfo()">
+              <option value="medewerker" ${preset === 'medewerker' ? 'selected' : ''}>Medewerker · dagelijks gebruik</option>
+              <option value="bar" ${preset === 'bar' ? 'selected' : ''}>Bar medewerker</option>
+              <option value="keuken" ${preset === 'keuken' ? 'selected' : ''}>Keuken medewerker</option>
+            </select>
+          </div>
+          <div class="permission-actions">
+            <button type="button" class="permission-chip" onclick="applyPermissionPreset('medewerker')">Medewerker</button>
+            <button type="button" class="permission-chip" onclick="applyPermissionPreset('bar')">Bar</button>
+            <button type="button" class="permission-chip" onclick="applyPermissionPreset('keuken')">Keuken</button>
+            <button type="button" class="permission-chip" onclick="applyPermissionPreset('custom')">Alles uit</button>
+          </div>
         </div>
-        <div class="permission-kicker" style="margin-top:4px">Zichtbaarheid</div>
-        <div class="permission-row"><span class="permission-inline-label">Algemeen</span><input type="checkbox" id="perm_access_general" ${general ? 'checked' : ''}></div>
-        <div class="permission-row"><span class="permission-inline-label">Bar</span><input type="checkbox" id="perm_access_bar" ${bar ? 'checked' : ''}></div>
-        <div class="permission-row"><span class="permission-inline-label">Keuken</span><input type="checkbox" id="perm_access_kitchen" ${kitchen ? 'checked' : ''}></div>
+
+        <div class="permission-sections">
+          <div class="permission-panel">
+            <div class="permission-kicker">Toegang</div>
+            ${permissionRow('perm_access_general', 'Algemeen zichtbaar', !!p.access_general)}
+            ${permissionRow('perm_access_bar', 'Bar zichtbaar', !!p.access_bar)}
+            ${permissionRow('perm_access_kitchen', 'Keuken zichtbaar', !!p.access_kitchen)}
+          </div>
+
+          <div class="permission-panel">
+            <div class="permission-kicker">Dagelijks gebruik</div>
+            ${permissionRow('perm_manage_diensten', 'Diensten gebruiken', !!p.manage_diensten)}
+            ${permissionRow('perm_manage_tips', 'Fooienpot aanpassen', !!p.manage_tips)}
+            ${permissionRow('perm_view_bijvullen', 'Bijvuloverzicht openen', !!p.view_bijvullen)}
+            ${permissionRow('perm_view_oplijst', 'Op-lijst openen', !!p.view_oplijst)}
+            ${permissionRow('perm_adjust_stock', 'Koelingvoorraad aanpassen', !!p.adjust_stock)}
+            ${permissionRow('perm_view_recipes', 'Recepten openen', !!p.view_recipes)}
+          </div>
+
+          <div class="permission-panel">
+            <div class="permission-kicker">Takenlijsten</div>
+            ${permissionRow('perm_use_bar_tasklists', 'Bar takenlijsten openen', !!p.use_bar_tasklists)}
+            ${permissionRow('perm_manage_bar_tasklists', 'Bar takenlijsten beheren', !!p.manage_bar_tasklists)}
+            ${permissionRow('perm_use_kitchen_tasklists', 'Keuken takenlijsten openen', !!p.use_kitchen_tasklists)}
+            ${permissionRow('perm_manage_kitchen_tasklists', 'Keuken takenlijsten beheren', !!p.manage_kitchen_tasklists)}
+          </div>
+
+          <div class="permission-panel">
+            <div class="permission-kicker">Beheer</div>
+            ${permissionRow('perm_manage_dienst_types', 'Dienstsoorten beheren', !!p.manage_dienst_types)}
+            ${permissionRow('perm_manage_users', 'Medewerkers beheren', !!p.manage_users)}
+            ${permissionRow('perm_manage_products', 'Producten beheren', !!p.manage_products)}
+            ${permissionRow('perm_manage_types', 'Productsoorten beheren', !!p.manage_types)}
+            ${permissionRow('perm_manage_locations', 'Locaties beheren', !!p.manage_locations)}
+            ${permissionRow('perm_manage_recipes', 'Recepten beheren', !!p.manage_recipes)}
+            ${permissionRow('perm_manage_coolers', 'Koelingen beheren', !!p.manage_coolers)}
+          </div>
+        </div>
       </div>
     `;
   }
 
-  function syncPermissionPresetInfo(){
-    const preset = document.getElementById('permissionPreset')?.value || 'medewerker';
-    if (preset === 'medewerker'){
-      setChecked('perm_access_general', true);
-      setChecked('perm_access_bar', true);
-      setChecked('perm_access_kitchen', true);
-    } else if (preset === 'bar'){
-      setChecked('perm_access_general', true);
-      setChecked('perm_access_bar', true);
-      setChecked('perm_access_kitchen', false);
-    } else if (preset === 'keuken'){
-      setChecked('perm_access_general', true);
-      setChecked('perm_access_bar', false);
-      setChecked('perm_access_kitchen', true);
-    }
-  }
-
   function collectUserPermissions(){
-    const preset = document.getElementById('permissionPreset')?.value || 'medewerker';
-    const general = !!document.getElementById('perm_access_general')?.checked;
-    const bar = !!document.getElementById('perm_access_bar')?.checked;
-    const kitchen = !!document.getElementById('perm_access_kitchen')?.checked;
-    const base = basePermissionsForPreset(preset);
-    return applyVisibilityOverrides(base, general, bar, kitchen);
+    const keys = [
+      'access_general','access_bar','access_kitchen',
+      'manage_diensten','manage_tips','view_bijvullen','view_oplijst','adjust_stock','view_recipes',
+      'use_bar_tasklists','manage_bar_tasklists','use_kitchen_tasklists','manage_kitchen_tasklists',
+      'manage_dienst_types','manage_users','manage_products','manage_types','manage_locations','manage_recipes','manage_coolers'
+    ];
+    const result = {};
+    keys.forEach(key => {
+      result[key] = !!document.getElementById(`perm_${key}`)?.checked;
+    });
+    result.use_tasklists = !!(result.use_kitchen_tasklists || result.use_bar_tasklists);
+    result.manage_tasklists = !!(result.manage_kitchen_tasklists || result.manage_bar_tasklists);
+    return result;
   }
 
   function permissionSummary(user){
-    const preset = derivePermissionPreset(user);
-    const labels = {
-      admin: 'Admin',
-      medewerker: 'Dagelijks gebruik',
-      bar: 'Bar medewerker',
-      keuken: 'Keuken medewerker'
-    };
     const p = user?.permissions || {};
-    const extra = [];
-    if ((preset === 'bar' || preset === 'keuken') && (p.access_general || p.manage_diensten || p.manage_tips)) extra.push('Algemeen');
-    if (preset === 'keuken' && (p.access_bar || p.adjust_stock || p.view_bijvullen || p.view_oplijst)) extra.push('Bar');
-    if (preset === 'bar' && (p.access_kitchen || p.view_recipes || p.use_tasklists)) extra.push('Keuken');
-    return extra.length ? `${labels[preset]} · + ${extra.join(' + ')}` : labels[preset];
+    const sections = [];
+    if (p.access_general) sections.push('Algemeen');
+    if (p.access_bar) sections.push('Bar');
+    if (p.access_kitchen) sections.push('Keuken');
+    const beheer = [];
+    if (p.manage_users) beheer.push('Medewerkers');
+    if (p.manage_products) beheer.push('Producten');
+    if (p.manage_coolers) beheer.push('Koelingen');
+    if (p.manage_recipes) beheer.push('Recepten');
+    let base = sections.length ? sections.join(' · ') : 'Beperkt';
+    if (beheer.length) base += ` · Beheer: ${beheer.join(', ')}`;
+    return base;
   }
 
-  function openUserModal(index=null){
+function openUserModal(index=null){
     if (!isAdmin()) return;
-    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : { role: 'medewerker', permissions: { access_general:true, access_bar:true, access_kitchen:true, manage_diensten:true, manage_tips:true, view_bijvullen:true, view_oplijst:true, adjust_stock:true, view_recipes:true, use_tasklists:true, manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false, manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_coolers:false } };
+    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : { role: 'medewerker', permissions: { access_general:true, access_bar:true, access_kitchen:true, manage_diensten:true, manage_tips:true, view_bijvullen:true, view_oplijst:true, adjust_stock:true, view_recipes:true, use_tasklists:true, use_kitchen_tasklists:true, use_bar_tasklists:true, manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false, manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_kitchen_tasklists:false, manage_bar_tasklists:false, manage_coolers:false } };
     openModal(index === null ? 'Medewerker toevoegen' : 'Medewerker bewerken', 'Alleen admin kan Casa Cara medewerkers en rechten beheren.', `
       <div class="form-grid">
         <div class="field"><label>Naam</label><input id="userName" value="${user.name || ''}" placeholder="Bijv. Lisa"></div>
@@ -3509,6 +5089,7 @@ HTML = r"""
     renderKitchenManagePage();
     renderBarTasks();
     renderBarTaskManagePage();
+    renderBarLayouts();
     renderRecipes();
     renderBarOverview();
     if (currentPage === 'bar-koeling-detail' && currentKoelingId){
@@ -3812,6 +5393,7 @@ HTML = r"""
           <div class="field"><label>Voorraad</label><input id="productVoorraad" type="number" value="${product.voorraad ?? 0}"></div>
           <div class="field"><label>Minimum</label><input id="productMinimum" type="number" value="${product.minimum ?? 0}"></div>
           <div class="field"><label>Soort</label><select id="productSoort">${productTypeOptions(product.soort || 'Overig')}</select></div>
+          <div class="field" style="grid-column:1/-1"><label>Productfoto (blijft bewaard)</label><input id="productImageUrl" value="${product.image_url || product.image || product.photo || ''}" placeholder="https://..."></div>
           <div class="form-actions">
             <button class="btn" onclick="closeModal()">Annuleren</button>
             <button class="btn accent" onclick="saveProduct('${koelingId}','${productId || ''}')">Opslaan</button>
@@ -3830,6 +5412,7 @@ HTML = r"""
         voorraad: document.getElementById('productVoorraad').value,
         minimum: document.getElementById('productMinimum').value,
         soort: document.getElementById('productSoort').value,
+        image_url: document.getElementById('productImageUrl')?.value || '',
       });
       closeModal();
       await loadData();
@@ -4090,6 +5673,124 @@ def casa_bot():
 def api_casa_data():
     return jsonify(serialize_app_data())
 
+@casa_cara.route("/api/bar-layouts")
+def api_bar_layouts():
+    return jsonify(get_bar_layouts_data())
+
+@casa_cara.route("/api/manage/bar-layout-save", methods=["POST"])
+def manage_bar_layout_save():
+    if not is_casa_admin():
+        return admin_only_response()
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    note = (payload.get("note") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "message": "Vul een naam in voor deze indeling."}), 400
+    data = get_bar_layouts_data()
+    items = data.get("items", [])
+    layout_id = str(payload.get("layout_id") or "").strip()
+    if layout_id:
+        for item in items:
+            if item.get("id") == layout_id:
+                item["name"] = name
+                item["note"] = note
+                break
+        else:
+            return jsonify({"ok": False, "message": "Indeling niet gevonden."}), 404
+    else:
+        base_id = slugify(name)
+        new_id = base_id
+        counter = 2
+        existing = {str(item.get("id") or "") for item in items}
+        while new_id in existing:
+            new_id = f"{base_id}_{counter}"
+            counter += 1
+        items.append({
+            "id": new_id,
+            "name": name,
+            "note": note,
+            "created_at": datetime.now().strftime("%d-%m-%Y %H:%M"),
+            "units": default_bar_layout_structure(),
+        })
+        if not data.get("active_id"):
+            data["active_id"] = new_id
+    data["items"] = items
+    save_bar_layouts_data(data)
+    return jsonify({"ok": True})
+
+@casa_cara.route("/api/manage/bar-layout-delete", methods=["POST"])
+def manage_bar_layout_delete():
+    if not is_casa_admin():
+        return admin_only_response()
+    payload = request.get_json(silent=True) or {}
+    layout_id = str(payload.get("layout_id") or "").strip()
+    if not layout_id:
+        return jsonify({"ok": False, "message": "Ongeldige indeling."}), 400
+    data = get_bar_layouts_data()
+    items = [item for item in data.get("items", []) if item.get("id") != layout_id]
+    if len(items) == len(data.get("items", [])):
+        return jsonify({"ok": False, "message": "Indeling niet gevonden."}), 404
+    data["items"] = items
+    if data.get("active_id") == layout_id:
+        data["active_id"] = items[0].get("id") if items else ""
+    save_bar_layouts_data(data)
+    return jsonify({"ok": True})
+
+@casa_cara.route("/api/manage/bar-layout-set-active", methods=["POST"])
+def manage_bar_layout_set_active():
+    if not is_casa_admin():
+        return admin_only_response()
+    payload = request.get_json(silent=True) or {}
+    layout_id = str(payload.get("layout_id") or "").strip()
+    data = get_bar_layouts_data()
+    if not any(item.get("id") == layout_id for item in data.get("items", [])):
+        return jsonify({"ok": False, "message": "Indeling niet gevonden."}), 404
+    data["active_id"] = layout_id
+    save_bar_layouts_data(data)
+    return jsonify({"ok": True})
+
+
+def get_product_image_for_layout(product_id: str = "", product_name: str = "") -> str:
+    product_id = str(product_id or "").strip()
+    product_name = str(product_name or "").strip().lower()
+    for koeling in get_bar_data().get("koelingen", []):
+        for product in koeling.get("producten", []):
+            pid = str(product.get("id") or "").strip()
+            pname = str(product.get("naam") or "").strip().lower()
+            image = str(product.get("image_url") or product.get("image") or product.get("photo") or "").strip()
+            if product_id and pid == product_id and image:
+                return image
+            if product_name and pname == product_name and image:
+                return image
+    return ""
+
+
+def backfill_layout_product_images(units):
+    units = normalize_layout_units(units)
+    for unit in units:
+        for cooler in unit.get("coolers", []):
+            for shelf in cooler.get("shelves", []):
+                for slot in shelf.get("slots", []):
+                    if not str(slot.get("image_url") or "").strip() and (slot.get("product_id") or slot.get("product_name")):
+                        slot["image_url"] = get_product_image_for_layout(slot.get("product_id"), slot.get("product_name"))
+    return units
+
+@casa_cara.route("/api/manage/bar-layout-structure-save", methods=["POST"])
+def manage_bar_layout_structure_save():
+    if not is_casa_admin():
+        return admin_only_response()
+    payload = request.get_json(silent=True) or {}
+    layout_id = str(payload.get("layout_id") or "").strip()
+    if not layout_id:
+        return jsonify({"ok": False, "message": "Ongeldige indeling."}), 400
+    data = get_bar_layouts_data()
+    for item in data.get("items", []):
+        if item.get("id") == layout_id:
+            item["units"] = backfill_layout_product_images(payload.get("units"))
+            save_bar_layouts_data(data)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Indeling niet gevonden."}), 404
+
 @casa_cara.route("/api/bar")
 def api_bar():
     bar_data = get_bar_data()
@@ -4201,6 +5902,7 @@ def manage_location_save():
     payload = request.get_json(silent=True) or {}
     original = (payload.get("original") or "").strip()
     name = (payload.get("name") or "").strip()
+    day = normalize_task_day(payload.get("day"))
     if not name:
         return jsonify({"ok": False, "message": "Vul een locatienaam in."}), 400
 
@@ -4350,6 +6052,7 @@ def manage_product_save():
     product_id = payload.get("product_id")
     naam = (payload.get("naam") or "").strip()
     soort = (payload.get("soort") or "Overig").strip() or "Overig"
+    image_url = str(payload.get("image_url") or payload.get("image") or payload.get("photo") or "").strip()
     try:
         voorraad = int(payload.get("voorraad", 0) or 0)
         minimum = int(payload.get("minimum", 0) or 0)
@@ -4363,6 +6066,16 @@ def manage_product_save():
         return permission_denied_response()
 
     bar = get_bar_data()
+    if not image_url:
+        for existing_koeling in bar.get("koelingen", []):
+            for existing_product in existing_koeling.get("producten", []):
+                if product_id and existing_product.get("id") == product_id and existing_koeling.get("id") == koeling_id:
+                    continue
+                if (existing_product.get("naam") or "").strip().lower() == naam.lower() and str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip():
+                    image_url = str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip()
+                    break
+            if image_url:
+                break
     koeling = next((k for k in bar.get("koelingen", []) if k.get("id") == koeling_id), None)
     if not koeling:
         return jsonify({"ok": False, "message": "Koeling niet gevonden."}), 404
@@ -4381,6 +6094,7 @@ def manage_product_save():
                 product["voorraad"] = voorraad
                 product["minimum"] = minimum
                 product["soort"] = soort
+                product["image_url"] = image_url
                 if "op" in payload:
                     product["op"] = bool(payload.get("op"))
                 else:
@@ -4404,6 +6118,7 @@ def manage_product_save():
         "voorraad": voorraad,
         "minimum": minimum,
         "soort": soort,
+        "image_url": image_url,
         "op": bool(payload.get("op", False)),
     })
     save_bar_data(bar)
@@ -4420,6 +6135,16 @@ def manage_product_delete():
         return jsonify({"ok": False, "message": "Koeling of product ontbreekt."}), 400
 
     bar = get_bar_data()
+    if not image_url:
+        for existing_koeling in bar.get("koelingen", []):
+            for existing_product in existing_koeling.get("producten", []):
+                if product_id and existing_product.get("id") == product_id and existing_koeling.get("id") == koeling_id:
+                    continue
+                if (existing_product.get("naam") or "").strip().lower() == naam.lower() and str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip():
+                    image_url = str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip()
+                    break
+            if image_url:
+                break
     koeling = next((k for k in bar.get("koelingen", []) if k.get("id") == koeling_id), None)
     if not koeling:
         return jsonify({"ok": False, "message": "Koeling niet gevonden."}), 404
@@ -4444,6 +6169,16 @@ def manage_product_mark_op():
         return jsonify({"ok": False, "message": "Koeling of product ontbreekt."}), 400
 
     bar = get_bar_data()
+    if not image_url:
+        for existing_koeling in bar.get("koelingen", []):
+            for existing_product in existing_koeling.get("producten", []):
+                if product_id and existing_product.get("id") == product_id and existing_koeling.get("id") == koeling_id:
+                    continue
+                if (existing_product.get("naam") or "").strip().lower() == naam.lower() and str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip():
+                    image_url = str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip()
+                    break
+            if image_url:
+                break
     koeling = next((k for k in bar.get("koelingen", []) if k.get("id") == koeling_id), None)
     if not koeling:
         return jsonify({"ok": False, "message": "Koeling niet gevonden."}), 404
@@ -4468,6 +6203,16 @@ def manage_product_mark_available():
         return jsonify({"ok": False, "message": "Koeling of product ontbreekt."}), 400
 
     bar = get_bar_data()
+    if not image_url:
+        for existing_koeling in bar.get("koelingen", []):
+            for existing_product in existing_koeling.get("producten", []):
+                if product_id and existing_product.get("id") == product_id and existing_koeling.get("id") == koeling_id:
+                    continue
+                if (existing_product.get("naam") or "").strip().lower() == naam.lower() and str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip():
+                    image_url = str(existing_product.get("image_url") or existing_product.get("image") or existing_product.get("photo") or "").strip()
+                    break
+            if image_url:
+                break
     koeling = next((k for k in bar.get("koelingen", []) if k.get("id") == koeling_id), None)
     if not koeling:
         return jsonify({"ok": False, "message": "Koeling niet gevonden."}), 404
@@ -4535,8 +6280,10 @@ def manage_dienst_type_delete():
 
 @casa_cara.route("/api/kitchen")
 def api_kitchen():
+    if not has_tasklist_access("kitchen"):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te openen.")
     data = get_kitchen_data()
-    today = date.today().isoformat()
+    today = get_today_iso()
     changed = False
     for item in data.get("lists", []):
         for task in item.get("tasks", []):
@@ -4560,8 +6307,8 @@ def api_kitchen():
 
 @casa_cara.route("/api/kitchen/list-save", methods=["POST"])
 def kitchen_list_save():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -4579,6 +6326,7 @@ def kitchen_list_save():
     data["lists"].append({
         "id": new_id,
         "name": name,
+        "day": day,
         "tasks": []
     })
     save_kitchen_data(data)
@@ -4586,8 +6334,8 @@ def kitchen_list_save():
 
 @casa_cara.route("/api/kitchen/list-delete", methods=["POST"])
 def kitchen_list_delete():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     data = get_kitchen_data()
@@ -4600,8 +6348,8 @@ def kitchen_list_delete():
 
 @casa_cara.route("/api/kitchen/task-save", methods=["POST"])
 def kitchen_task_save():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
@@ -4633,8 +6381,8 @@ def kitchen_task_save():
 
 @casa_cara.route("/api/kitchen/task-delete", methods=["POST"])
 def kitchen_task_delete():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -4651,14 +6399,14 @@ def kitchen_task_delete():
 
 @casa_cara.route("/api/kitchen/task-toggle", methods=["POST"])
 def kitchen_task_toggle():
-    if not has_casa_permission("use_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("kitchen"):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te gebruiken.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
-    today = date.today().isoformat()
+    today = get_today_iso()
     checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
-    checked_at = datetime.now().isoformat(timespec="minutes")
+    checked_at = get_now_iso_minutes()
     data = get_kitchen_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
@@ -4680,8 +6428,8 @@ def kitchen_task_toggle():
 
 @casa_cara.route("/api/kitchen/subtask-save", methods=["POST"])
 def kitchen_subtask_save():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -4715,8 +6463,8 @@ def kitchen_subtask_save():
 
 @casa_cara.route("/api/kitchen/subtask-delete", methods=["POST"])
 def kitchen_subtask_delete():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -4730,22 +6478,22 @@ def kitchen_subtask_delete():
                     task["subtasks"] = [sub for sub in task.get("subtasks", []) if sub.get("id") != subtask_id]
                     if len(task["subtasks"]) == before:
                         return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
-                    sync_task_with_subtasks(task, date.today().isoformat())
+                    sync_task_with_subtasks(task, get_today_iso())
                     save_kitchen_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
 
 @casa_cara.route("/api/kitchen/subtask-toggle", methods=["POST"])
 def kitchen_subtask_toggle():
-    if not has_casa_permission("use_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("kitchen"):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te gebruiken.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
     subtask_id = payload.get("subtask_id")
-    today = date.today().isoformat()
+    today = get_today_iso()
     checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
-    checked_at = datetime.now().isoformat(timespec="minutes")
+    checked_at = get_now_iso_minutes()
     data = get_kitchen_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
@@ -4767,8 +6515,10 @@ def kitchen_subtask_toggle():
 
 @casa_cara.route("/api/bar-tasks")
 def api_bar_tasks():
+    if not has_tasklist_access("bar"):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te openen.")
     data = get_bar_tasks_data()
-    today = date.today().isoformat()
+    today = get_today_iso()
     changed = False
     for item in data.get("lists", []):
         for task in item.get("tasks", []):
@@ -4792,10 +6542,11 @@ def api_bar_tasks():
 
 @casa_cara.route("/api/bar-tasks/list-save", methods=["POST"])
 def bar_list_save():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
+    day = normalize_task_day(payload.get("day"))
     if not name:
         return jsonify({"ok": False, "message": "Vul een naam in voor de takenlijst."}), 400
     data = get_bar_tasks_data()
@@ -4806,14 +6557,14 @@ def bar_list_save():
     while new_id in existing:
         new_id = f"{base}_{count}"
         count += 1
-    data["lists"].append({"id": new_id, "name": name, "tasks": []})
+    data["lists"].append({"id": new_id, "name": name, "day": day, "tasks": []})
     save_bar_tasks_data(data)
     return jsonify({"ok": True})
 
 @casa_cara.route("/api/bar-tasks/list-delete", methods=["POST"])
 def bar_list_delete():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     data = get_bar_tasks_data()
@@ -4826,8 +6577,8 @@ def bar_list_delete():
 
 @casa_cara.route("/api/bar-tasks/task-save", methods=["POST"])
 def bar_task_save():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
@@ -4858,8 +6609,8 @@ def bar_task_save():
 
 @casa_cara.route("/api/bar-tasks/task-delete", methods=["POST"])
 def bar_task_delete():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -4876,14 +6627,14 @@ def bar_task_delete():
 
 @casa_cara.route("/api/bar-tasks/task-toggle", methods=["POST"])
 def bar_task_toggle():
-    if not has_casa_permission("use_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar"):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te gebruiken.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
-    today = date.today().isoformat()
+    today = get_today_iso()
     checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
-    checked_at = datetime.now().isoformat(timespec="minutes")
+    checked_at = get_now_iso_minutes()
     data = get_bar_tasks_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
@@ -4905,8 +6656,8 @@ def bar_task_toggle():
 
 @casa_cara.route("/api/bar-tasks/subtask-save", methods=["POST"])
 def bar_subtask_save():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -4939,8 +6690,8 @@ def bar_subtask_save():
 
 @casa_cara.route("/api/bar-tasks/subtask-delete", methods=["POST"])
 def bar_subtask_delete():
-    if not has_casa_permission("manage_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -4954,22 +6705,22 @@ def bar_subtask_delete():
                     task["subtasks"] = [sub for sub in task.get("subtasks", []) if sub.get("id") != subtask_id]
                     if len(task["subtasks"]) == before:
                         return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
-                    sync_task_with_subtasks(task, date.today().isoformat())
+                    sync_task_with_subtasks(task, get_today_iso())
                     save_bar_tasks_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
 
 @casa_cara.route("/api/bar-tasks/subtask-toggle", methods=["POST"])
 def bar_subtask_toggle():
-    if not has_casa_permission("use_tasklists"):
-        return permission_denied_response()
+    if not has_tasklist_access("bar"):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te gebruiken.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
     subtask_id = payload.get("subtask_id")
-    today = date.today().isoformat()
+    today = get_today_iso()
     checked_by = (get_current_casa_user() or {}).get("name", "Onbekend")
-    checked_at = datetime.now().isoformat(timespec="minutes")
+    checked_at = get_now_iso_minutes()
     data = get_bar_tasks_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
@@ -5020,7 +6771,9 @@ def manage_user_save():
 
     user_record = {
         "name": name,
+        "username": name,
         "pin": pin,
+        "code": pin,
         "role": role,
         "active": True,
         "permissions": permissions,
@@ -5130,3 +6883,10 @@ def recipe_delete():
     data["items"] = items
     save_recipes_data(data)
     return jsonify({"ok": True})
+
+
+@casa_cara.route("/casa-cara-logout")
+def casa_cara_logout():
+    for key in ["casa_logged_in", "casa_user_pin", "casa_user_name", "casa_user_role"]:
+        session.pop(key, None)
+    return redirect("/casa-cara-login")
