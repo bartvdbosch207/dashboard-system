@@ -623,7 +623,7 @@ def normalize_layout_unit(item, index: int):
 def normalize_layout_units(raw_units):
     units = [normalize_layout_unit(unit, i + 1) for i, unit in enumerate(raw_units or [])]
     if not units:
-        units = default_layout_units()
+        units = default_bar_layout_structure()
     return units[:8]
 
 
@@ -1639,6 +1639,9 @@ HTML = r"""
     .mobile-sheet-title{font-size:18px;font-weight:900;letter-spacing:-.03em;color:#f5f7fb}
     .mobile-sheet-sub{font-size:13px;color:#97a6bb;line-height:1.45;margin-top:2px}
     .mobile-sheet-close{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#fff;display:grid;place-items:center}
+.mobile-sheet-actions{display:none;position:sticky;bottom:0;z-index:2;gap:10px;justify-content:flex-end;padding-top:12px;padding-bottom:max(4px, env(safe-area-inset-bottom,0px));margin-top:12px;background:linear-gradient(180deg, rgba(13,20,32,0), rgba(13,20,32,.92) 28%, #0d1420 100%)}
+.fridge-editor-mobile-savebar{display:none;position:sticky;bottom:0;z-index:18;padding:10px 0 calc(10px + env(safe-area-inset-bottom,0px));background:linear-gradient(180deg, rgba(11,18,32,0), rgba(11,18,32,.92) 26%, #0b1220 100%)}
+.fridge-editor-mobile-savebar .fridge-editor-btn{width:100%;justify-content:center}
     @media (max-width: 900px){
       .fridge-editor-topbar{padding:14px 14px 12px;align-items:flex-start}
       .fridge-editor-title{font-size:24px;line-height:1.02;max-width:100%}
@@ -1653,6 +1656,8 @@ HTML = r"""
       .fridge-editor-toolbar .actions{display:none}
       .fridge-editor-select{min-height:42px}
       .fridge-editor-stage{overflow:visible;padding-bottom:0}
+      .mobile-sheet-actions{display:flex}
+      .fridge-editor-mobile-savebar{display:block}
       .fridge-unit{padding:10px;border-radius:18px}
       .fridge-unit-top{padding:0 2px 8px}
       .fridge-unit-name{font-size:18px}
@@ -2127,7 +2132,14 @@ HTML = r"""
               <button class="mobile-sheet-close" type="button" onclick="closeBarLayoutMobileSheet()">✕</button>
             </div>
             <div id="barLayoutShelfMobileBody"></div>
+            <div class="mobile-sheet-actions">
+              <button class="fridge-editor-btn" type="button" onclick="closeBarLayoutMobileSheet()">Sluiten</button>
+              <button class="fridge-editor-btn primary admin-only-action" id="barLayoutMobileSaveBtn" type="button" onclick="saveCurrentBarLayoutStructure()">Indeling opslaan</button>
+            </div>
           </div>
+        </div>
+        <div class="fridge-editor-mobile-savebar">
+          <button class="fridge-editor-btn primary admin-only-action" id="barLayoutBottomSaveBtn" type="button" onclick="saveCurrentBarLayoutStructure()">Indeling opslaan</button>
         </div>
       </div>
     </section>
@@ -4044,6 +4056,46 @@ function openBarLayoutModal(layoutId=null){
     return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || 'item';
   }
 
+
+  function getBarLayoutPanelRoots(){
+    const roots = [];
+    if(isBarLayoutMobile()){
+      const mobileBody = document.getElementById('barLayoutShelfMobileBody');
+      const mobileSheet = document.getElementById('barLayoutShelfMobile');
+      if(mobileBody) roots.push(mobileBody);
+      if(mobileSheet) roots.push(mobileSheet);
+    }
+    const panel = document.getElementById('barLayoutShelfPanel');
+    if(panel) roots.push(panel);
+    return roots;
+  }
+
+  function getBarLayoutPanelField(id){
+    for(const root of getBarLayoutPanelRoots()){
+      const match = root?.querySelector?.(`#${id}`);
+      if(match) return match;
+    }
+    return document.getElementById(id);
+  }
+
+  function getBarLayoutPanelValue(id, fallback=''){
+    const field = getBarLayoutPanelField(id);
+    return field ? field.value : fallback;
+  }
+
+  function setBarLayoutDirtyState(isDirty){
+    window.barLayoutDirty = !!isDirty;
+    const dirty = !!window.barLayoutDirty;
+    const label = dirty ? 'Indeling opslaan *' : 'Indeling opslaan';
+    ['barLayoutBottomSaveBtn','barLayoutMobileSaveBtn'].forEach(id => {
+      const btn = document.getElementById(id);
+      if(btn) btn.textContent = label;
+    });
+    document.querySelectorAll('.fridge-editor-btn.primary[onclick="saveCurrentBarLayoutStructure()"]')?.forEach?.(btn => {
+      btn.textContent = dirty ? 'Opslaan *' : 'Opslaan';
+    });
+  }
+
   function updateSelectedBarLayout(mutator){
     const items = safeArray(appData.bar_layouts?.items);
     const index = items.findIndex(item => item.id === currentBarLayoutId);
@@ -4052,6 +4104,7 @@ function openBarLayoutModal(layoutId=null){
     mutator(clone);
     items[index] = clone;
     appData.bar_layouts.items = items;
+    setBarLayoutDirtyState(true);
     return clone;
   }
 
@@ -4123,6 +4176,7 @@ function openBarLayoutEditor(layoutId=null){
     window.currentBarLayoutId = currentBarLayoutId;
     window.currentBarLayoutShelfTarget = null;
     closeBarLayoutMobileSheet();
+    setBarLayoutDirtyState(false);
         openPage('bar-indeling-editor');
     renderBarLayoutEditor();
   }
@@ -4312,7 +4366,7 @@ function openBarLayoutEditor(layoutId=null){
     const selectedProductId = selectedSlot.product_id || '';
     const selectedProduct = options.find(opt => opt.id === selectedProductId) || null;
     const maxFacings = Math.max(1, Math.min(Number(shelf.facings || 9) || 9, 9));
-    const activeFacingCount = Math.max(1, Math.min(Number(document.getElementById('barShelfFacingCount')?.value || 1) || 1, maxFacings));
+    const activeFacingCount = Math.max(1, Math.min(Number(getBarLayoutPanelValue('barShelfFacingCount', 1) || 1) || 1, maxFacings));
     const panelHtml = `
       <h3>${escapeHtml(unit.name || `GB${target.unitIndex + 1}`)} · ${escapeHtml(cooler.name || `Koelkast ${target.coolerIndex + 1}`)}</h3>
       <p>${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${target.shelfIndex + 1}`))} · plek ${target.slotIndex + 1}</p>
@@ -4402,11 +4456,11 @@ function openBarLayoutEditor(layoutId=null){
   }
 
   function applyBarShelfSettings(unitIndex, coolerIndex, shelfIndex){
-    const unitName = (document.getElementById('barUnitNameInput')?.value || '').trim();
-    const coolerName = (document.getElementById('barCoolerNameInput')?.value || '').trim();
-    const shelfName = (document.getElementById('barShelfNameInput')?.value || '').trim();
-    const height = (document.getElementById('barShelfHeightInput')?.value || 'medium').trim();
-    const facings = Math.max(1, Math.min(Number(document.getElementById('barShelfFacingsInput')?.value || 9) || 9, 9));
+    const unitName = String(getBarLayoutPanelValue('barUnitNameInput', '') || '').trim();
+    const coolerName = String(getBarLayoutPanelValue('barCoolerNameInput', '') || '').trim();
+    const shelfName = String(getBarLayoutPanelValue('barShelfNameInput', '') || '').trim();
+    const height = String(getBarLayoutPanelValue('barShelfHeightInput', 'medium') || 'medium').trim();
+    const facings = Math.max(1, Math.min(Number(getBarLayoutPanelValue('barShelfFacingsInput', 9) || 9) || 9, 9));
     updateSelectedBarLayout(layout => {
       const unit = layout.units[unitIndex];
       const cooler = unit.coolers[coolerIndex];
@@ -4569,6 +4623,7 @@ function openBarLayoutEditor(layoutId=null){
     }
     stage.innerHTML = renderBarLayoutStageHtml(layout, unitIndex, target, false);
     renderBarLayoutShelfPanel(layout, target);
+    setBarLayoutDirtyState(!!window.barLayoutDirty);
   }
 
 async function saveCurrentBarLayoutStructure(){
@@ -4581,6 +4636,8 @@ async function saveCurrentBarLayoutStructure(){
       await postJSON('/api/manage/bar-layout-structure-save', { layout_id: layout.id, units: layout.units });
       await loadData();
       currentBarLayoutId = layout.id;
+      setBarLayoutDirtyState(false);
+      if(isBarLayoutMobile()) closeBarLayoutMobileSheet();
       openPage(currentPage === 'bar-indeling-editor' ? 'bar-indeling-editor' : (currentPage === 'bar-indeling-view' ? 'bar-indeling-view' : 'bar-indeling'));
       toast('Visuele indeling opgeslagen');
     }catch(err){
