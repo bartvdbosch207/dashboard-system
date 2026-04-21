@@ -1662,25 +1662,31 @@ HTML = r"""
       .fridge-editor-select{min-height:42px;width:100%}
       .fridge-editor-stage{overflow:visible;padding-bottom:0}
       .mobile-sheet-actions{display:flex}
-      .fridge-unit{padding:10px;border-radius:18px}
-      .fridge-unit-top{padding:0 2px 8px}
-      .fridge-unit-name{font-size:18px}
-      .fridge-unit-note{font-size:12px;line-height:1.4}
+      .fridge-unit{padding:8px;border-radius:18px}
+      .fridge-unit-top{padding:0 2px 6px}
+      .fridge-unit-name{font-size:16px}
+      .fridge-unit-note{font-size:11px;line-height:1.35}
       .fridge-door-badge{display:none}
-      .fridge-bank{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;overflow:visible;padding-bottom:0}
-      .fridge-door{min-height:0;padding:7px;border-radius:18px}
-      .fridge-door-frame{padding:8px 8px 7px;border-radius:14px}
-      .fridge-door-window{min-height:320px;padding:10px 6px 8px;border-radius:12px}
-      .fridge-handle{top:52px;height:120px}
-      .fridge-door-title{font-size:11px}
-      .fridge-door-header{margin-bottom:4px}
-      .fridge-door-shelves{gap:7px;padding-top:8px}
-      .fridge-shelf{padding-bottom:12px}
-      .fridge-shelf-track{padding:8px 3px 10px;border-radius:12px}
-      .fridge-shelf-products{gap:4px}
-      .fridge-item{min-width:0;border-radius:10px}
-      .fridge-item-thumb{padding:2px}
-      .fridge-item-thumb img{max-height:64px}
+      .fridge-bank{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;overflow:visible;padding-bottom:0}
+      .fridge-door{min-height:0;padding:6px;border-radius:16px}
+      .fridge-door-frame{padding:6px 6px 5px;border-radius:13px}
+      .fridge-door-window{min-height:0;padding:8px 5px 6px;border-radius:11px}
+      .fridge-handle{top:46px;right:0;width:8px;height:96px}
+      .fridge-door-title{font-size:10px}
+      .fridge-door-header{margin-bottom:3px}
+      .fridge-door-shelves{gap:5px;padding-top:6px}
+      .fridge-shelf{padding-bottom:9px}
+      .fridge-shelf-name{font-size:8px;margin-bottom:3px}
+      .fridge-shelf-track{padding:6px 2px 8px;border-radius:10px}
+      .fridge-shelf-track::before{left:6px;right:6px;top:5px;height:10px}
+      .fridge-shelf-products{gap:3px}
+      .fridge-shelf-beam{bottom:4px;height:6px}
+      .fridge-item{min-width:0;border-radius:8px}
+      .fridge-item-thumb{padding:1px}
+      .fridge-item-thumb img{max-height:46px;transform:translateY(2px) scale(1.08)}
+      .fridge-item.empty{min-height:32px}
+      .fridge-base{margin-top:4px;height:40px;border-radius:0 0 14px 14px}
+      .fridge-base::before{bottom:10px;width:64px;height:12px}
       .fridge-rotate-hint{display:none !important}
       .fridge-editor-mobile-tip{display:block;margin-bottom:10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.45}
       .fridge-panel-section,.fridge-panel-block{margin-bottom:12px}
@@ -1695,6 +1701,32 @@ HTML = r"""
       .mobile-sheet .fridge-panel-inline-actions--simple .fridge-panel-save{display:none}
       .mobile-sheet .fridge-panel-inline-actions:not(.fridge-panel-inline-actions--simple){display:flex;flex-direction:column}
       .mobile-sheet .fridge-panel-inline-actions:not(.fridge-panel-inline-actions--simple) > *{width:100%}
+    }
+    @media (max-width: 520px){
+      .fridge-editor-topbar{padding:12px 12px 10px}
+      .fridge-editor-title{font-size:22px}
+      .fridge-editor-canvas{padding:8px}
+      .fridge-unit{padding:7px}
+      .fridge-unit-top{padding:0 1px 5px}
+      .fridge-unit-name{font-size:15px}
+      .fridge-unit-note{font-size:10px}
+      .fridge-bank{gap:7px}
+      .fridge-door{padding:5px;border-radius:14px}
+      .fridge-door-frame{padding:5px 5px 4px;border-radius:12px}
+      .fridge-door-window{padding:7px 4px 5px;border-radius:10px}
+      .fridge-door-window::before{left:8px;right:8px;top:6px;height:16px}
+      .fridge-handle{top:42px;height:82px;width:7px}
+      .fridge-door-title{font-size:9px}
+      .fridge-door-shelves{gap:4px;padding-top:5px}
+      .fridge-shelf{padding-bottom:8px}
+      .fridge-shelf-name{font-size:7px;margin-bottom:2px}
+      .fridge-shelf-track{padding:5px 2px 7px;border-radius:9px}
+      .fridge-shelf-track::before{left:5px;right:5px;top:4px;height:8px}
+      .fridge-shelf-beam{bottom:3px;height:5px}
+      .fridge-item-thumb img{max-height:38px;transform:translateY(1px) scale(1.04)}
+      .fridge-item.empty{min-height:26px}
+      .fridge-base{height:32px}
+      .fridge-base::before{bottom:8px;width:52px;height:10px}
     }
 
 </style>
@@ -4266,6 +4298,13 @@ function openBarLayoutEditor(layoutId=null){
 
   function getShelfHeightPx(height){
     const key = String(height || 'medium').toLowerCase();
+    const isMobileViewport = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+    if(isMobileViewport){
+      if(key === 'low') return 42;
+      if(key === 'high') return 62;
+      if(key === 'wine') return 72;
+      return 52;
+    }
     if(key === 'low') return 74;
     if(key === 'high') return 112;
     if(key === 'wine') return 132;
