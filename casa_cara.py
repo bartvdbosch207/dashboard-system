@@ -84,6 +84,7 @@ DEFAULT_PERMISSIONS = {
     "manage_kitchen_tasklists": False,
     "manage_bar_tasklists": False,
     "manage_coolers": False,
+    "manage_bar_layouts": False,
 }
 
 
@@ -153,6 +154,7 @@ def permission_labels():
         "manage_kitchen_tasklists": "Keuken takenlijsten beheren",
         "manage_bar_tasklists": "Bar takenlijsten beheren",
         "manage_coolers": "Koelingen beheren",
+        "manage_bar_layouts": "Bar indelingen beheren",
     }
 
 
@@ -253,6 +255,10 @@ def has_tasklist_access(section: str, manage: bool = False):
     if section == "kitchen":
         return bool(permissions.get("manage_kitchen_tasklists" if manage else "use_kitchen_tasklists"))
     return bool(permissions.get("manage_tasklists" if manage else "use_tasklists"))
+
+
+def has_layout_manage_permission():
+    return has_casa_permission("manage_bar_layouts")
 
 
 def is_casa_admin():
@@ -778,10 +784,11 @@ HTML = r"""
       --line-strong:rgba(255,255,255,.16);
       --text:#eef4fb;
       --muted:#9fb0c7;
-      --accent:#d4b06a;
-      --accent-soft:rgba(212,176,106,.14);
+      --accent:#ff7a00;
+      --accent-soft:rgba(255,122,0,.14);
       --danger:#e06b6b;
-      --warn:#e7b45d;
+      --warn:#ff9a3d;
+      --accent-strong:#ff8f1f;
       --good:#6fca93;
       --shadow:0 20px 48px rgba(0,0,0,.32);
       --radius-xl:24px;
@@ -812,7 +819,7 @@ HTML = r"""
     .app{
       min-height:100dvh;
       background:
-        radial-gradient(circle at top left, rgba(212,176,106,.08), transparent 26%),
+        radial-gradient(circle at top left, rgba(255,122,0,.08), transparent 26%),
         radial-gradient(circle at top right, rgba(112,154,255,.06), transparent 22%),
         linear-gradient(180deg,#070b12,#0b111a 60%,#070b12);
     }
@@ -889,7 +896,7 @@ HTML = r"""
     .stat-card{
       border:1px solid var(--line);
       background:
-        radial-gradient(circle at top right, rgba(212,176,106,.08), transparent 30%),
+        radial-gradient(circle at top right, rgba(255,122,0,.08), transparent 30%),
         linear-gradient(180deg, var(--bg-card), var(--bg-card-2));
       border-radius:22px;
       padding:16px;
@@ -904,9 +911,9 @@ HTML = r"""
     .stat-icon{
       width:38px;height:38px;border-radius:12px;
       display:grid;place-items:center;
-      background:rgba(212,176,106,.12);
-      border:1px solid rgba(212,176,106,.22);
-      color:#f3dfbc;
+      background:rgba(255,122,0,.12);
+      border:1px solid rgba(255,122,0,.22);
+      color:#ffd9bf;
       margin-bottom:12px;
       font-size:16px;
     }
@@ -933,13 +940,13 @@ HTML = r"""
       min-height:36px;padding:0 12px;border-radius:12px;border:1px solid rgba(255,255,255,.10);
       background:rgba(255,255,255,.025);color:var(--text);cursor:pointer;font-size:13px;font-weight:700;
     }
-    .btn.accent{background:rgba(212,176,106,.10);border-color:rgba(212,176,106,.18);color:#f3dfbc}
+    .btn.accent{background:rgba(255,122,0,.10);border-color:rgba(255,122,0,.18);color:#ffd9bf}
     .btn.danger{background:rgba(224,107,107,.08);border-color:rgba(224,107,107,.18);color:#ffd7d7}
     .btn.good{background:rgba(111,202,147,.08);border-color:rgba(111,202,147,.18);color:#d8ffe7}
     .hero{position:relative}
     .hero-tools{position:absolute;right:16px;top:16px;display:flex;gap:8px}
     .icon-gear-btn{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.025);color:var(--text);display:grid;place-items:center;cursor:pointer;font-size:16px;box-shadow:0 8px 18px rgba(0,0,0,.16)}
-    .icon-gear-btn:hover{border-color:rgba(212,176,106,.24);background:rgba(212,176,106,.08);color:#f3dfbc}
+    .icon-gear-btn:hover{border-color:rgba(255,122,0,.24);background:rgba(255,122,0,.08);color:#ffd9bf}
     .panel-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
     .sidebar-kicker{padding:0 4px 8px;color:var(--muted);font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:800;opacity:.88}
     .nav{gap:6px}
@@ -959,9 +966,9 @@ HTML = r"""
       display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:999px;
       border:1px solid var(--line);color:var(--muted);background:rgba(255,255,255,.02);font-size:12px;white-space:nowrap;
     }
-    .badge.warn{color:#f5d7a6;background:rgba(231,180,93,.10);border-color:rgba(231,180,93,.22)}
+    .badge.warn{color:#ffd9bf;background:rgba(231,180,93,.10);border-color:rgba(231,180,93,.22)}
     .badge.good{color:#d7ffe6;background:rgba(111,202,147,.10);border-color:rgba(111,202,147,.22)}
-    .badge.accent{color:#f5dfb5;background:var(--accent-soft);border-color:rgba(212,176,106,.24)}
+    .badge.accent{color:#ffd9bf;background:var(--accent-soft);border-color:rgba(255,122,0,.24)}
 
     .list{display:grid;gap:10px}
     .list-item{
@@ -978,7 +985,7 @@ HTML = r"""
       min-height:28px;display:inline-flex;align-items:center;padding:0 10px;border-radius:999px;
       border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);font-size:12px;
     }
-    .permission-grid{display:grid;grid-template-columns:1fr;gap:10px}.permission-grid.compact{gap:12px}.permission-sections{display:grid;grid-template-columns:1fr;gap:10px}.permission-panel{border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.02)}.permission-kicker{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800}.permission-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.permission-chip{min-height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}.permission-chip:hover{border-color:rgba(212,176,106,.24);background:rgba(212,176,106,.08);color:#f3dfbc}.permission-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.05)}.permission-row:first-child{border-top:none;padding-top:0}.permission-row:last-child{padding-bottom:0}.permission-inline-label{font-size:13px;line-height:1.25;color:var(--text)}.permission-help{font-size:12px;color:var(--muted);line-height:1.4;margin-top:-2px;margin-bottom:6px}.permission-grid select{width:100%;min-height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}.permission-grid input[type='checkbox']{width:16px;height:16px;accent-color:#d4b06a;flex:0 0 auto}@media (min-width:760px){.permission-sections{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    .permission-grid{display:grid;grid-template-columns:1fr;gap:10px}.permission-grid.compact{gap:12px}.permission-sections{display:grid;grid-template-columns:1fr;gap:10px}.permission-panel{border:1px solid var(--line);border-radius:14px;padding:10px;background:rgba(255,255,255,.02)}.permission-kicker{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800}.permission-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.permission-chip{min-height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}.permission-chip:hover{border-color:rgba(255,122,0,.24);background:rgba(255,122,0,.08);color:#ffd9bf}.permission-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.05)}.permission-row:first-child{border-top:none;padding-top:0}.permission-row:last-child{padding-bottom:0}.permission-inline-label{font-size:13px;line-height:1.25;color:var(--text)}.permission-help{font-size:12px;color:var(--muted);line-height:1.4;margin-top:-2px;margin-bottom:6px}.permission-grid select{width:100%;min-height:42px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}.permission-grid input[type='checkbox']{width:16px;height:16px;accent-color:#ff7a00;flex:0 0 auto}@media (min-width:760px){.permission-sections{grid-template-columns:repeat(2,minmax(0,1fr))}}
     .perm-item{display:flex;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02)}
     .perm-item input{margin-top:1px;width:15px;height:15px}
     .perm-label{font-size:12px;color:var(--text);line-height:1.3}
@@ -992,7 +999,7 @@ HTML = r"""
     .bot-chat::-webkit-scrollbar{width:8px}.bot-chat::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:999px}
     .bot-msg{max-width:92%;padding:12px 14px;border-radius:16px;border:1px solid var(--line);font-size:14px;line-height:1.55;word-break:break-word;white-space:pre-wrap}
     .bot-msg.bot{justify-self:start;background:rgba(255,255,255,.025);color:var(--text)}
-    .bot-msg.user{justify-self:end;background:rgba(212,176,106,.12);border-color:rgba(212,176,106,.24);color:#f5dfb5}
+    .bot-msg.user{justify-self:end;background:rgba(255,122,0,.12);border-color:rgba(255,122,0,.24);color:#ffd9bf}
     .bot-msg.muted{color:var(--muted)}
     .bot-composer{padding:12px 14px 14px;border-top:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg, rgba(10,16,24,.98), rgba(12,19,30,.98));position:sticky;bottom:0}
     .bot-row{display:flex;gap:8px;align-items:center}
@@ -1001,7 +1008,7 @@ HTML = r"""
     .bot-chips.hidden{display:none}
     .bot-chip{min-height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;font-size:12px}
     .bot-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-    .bot-action{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(212,176,106,.22);background:rgba(212,176,106,.10);color:#f5dfb5;cursor:pointer}
+    .bot-action{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(255,122,0,.22);background:rgba(255,122,0,.10);color:#ffd9bf;cursor:pointer}
     .bot-status{margin-top:10px;color:var(--muted);font-size:13px;display:none}
     .bot-status.visible{display:block}
 
@@ -1033,7 +1040,7 @@ HTML = r"""
       width:100%;text-align:left;border:1px solid var(--line);background:rgba(255,255,255,.02);color:var(--text);
       border-radius:16px;min-height:46px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;
     }
-    .nav-btn.active,.sub-btn.active{border-color:rgba(212,176,106,.30);background:rgba(212,176,106,.10)}
+    .nav-btn.active,.sub-btn.active{border-color:rgba(255,122,0,.30);background:rgba(255,122,0,.10)}
     .nav-left{display:flex;align-items:center;gap:10px;min-width:0}
     .nav-icon{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;background:rgba(255,255,255,.04);color:var(--muted);font-size:13px;flex:0 0 auto}
     .nav-label{font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--text)}
@@ -1129,7 +1136,7 @@ HTML = r"""
       display:block;
       height:100%;
       border-radius:999px;
-      background:linear-gradient(90deg, rgba(212,176,106,.9), rgba(244,220,170,.95));
+      background:linear-gradient(90deg, rgba(255,122,0,.9), rgba(255,143,31,.95));
     }
     .kmeta{
       display:flex;
@@ -1220,9 +1227,9 @@ HTML = r"""
       border-radius:12px;
       display:grid;
       place-items:center;
-      background:rgba(212,176,106,.12);
-      border:1px solid rgba(212,176,106,.22);
-      color:#f3dfbc;
+      background:rgba(255,122,0,.12);
+      border:1px solid rgba(255,122,0,.22);
+      color:#ffd9bf;
       font-size:16px;
     }
     .klist-name{
@@ -1248,7 +1255,7 @@ HTML = r"""
       display:block;
       height:100%;
       border-radius:999px;
-      background:linear-gradient(90deg, rgba(212,176,106,.92), rgba(244,220,170,.96));
+      background:linear-gradient(90deg, rgba(255,122,0,.92), rgba(255,143,31,.96));
     }
     .kmeta{
       display:flex;
@@ -1276,7 +1283,7 @@ HTML = r"""
     .task-switcher-row{display:flex;gap:8px;overflow:auto;padding-bottom:2px;scrollbar-width:none}
     .task-switcher-row::-webkit-scrollbar{display:none}
     .task-switcher-btn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);border-radius:999px;min-height:34px;padding:0 12px;white-space:nowrap;cursor:pointer}
-    .task-switcher-btn.active{background:rgba(212,176,106,.12);border-color:rgba(212,176,106,.24);color:#f5dfb5}
+    .task-switcher-btn.active{background:rgba(255,122,0,.12);border-color:rgba(255,122,0,.24);color:#ffd9bf}
     .khead-top{
       display:flex;
       align-items:center;
@@ -1475,7 +1482,7 @@ HTML = r"""
       inset:0;
       z-index:-1;
       background:
-        radial-gradient(circle at top left, rgba(212,176,106,.08), transparent 26%),
+        radial-gradient(circle at top left, rgba(255,122,0,.08), transparent 26%),
         radial-gradient(circle at top right, rgba(112,154,255,.06), transparent 22%),
         linear-gradient(180deg,#070b12,#0b111a 60%,#070b12);
     }
@@ -1491,7 +1498,7 @@ HTML = r"""
     .layout-unit-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
     .layout-unit-main input,.layout-cooler-name{width:100%;min-height:40px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:0 12px;outline:none}
     .layout-unit-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-weight:800}
-    .layout-orientation-hint{display:none;padding:10px 12px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.4}
+    .layout-orientation-hint{display:none;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,122,0,.24);background:rgba(255,122,0,.10);color:#ffd9bf;font-size:12px;line-height:1.4}
     .layout-plan-wrap{overflow-x:auto;padding-bottom:6px}
     .layout-plan-wrap::-webkit-scrollbar{height:8px}.layout-plan-wrap::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:999px}
     .layout-plan{display:grid;grid-template-columns:repeat(3,minmax(240px,1fr));gap:14px;min-width:780px}
@@ -1518,7 +1525,7 @@ HTML = r"""
     .layout-slot.has-image .layout-slot-label,.layout-slot.has-image .layout-slot-name,.layout-slot.has-image .layout-slot-note{color:#fff}
     .layout-slot-name{font-size:13px;font-weight:900;color:#17212d;line-height:1.15}
     .layout-slot-note{font-size:11px;color:#5a6777;line-height:1.25}
-    .layout-slot-thumb{width:38px;height:38px;border-radius:10px;border:1px solid rgba(212,176,106,.22);background:rgba(212,176,106,.12);display:grid;place-items:center;font-size:12px;font-weight:900;color:#b37515;margin-bottom:6px;overflow:hidden}
+    .layout-slot-thumb{width:38px;height:38px;border-radius:10px;border:1px solid rgba(255,122,0,.22);background:rgba(255,122,0,.12);display:grid;place-items:center;font-size:12px;font-weight:900;color:#b37515;margin-bottom:6px;overflow:hidden}
     .layout-slot-thumb img{width:100%;height:100%;object-fit:cover;display:block}
     .layout-slot-empty{color:#6d7886;font-size:12px;font-weight:700}
     .layout-cooler-footer{display:flex;justify-content:center;gap:8px;margin-top:10px}
@@ -1615,7 +1622,7 @@ HTML = r"""
     .fridge-preview-name{display:none}
     .fridge-editor-note{padding:12px 14px;border-radius:16px;background:#121d30;border:1px solid rgba(255,255,255,.08);font-size:12px;color:#8d9bb0;line-height:1.5}
     .fridge-editor-empty{padding:20px;border-radius:18px;border:1px dashed rgba(255,255,255,.16);color:#8d9bb0;background:#111a2b}
-    .fridge-rotate-hint{display:none;margin-bottom:14px;padding:12px 14px;border-radius:16px;background:rgba(255,122,17,.10);border:1px solid rgba(255,122,17,.22);color:#ffb77d;font-size:13px;line-height:1.45}.fridge-panel-inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.fridge-inline-neutral,.fridge-inline-accent,.fridge-inline-danger{min-height:38px;padding:0 12px;border-radius:10px;font-weight:800;cursor:pointer}.fridge-inline-neutral{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text)}.fridge-inline-accent{border:1px solid rgba(212,176,106,.26);background:rgba(212,176,106,.14);color:#f5dfb5}.fridge-inline-danger{border:1px solid rgba(224,107,107,.28);background:rgba(224,107,107,.12);color:#ffd7d7}
+    .fridge-rotate-hint{display:none;margin-bottom:14px;padding:12px 14px;border-radius:16px;background:rgba(255,122,17,.10);border:1px solid rgba(255,122,17,.22);color:#ffbf8a;font-size:13px;line-height:1.45}.fridge-panel-inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.fridge-inline-neutral,.fridge-inline-accent,.fridge-inline-danger{min-height:38px;padding:0 12px;border-radius:10px;font-weight:800;cursor:pointer}.fridge-inline-neutral{border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--text)}.fridge-inline-accent{border:1px solid rgba(255,122,0,.26);background:rgba(255,122,0,.14);color:#ffd9bf}.fridge-inline-danger{border:1px solid rgba(224,107,107,.28);background:rgba(224,107,107,.12);color:#ffd7d7}
     .fridge-door-badge{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);font-size:12px;color:#c5cdd8}
     @media (max-width: 1280px){.fridge-editor-body{grid-template-columns:1fr}.fridge-editor-panel{position:relative;top:auto}.fridge-unit{min-width:980px}}
     @media (max-width: 900px){.fridge-editor-title{font-size:28px}.fridge-rotate-hint{display:block}.fridge-editor-body{grid-template-columns:1fr;padding:8px}.fridge-editor-panel{position:static}.fridge-editor-topbar{padding:14px 12px}.fridge-unit{min-width:0;width:100%;max-width:100%}.fridge-editor-shell{min-height:100dvh;overflow-x:hidden}}
@@ -1689,7 +1696,7 @@ HTML = r"""
       .fridge-base{margin-top:4px;height:40px;border-radius:0 0 14px 14px}
       .fridge-base::before{bottom:10px;width:64px;height:12px}
       .fridge-rotate-hint{display:none !important}
-      .fridge-editor-mobile-tip{display:block;margin-bottom:10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.45}
+      .fridge-editor-mobile-tip{display:block;margin-bottom:10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,122,0,.24);background:rgba(255,122,0,.10);color:#ffd9bf;font-size:12px;line-height:1.45}
       .fridge-panel-section,.fridge-panel-block{margin-bottom:12px}
       .fridge-panel-grid{grid-template-columns:1fr !important}
       .fridge-facing-grid{grid-template-columns:repeat(4,minmax(0,1fr)) !important}
@@ -1732,6 +1739,821 @@ HTML = r"""
       .fridge-base::before{bottom:8px;width:52px;height:10px}
     }
 
+
+    .checklists-shell{display:grid;gap:16px}
+    .checklists-top{display:grid;gap:12px}
+    .checklists-filter-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .check-filter{border:1px solid var(--line-strong);background:rgba(255,255,255,.03);color:var(--text);padding:7px 11px;border-radius:999px;font-weight:800;cursor:pointer;font-size:12px;line-height:1}
+    .check-filter.active{background:linear-gradient(180deg,#ff9a52,#ff7a1a);color:#1d1409;border-color:transparent;box-shadow:0 12px 24px rgba(255,122,26,.20)}
+    .check-settings-btn{margin-left:auto;width:34px;height:34px;border-radius:10px;border:1px solid var(--line-strong);background:rgba(255,255,255,.03);color:var(--text);display:grid;place-items:center;cursor:pointer;font-size:15px}
+    .check-datebar{display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid var(--line)}
+    .check-date-btn{width:30px;height:30px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.02);color:var(--text);display:grid;place-items:center;cursor:pointer;font-size:14px}
+    .check-date-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+    .check-date-label{font-size:18px;font-weight:900;letter-spacing:-.03em}
+    .check-date-sub{font-size:13px;color:var(--muted)}
+    .check-today-btn{border:none;background:none;color:#ff9a52;font-weight:900;cursor:pointer;padding:0 2px;white-space:nowrap;font-size:13px}
+    .check-progress-card{padding:20px;border-radius:24px;background:linear-gradient(180deg,rgba(18,26,40,.96),rgba(12,19,31,.94));border:1px solid var(--line);box-shadow:var(--shadow)}
+    .check-progress-top{display:flex;gap:12px;justify-content:space-between;align-items:flex-start}
+    .check-progress-title{font-size:15px;color:var(--muted);font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+    .check-progress-count{font-size:34px;font-weight:900;letter-spacing:-.05em}
+    .check-progress-meta{font-size:15px;color:var(--muted);margin-top:4px}
+    .check-progress-percent{font-size:42px;font-weight:900;letter-spacing:-.06em;color:#ff9a52;line-height:1}
+    .check-progress-bar{height:10px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:14px}
+    .check-progress-bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#ff9a52,#ff7a1a)}
+    .checklists-sections{display:grid;gap:16px}
+    .check-zone{padding:15px;border-radius:22px;background:linear-gradient(180deg,rgba(18,26,40,.96),rgba(12,19,31,.94));border:1px solid var(--line);box-shadow:var(--shadow)}
+    .check-zone-head{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+    .check-zone-title{font-size:28px;font-weight:900;letter-spacing:-.05em}
+    .check-zone-sub{font-size:14px;color:var(--muted);margin-top:4px}
+    .check-zone-right{display:flex;align-items:center;gap:12px}
+    .check-zone-count{font-size:15px;color:var(--muted);font-weight:800}
+    .check-zone-progress{height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;margin-bottom:14px}
+    .check-zone-progress span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#ffb770,#ff7a1a)}
+    .check-list-card{border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.025);overflow:hidden}
+    .check-list-card + .check-list-card{margin-top:12px}
+    .check-list-head{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:13px 14px;cursor:pointer}
+    .check-list-main{min-width:0;flex:1}
+    .check-list-name{font-size:18px;font-weight:900;letter-spacing:-.03em}
+    .check-list-meta{font-size:14px;color:var(--muted);margin-top:4px}
+    .check-list-right{display:flex;align-items:center;gap:10px}
+    .check-list-toggle{width:32px;height:32px;border-radius:999px;border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);font-size:16px}
+    .check-list-card.open .check-list-toggle{transform:rotate(180deg);color:var(--text)}
+    .check-list-body{display:none;padding:0 0 2px}
+    .check-list-card.open .check-list-body{display:block}
+    .check-task{border-top:1px solid rgba(255,255,255,.05)}
+    .check-task-head{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;cursor:pointer}
+    .check-circle{width:22px;height:22px;min-width:22px;border-radius:999px;border:2px solid rgba(255,255,255,.16);display:grid;place-items:center;font-weight:900;font-size:11px;color:#07111d;background:rgba(255,255,255,.03)}
+    .check-circle.done{background:linear-gradient(180deg,#7adfa2,#57c97f);border-color:transparent;color:#062214}
+    .check-task-title{font-size:16px;font-weight:900;letter-spacing:-.02em}
+    .check-task-title.done,.check-subtask-title.done{text-decoration:line-through;color:var(--muted)}
+    .check-task-sub{font-size:12px;color:var(--muted);margin-top:3px}
+    .check-task-right{display:flex;align-items:center;gap:8px;margin-left:auto}
+    .check-subtasks{display:grid;gap:0;padding:0 14px 10px 46px}
+    .check-subtask{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-top:1px dashed rgba(255,255,255,.06)}
+    .check-subtask:first-child{border-top:none}
+    .check-subcircle{width:18px;height:18px;min-width:18px;border-radius:999px;border:2px solid rgba(255,255,255,.18);display:grid;place-items:center;font-size:10px;font-weight:900;background:rgba(255,255,255,.03)}
+    .check-subcircle.done{background:linear-gradient(180deg,#7adfa2,#57c97f);border-color:transparent;color:#062214}
+    .check-subtask-title{font-size:14px;font-weight:800;line-height:1.3}
+    .check-subtask-meta{font-size:12px;color:var(--muted);margin-top:2px}
+    .check-empty{padding:22px;border-radius:22px;border:1px dashed rgba(255,255,255,.10);background:rgba(255,255,255,.02);color:var(--muted)}
+    .check-tip{font-size:13px;color:var(--muted);padding:0 4px}
+    .check-readonly{font-size:13px;color:#ffb770;padding:0 2px}
+    .check-manage-links{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+    .check-mini-btn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:6px 10px;border-radius:999px;font-weight:700;cursor:pointer;font-size:11px;line-height:1.05}
+    .check-mini-btn.danger{border-color:rgba(224,107,107,.28);color:#ffd8d8;background:rgba(224,107,107,.08)}
+    .check-admin-wrap{display:grid;gap:14px}
+    .check-admin-note{font-size:13px;color:var(--muted);line-height:1.5}
+    .check-admin-section{display:grid;gap:12px;padding:14px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.025)}
+    .check-admin-section-head,.check-admin-list-head,.check-admin-task-head,.check-admin-subtask{display:flex;gap:10px;justify-content:space-between;align-items:flex-start}
+    .check-admin-title{font-size:18px;font-weight:900;letter-spacing:-.03em}
+    .check-admin-sub,.check-admin-list-meta,.check-admin-task-meta,.check-admin-subtask-meta{font-size:12px;color:var(--muted);margin-top:3px}
+    .check-admin-lists,.check-admin-tasks,.check-admin-subtasks{display:grid;gap:10px}
+    .check-admin-list,.check-admin-task{display:grid;gap:10px;padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
+    .check-admin-list-name,.check-admin-task-name,.check-admin-subtask-name{font-size:14px;font-weight:800;line-height:1.25}
+    .check-admin-page{display:grid;gap:14px}
+    .check-admin-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .check-admin-editor{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:16px}
+    .check-admin-editor-title{font-size:16px;font-weight:900;margin-bottom:6px}
+    .check-admin-editor-sub{font-size:13px;color:var(--muted);margin-bottom:12px}
+    .check-admin-layout{display:grid;gap:14px}
+    .check-admin-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .check-admin-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+    .check-admin-empty{font-size:12px;color:var(--muted);padding:8px 0 2px}
+    .check-zone-pill{padding:6px 10px;border-radius:999px;background:rgba(255,154,82,.14);color:#ffb770;font-size:13px;font-weight:800}
+
+    @media (max-width: 720px){
+      .checklists-shell{gap:12px}
+      .checklists-top{gap:10px}
+      .checklists-filter-row{gap:7px}
+      .check-filter{padding:5px 9px;font-size:10px}
+      .check-settings-btn{width:30px;height:30px;font-size:13px;border-radius:9px}
+      .check-datebar{padding:8px 10px;gap:7px;border-radius:14px}
+      .check-date-btn{width:26px;height:26px;font-size:12px;border-radius:8px}
+      .check-date-label{font-size:16px}
+      .check-date-sub{font-size:11px}
+      .check-today-btn{font-size:11px}
+      .check-progress-card{padding:14px 14px 13px;border-radius:18px}
+      .check-progress-count{font-size:24px}
+      .check-progress-percent{font-size:32px}
+      .check-zone{padding:12px 11px;border-radius:16px}
+      .check-zone-title{font-size:20px}
+      .check-list-head{padding:11px 11px}
+      .check-list-name{font-size:15px}
+      .check-task-head{padding:13px 13px;gap:11px}
+      .check-circle{width:30px;height:30px;min-width:30px;font-size:13px}
+      .check-task-title{font-size:16px}
+      .check-task-sub{font-size:12px}
+      .check-subtasks{padding:0 13px 11px 54px}
+      .check-subcircle{width:18px;height:18px;min-width:18px;font-size:10px}
+      .check-subtask-title{font-size:14px}
+      .check-admin-editor{padding:14px}
+      .check-mini-btn{padding:6px 10px;font-size:11px}
+    }
+
+
+
+    /* === Global Casa Cara makeover: checklist theme across the app === */
+    :root{
+      --bg:#070b12;
+      --bg-elev:#0d1420;
+      --bg-card:#111a28;
+      --bg-card-2:#18263a;
+      --bg-soft:rgba(255,255,255,.026);
+      --line:rgba(236,223,197,.09);
+      --line-strong:rgba(236,223,197,.18);
+      --text:#f4f7fb;
+      --muted:#a9b8cb;
+      --accent:#d7a85a;
+      --accent-2:#f0c980;
+      --accent-soft:rgba(215,168,90,.14);
+      --accent-glow:rgba(215,168,90,.24);
+      --danger:#ee8d8d;
+      --warn:#ff9a33;
+      --good:#81d2a1;
+      --shadow:0 24px 56px rgba(0,0,0,.34);
+      --shadow-soft:0 14px 34px rgba(0,0,0,.24);
+      --radius-xl:26px;
+      --radius-lg:19px;
+      --radius-md:15px;
+      --radius-sm:12px;
+    }
+
+    body, .app{
+      background:
+        radial-gradient(circle at top left, rgba(215,168,90,.10), transparent 24%),
+        radial-gradient(circle at top right, rgba(240,201,128,.05), transparent 18%),
+        linear-gradient(180deg,#070b12 0%,#0b121c 52%,#070b12 100%) !important;
+    }
+
+    .topbar,
+    .drawer,
+    .sheet-card,
+    .modal-card,
+    .panel,
+    .hero,
+    .overview-card,
+    .stat-card,
+    .list-item,
+    .mini-row,
+    .permission-panel,
+    .admin-shell,
+    .admin-overview-card,
+    .admin-detail-card,
+    .admin-task-card,
+    .admin-subtask-card,
+    .editor-shell,
+    .editor-card,
+    .checklist-card,
+    .tasklist-card,
+    .recipe-card,
+    .cooler-card,
+    .home-card,
+    .card{
+      border-color:var(--line) !important;
+      box-shadow:var(--shadow-soft);
+    }
+
+    .topbar{
+      background:linear-gradient(180deg, rgba(10,15,23,.96), rgba(9,15,23,.88)) !important;
+      border-bottom:1px solid var(--line);
+      box-shadow:0 10px 26px rgba(0,0,0,.18);
+    }
+    .title{font-size:20px;font-weight:900;letter-spacing:-.03em}
+    .eyebrow{color:#ccb288;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+
+    .drawer{
+      background:
+        radial-gradient(circle at top left, rgba(215,168,90,.09), transparent 26%),
+        linear-gradient(180deg, #0b121c, #091019) !important;
+      border-right:1px solid var(--line);
+      box-shadow:24px 0 48px rgba(0,0,0,.28);
+    }
+
+    .hero,
+    .panel,
+    .overview-card,
+    .stat-card,
+    .list-item,
+    .sheet-card,
+    .modal-card,
+    .permission-panel,
+    .mini-row,
+    .admin-overview-card,
+    .admin-detail-card,
+    .admin-task-card,
+    .admin-subtask-card,
+    .card{
+      background:
+        radial-gradient(circle at top right, rgba(215,168,90,.08), transparent 34%),
+        linear-gradient(180deg, rgba(20,29,42,.98), rgba(12,19,30,.98)) !important;
+      backdrop-filter:blur(12px);
+    }
+
+    .hero,
+    .panel,
+    .overview-card,
+    .stat-card,
+    .sheet-card,
+    .modal-card,
+    .checklist-card,
+    .tasklist-card,
+    .card{
+      border-radius:22px !important;
+    }
+
+    .section-title,
+    .panel-title,
+    .overview-title,
+    .item-title,
+    .hero h1,
+    .welcome-banner h1,
+    .admin-title,
+    .drawer-brand .big{
+      color:var(--text);
+      letter-spacing:-.03em;
+    }
+
+    .section-kicker,
+    .overview-kicker,
+    .stat-label,
+    .sidebar-kicker,
+    .permission-kicker{
+      color:#c9ab79 !important;
+    }
+
+    .menu-btn,.icon-btn,.icon-gear-btn,
+    .btn,
+    .nav-btn,.sub-btn,.logout-btn,.home-btn,
+    .chip,
+    .admin-chip,
+    .filter-chip,
+    .day-chip,
+    .section-chip,
+    .meta-chip,
+    .badge,
+    button{
+      transition:transform .14s ease, box-shadow .14s ease, border-color .14s ease, background .14s ease, color .14s ease;
+    }
+    .menu-btn,.icon-btn,.icon-gear-btn{
+      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02)) !important;
+      border:1px solid var(--line) !important;
+      box-shadow:0 10px 20px rgba(0,0,0,.16);
+    }
+
+    .btn,
+    .nav-btn,.sub-btn,.logout-btn,.home-btn,
+    .chip,
+    .admin-chip,
+    .filter-chip,
+    .day-chip,
+    .section-chip,
+    .meta-chip{
+      background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02)) !important;
+      border:1px solid var(--line) !important;
+      color:var(--text) !important;
+      box-shadow:0 6px 16px rgba(0,0,0,.12);
+    }
+    .btn:hover,
+    .nav-btn:hover,.sub-btn:hover,.logout-btn:hover,.home-btn:hover,
+    .chip:hover,
+    .admin-chip:hover,
+    .filter-chip:hover,
+    .day-chip:hover,
+    .section-chip:hover,
+    .meta-chip:hover,
+    .menu-btn:hover,.icon-btn:hover,.icon-gear-btn:hover{
+      border-color:rgba(215,168,90,.32) !important;
+      background:linear-gradient(180deg, rgba(215,168,90,.16), rgba(215,168,90,.08)) !important;
+      color:#ffe7be !important;
+      box-shadow:0 0 0 1px rgba(215,168,90,.08), 0 14px 24px rgba(0,0,0,.18);
+    }
+    .btn:active,
+    .nav-btn:active,.sub-btn:active,.logout-btn:active,.home-btn:active,
+    .chip:active,
+    .admin-chip:active,
+    .filter-chip:active,
+    .day-chip:active,
+    .section-chip:active,
+    .menu-btn:active,.icon-btn:active,.icon-gear-btn:active{
+      transform:scale(.98);
+    }
+    .btn.accent,.badge.accent,.chip.active,.admin-chip.active,.filter-chip.active,.day-chip.active,.section-chip.active,
+    .nav-btn.active,.sub-btn.active,.home-btn.active,
+    .btn.primary,.btn.good-accent{
+      background:linear-gradient(180deg, var(--accent-2), var(--accent)) !important;
+      color:#251707 !important;
+      border-color:rgba(255,219,164,.32) !important;
+      box-shadow:0 10px 22px rgba(215,168,90,.24);
+    }
+    .btn.danger{background:linear-gradient(180deg, rgba(238,141,141,.16), rgba(238,141,141,.08)) !important;border-color:rgba(238,141,141,.24) !important}
+    .btn.good,.badge.good{background:linear-gradient(180deg, rgba(129,210,161,.16), rgba(129,210,161,.08)) !important;border-color:rgba(129,210,161,.22) !important;color:#e2ffec !important}
+    .badge.warn{background:linear-gradient(180deg, rgba(255,122,0,.16), rgba(255,122,0,.08)) !important;border-color:rgba(255,122,0,.24) !important}
+
+    input,select,textarea,
+    .field input,.field select,.field textarea,
+    .search-input,
+    .admin-input,
+    .admin-select,
+    .sheet-card input,.sheet-card select,.sheet-card textarea,
+    .modal-card input,.modal-card select,.modal-card textarea{
+      width:100%;
+      border-radius:14px !important;
+      border:1px solid var(--line) !important;
+      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.025)) !important;
+      color:var(--text) !important;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    input:focus,select:focus,textarea:focus,
+    .field input:focus,.field select:focus,.field textarea:focus,
+    .sheet-card input:focus,.sheet-card select:focus,.sheet-card textarea:focus,
+    .modal-card input:focus,.modal-card select:focus,.modal-card textarea:focus{
+      outline:none;
+      border-color:rgba(215,168,90,.46) !important;
+      box-shadow:0 0 0 4px rgba(215,168,90,.10), inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    input::placeholder,textarea::placeholder{color:#8ea1b8}
+
+    .badge,.meta-chip{
+      background:rgba(255,255,255,.03) !important;
+      border-color:var(--line) !important;
+      color:var(--muted) !important;
+    }
+
+    .nav-btn,.sub-btn,.logout-btn,.home-btn{
+      min-height:44px !important;
+      border-radius:15px !important;
+    }
+    .nav-label{font-weight:800;letter-spacing:-.01em}
+
+    .list-item,
+    .mini-row,
+    .perm-item,
+    .task-row,
+    .admin-list-row,
+    .checklist-row,
+    .subtask-row{
+      border-color:var(--line) !important;
+      background:rgba(255,255,255,.024) !important;
+      border-radius:15px !important;
+    }
+
+    .sheet,
+    .modal,
+    .modal-backdrop{
+      background:rgba(2,4,8,.62) !important;
+      backdrop-filter:blur(8px);
+    }
+
+    .progress,
+    .progress-track,
+    .bar,
+    .mini-progress{
+      background:rgba(255,255,255,.06) !important;
+      border-radius:999px;
+      overflow:hidden;
+    }
+    .progress > span,
+    .progress-fill,
+    .bar > span,
+    .mini-progress > span{
+      background:linear-gradient(90deg, var(--accent), var(--accent-2)) !important;
+      box-shadow:0 0 18px rgba(215,168,90,.20);
+    }
+
+    input[type='checkbox'], input[type='radio']{accent-color:var(--accent)}
+
+    .item-sub,.stat-sub,.overview-sub,.perm-label,.meta-chip,.badge,.item-meta,.welcome-banner p,p,.muted,.help,.permission-help{color:var(--muted)}
+
+    .admin-header,
+    .panel-head,
+    .section-head,
+    .overview-top,
+    .item-top{
+      gap:12px;
+    }
+
+    .topbar,.panel,.hero,.overview-card,.stat-card,.sheet-card,.modal-card,.list-item{position:relative;overflow:hidden}
+    .topbar::after,.panel::after,.hero::after,.overview-card::after,.stat-card::after,.sheet-card::after,.modal-card::after,.list-item::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      border-radius:inherit;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+    }
+
+    @media (max-width:640px){
+      .topbar{padding-left:14px;padding-right:14px}
+      .layout{padding-left:12px;padding-right:12px}
+      .panel,.hero,.overview-card,.stat-card,.sheet-card,.modal-card,.list-item{border-radius:18px !important}
+      .btn,.nav-btn,.sub-btn,.logout-btn,.home-btn{min-height:40px !important}
+    }
+
+
+    .btn.primary,.btn.good,.btn.accent,.primary-btn,.save-btn,.checklists-filter-btn.active,.day-chip.active,.chip.active,.check-btn.checked,.task-check.checked,.subtask-check.checked,.progress-fill,.progress-bar-fill{
+      background:linear-gradient(180deg,#ff8f1f,#ff7a00) !important;
+      border-color:rgba(255,122,0,.28) !important;
+      color:#1a0f00 !important;
+      box-shadow:0 10px 24px rgba(255,122,0,.18);
+    }
+    .btn.accent,.icon-gear-btn:hover,.sidebar-link.active,.nav-item.active,.tab-btn.active,.seg-btn.active{
+      background:rgba(255,122,0,.12) !important;
+      border-color:rgba(255,122,0,.24) !important;
+      color:#ffd9bf !important;
+    }
+    input[type='checkbox'], .permission-grid input[type='checkbox']{accent-color:#ff7a00 !important;}
+
+  
+    /* === TRUE ORANGE GLOBAL OVERRIDE === */
+    :root{
+      --accent:#ff7a00 !important;
+      --accent-strong:#ff8f1f !important;
+      --accent-soft:rgba(255,122,0,.16) !important;
+      --accent-glow:rgba(255,122,0,.34) !important;
+      --warn:#ff7a00 !important;
+    }
+    .topbar,
+    .drawer,
+    .sheet-card,
+    .modal-card,
+    .card,
+    .section-card,
+    .stat-card,
+    .panel,
+    .overview-card,
+    .dashboard-card{
+      box-shadow:0 18px 40px rgba(0,0,0,.28);
+    }
+    .btn-primary,
+    .btn.primary,
+    button.primary,
+    .cta-btn,
+    .save-btn.primary,
+    .quick-action.primary{
+      background:linear-gradient(180deg,#ff9a33,#ff7a00) !important;
+      border-color:rgba(255,122,0,.34) !important;
+      color:#1a0f00 !important;
+      box-shadow:0 10px 24px rgba(255,122,0,.22) !important;
+    }
+    .btn.accent,
+    .icon-gear-btn:hover,
+    .badge.accent,
+    .bot-msg.user,
+    .bot-action,
+    .nav-btn.active,
+    .sub-btn.active,
+    .task-switcher-btn.active,
+    .layout-orientation-hint,
+    .fridge-editor-mobile-tip,
+    .layout-slot-thumb,
+    .drawer-link.active,
+    .drawer-link:hover,
+    .page-tab.active,
+    .filter-chip.active,
+    .selector-chip.active{
+      background:rgba(255,122,0,.12) !important;
+      border-color:rgba(255,122,0,.28) !important;
+      color:#ffd9bf !important;
+    }
+    .badge.warn,
+    .status-warn,
+    .summary-badge.warn,
+    .metric-badge.warn{
+      background:rgba(255,122,0,.12) !important;
+      border-color:rgba(255,122,0,.28) !important;
+      color:#ffd9bf !important;
+    }
+    .badge.good{
+      background:rgba(111,202,147,.12) !important;
+      border-color:rgba(111,202,147,.24) !important;
+    }
+    .active-badge,
+    .is-active,
+    .current-badge,
+    [data-state="active"] .badge,
+    .layout-item.active .badge,
+    .layout-active-badge{
+      background:rgba(255,122,0,.12) !important;
+      border-color:rgba(255,122,0,.28) !important;
+      color:#ffd9bf !important;
+    }
+    .money-card .amount,
+    .tips-card .amount,
+    .tip-amount,
+    .amount-badge,
+    .amount-pill,
+    .metric-value.accent,
+    .value-accent{
+      color:#ff9a33 !important;
+    }
+    .progress-fill,
+    .progress-bar-fill,
+    .progress > span,
+    .mini-progress-fill,
+    .checklists-progress-fill{
+      background:linear-gradient(90deg,#ff9a33,#ff7a00) !important;
+    }
+    .chip.active,
+    .seg-btn.active,
+    .toggle-btn.active,
+    .day-chip.active,
+    .section-chip.active{
+      background:linear-gradient(180deg,#ff9a33,#ff7a00) !important;
+      border-color:rgba(255,122,0,.34) !important;
+      color:#1a0f00 !important;
+      box-shadow:0 8px 18px rgba(255,122,0,.18) !important;
+    }
+    input:focus,
+    select:focus,
+    textarea:focus,
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus{
+      border-color:rgba(255,122,0,.34) !important;
+      box-shadow:0 0 0 4px rgba(255,122,0,.12) !important;
+    }
+    .checkbox.checked,
+    .check.checked,
+    .task-check.checked,
+    .subtask-check.checked{
+      background:linear-gradient(180deg,#ff9a33,#ff7a00) !important;
+      border-color:rgba(255,122,0,.34) !important;
+      color:#1a0f00 !important;
+      box-shadow:0 6px 14px rgba(255,122,0,.18) !important;
+    }
+    .sidebar .badge,
+    .drawer .badge,
+    .sidebar .pill,
+    .drawer .pill{
+      background:rgba(255,122,0,.12) !important;
+      border-color:rgba(255,122,0,.26) !important;
+      color:#ffd9bf !important;
+    }
+    .summary-card .value,
+    .stats-card .value,
+    .highlight-number,
+    .accent-text,
+    .text-accent{
+      color:#ff9a33 !important;
+    }
+    .soft-accent,
+    .accent-panel,
+    .highlight-panel{
+      background:rgba(255,122,0,.10) !important;
+      border-color:rgba(255,122,0,.24) !important;
+    }
+    .nav-btn.active svg,
+    .sub-btn.active svg,
+    .drawer-link.active svg,
+    .icon-btn.active svg{
+      color:#ff9a33 !important;
+      stroke:#ff9a33 !important;
+    }
+
+
+
+    /* Final typography cleanup: remove leftover gold/beige text so orange stays for actions only */
+    .section-title,
+    .nav-label,
+    .sidebar-title,
+    .card-title,
+    .panel-title,
+    .module-title,
+    .dashboard-title,
+    .overview-title,
+    .topbar .eyebrow,
+    .topbar-text .eyebrow,
+    .drawer-section-title,
+    .drawer-title,
+    .page-title,
+    .metric-title,
+    .summary-title,
+    .group-title,
+    .list-title,
+    .tile-title,
+    .stat-title,
+    .title-accent,
+    .accent-heading,
+    h1,h2,h3,h4,h5,h6,
+    strong.title,
+    .page-tab,
+    .drawer-link,
+    .sidebar-link,
+    .nav-btn,
+    .sub-btn{
+      color:var(--text) !important;
+    }
+    .eyebrow,
+    .muted,
+    .subtle,
+    .helper,
+    .hint,
+    .meta,
+    .small-text,
+    .subtitle,
+    .card-subtitle,
+    .section-subtitle,
+    .metric-label,
+    .summary-label,
+    .drawer-subtitle,
+    .soft-text{
+      color:var(--muted) !important;
+    }
+    .drawer-link.active,
+    .sidebar-link.active,
+    .nav-btn.active,
+    .sub-btn.active,
+    .page-tab.active{
+      color:#ff9a33 !important;
+    }
+    .drawer-link.active .label,
+    .sidebar-link.active .label,
+    .nav-btn.active .label,
+    .sub-btn.active .label,
+    .page-tab.active .label,
+    .page-tab.active span,
+    .drawer-link.active span,
+    .sidebar-link.active span{
+      color:#ff9a33 !important;
+    }
+    .badge.warn,
+    .status-warn,
+    .summary-badge.warn,
+    .metric-badge.warn,
+    .active-badge,
+    .is-active,
+    .current-badge,
+    [data-state="active"] .badge,
+    .layout-item.active .badge,
+    .layout-active-badge,
+    .money-card .amount,
+    .tips-card .amount,
+    .tip-amount,
+    .amount-badge,
+    .amount-pill,
+    .metric-value.accent,
+    .value-accent,
+    .summary-card .value,
+    .stats-card .value,
+    .highlight-number,
+    .accent-text,
+    .text-accent,
+    .sidebar .badge,
+    .drawer .badge,
+    .sidebar .pill,
+    .drawer .pill{
+      color:#ff9a33 !important;
+    }
+
+
+    /* === FINAL ORANGE UNIFICATION PATCH === */
+    :root{
+      --line:rgba(255,255,255,.08) !important;
+      --line-strong:rgba(255,255,255,.16) !important;
+      --text:#eef4fb !important;
+      --muted:#9fb0c7 !important;
+      --accent:#ff7a00 !important;
+      --accent-2:#ff8f1f !important;
+      --accent-soft:rgba(255,122,0,.14) !important;
+      --accent-glow:rgba(255,122,0,.24) !important;
+      --warn:#ff9a33 !important;
+    }
+
+    body, .app{
+      background:
+        radial-gradient(circle at top left, rgba(255,122,0,.10), transparent 24%),
+        radial-gradient(circle at top right, rgba(255,143,31,.05), transparent 18%),
+        linear-gradient(180deg,#070b12 0%,#0b121c 52%,#070b12 100%) !important;
+    }
+
+    .drawer{
+      background:
+        radial-gradient(circle at top left, rgba(255,122,0,.09), transparent 26%),
+        linear-gradient(180deg,#0a111a,#091019) !important;
+    }
+
+    .eyebrow,
+    .sidebar-kicker,
+    .sub-section-label,
+    .section-kicker,
+    .overview-kicker,
+    .stat-label,
+    .metric-label,
+    .summary-label,
+    .drawer-brand .small,
+    .task-switcher-label{
+      color:var(--muted) !important;
+    }
+
+    .section-title,
+    .panel-title,
+    .overview-title,
+    .nav-label,
+    .drawer-brand .big,
+    .title,
+    .item-title,
+    .task-group-title,
+    .klist-name,
+    .ktask-title,
+    .ksub-title,
+    .mini-row strong{
+      color:var(--text) !important;
+    }
+
+    .home-btn,
+    .nav-btn,
+    .sub-btn,
+    .home-btn *,
+    .nav-btn *,
+    .sub-btn *,
+    .overview-actions .btn,
+    .item-actions .btn{
+      color:var(--text) !important;
+    }
+
+    .nav-btn.active,
+    .sub-btn.active,
+    .task-switcher-btn.active,
+    .selector-chip.active,
+    .chip.active,
+    .seg-btn.active,
+    .toggle-btn.active,
+    .day-chip.active,
+    .section-chip.active{
+      background:linear-gradient(180deg,#ff9a33,#ff7a00) !important;
+      border-color:rgba(255,122,0,.34) !important;
+      color:#1a0f00 !important;
+      box-shadow:0 8px 18px rgba(255,122,0,.18) !important;
+    }
+    .nav-btn.active *,
+    .sub-btn.active *,
+    .task-switcher-btn.active *{
+      color:#1a0f00 !important;
+    }
+    .nav-btn.active .nav-icon,
+    .sub-btn.active .nav-icon{
+      background:rgba(26,15,0,.12) !important;
+      color:#1a0f00 !important;
+    }
+
+    .btn.accent,
+    button.accent,
+    .bot-action,
+    .permission-chip:hover{
+      background:linear-gradient(180deg,#ff9a33,#ff7a00) !important;
+      border-color:rgba(255,122,0,.34) !important;
+      color:#1a0f00 !important;
+    }
+
+    .badge.warn,
+    .badge.accent,
+    .status-warn,
+    .summary-badge.warn,
+    .metric-badge.warn,
+    .active-badge,
+    .is-active,
+    .current-badge,
+    [data-state="active"] .badge,
+    .layout-item.active .badge,
+    .layout-active-badge,
+    .amount-badge,
+    .amount-pill,
+    .pill,
+    .fridge-inline-accent{
+      background:rgba(255,122,0,.12) !important;
+      border-color:rgba(255,122,0,.28) !important;
+      color:#ffb36b !important;
+    }
+
+    .money-card .amount,
+    .tips-card .amount,
+    .tip-amount,
+    .metric-value.accent,
+    .value-accent,
+    .fooienpot-amount,
+    .tip-card-amount{
+      color:#ff9a33 !important;
+    }
+
+    .progress-fill,
+    .progress-bar-fill,
+    .progress > span,
+    .mini-progress-fill,
+    .checklists-progress-fill,
+    .kprogress > span{
+      background:linear-gradient(90deg,#ff9a33,#ff7a00) !important;
+    }
+
+    [style*="#d7a85a"],
+    [style*="#f0c980"],
+    [style*="#ccb288"],
+    [style*="color: gold"],
+    [style*="color:#d4b06a"],
+    [style*="color:#c9a35d"],
+    [style*="color:#e0b96a"]{
+      color:var(--text) !important;
+    }
+
 </style>
 </head>
 <body>
@@ -1747,6 +2569,10 @@ HTML = r"""
     <nav class="nav">
       <button class="nav-btn active" data-page="dashboard" onclick="openPage('dashboard'); closeDrawer();">
         <span class="nav-left"><span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span></span>
+      </button>
+
+      <button class="nav-btn" data-page="checklists" onclick="openPage('checklists'); closeDrawer();">
+        <span class="nav-left"><span class="nav-icon">✓</span><span class="nav-label">Checklists</span></span>
       </button>
 
       <button class="nav-btn" id="toggle-algemeen" onclick="toggleGroup('algemeen')">
@@ -1767,7 +2593,6 @@ HTML = r"""
       </button>
       <div class="sub-list" id="group-keuken">
         <button class="sub-btn" data-page="keuken-overzicht" onclick="openPage('keuken-overzicht'); closeDrawer();">Overzicht</button>
-        <button class="sub-btn" data-page="keuken-takenlijsten" onclick="openPage('keuken-takenlijsten'); closeDrawer();">Takenlijsten</button>
         <button class="sub-btn" data-page="keuken-recepten" onclick="openPage('keuken-recepten'); closeDrawer();">Recepten</button>
       </div>
 
@@ -1778,7 +2603,6 @@ HTML = r"""
       <div class="sub-list" id="group-bar">
         <div class="sub-section-label">Werkvloer</div>
         <button class="sub-btn" data-page="bar-overzicht" onclick="openPage('bar-overzicht'); closeDrawer();">Overzicht</button>
-        <button class="sub-btn" data-page="bar-takenlijsten" onclick="openPage('bar-takenlijsten'); closeDrawer();">Takenlijsten</button>
         <button class="sub-btn" data-page="bar-indeling" onclick="openPage('bar-indeling'); closeDrawer();">Indeling</button>
 
         <div class="sub-section-label">Voorraad</div>
@@ -1876,6 +2700,43 @@ HTML = r"""
         </div>
         <div class="stats-grid" id="dashboardQuickGrid"></div>
       </div>
+
+    </section>
+
+    <section class="page" id="page-checklists">
+      <div class="hero">
+        <h1>☑ Checklists</h1>
+        <p>Één rustige checklistpagina voor de werkvloer. Kies een dag, filter op wat nog open staat en vink direct af.</p>
+      </div>
+      <div class="checklists-shell">
+        <div class="checklists-top">
+          <div class="checklists-filter-row">
+            <button class="check-filter active" id="checkFilter-all" onclick="setChecklistFilter('all')">Alle</button>
+            <button class="check-filter" id="checkFilter-todo" onclick="setChecklistFilter('todo')">Te doen</button>
+            <button class="check-filter" id="checkFilter-done" onclick="setChecklistFilter('done')">Klaar</button>
+            <button class="check-settings-btn admin-only-action" onclick="openChecklistManagerPage()" title="Checklist instellingen">⚙️</button>
+          </div>
+          <div class="check-datebar">
+            <button class="check-date-btn" onclick="shiftChecklistDate(-1)" aria-label="Vorige dag">‹</button>
+            <div class="check-date-main">
+              <div class="check-date-label" id="checklistDateLabel">Vandaag</div>
+              <div class="check-date-sub" id="checklistDateSub">Kies welke dag je wilt zien</div>
+            </div>
+            <button class="check-today-btn" onclick="goChecklistToday()">Vandaag</button>
+            <button class="check-date-btn" onclick="shiftChecklistDate(1)" aria-label="Volgende dag">›</button>
+          </div>
+          <div class="check-progress-card" id="checklistProgressCard"></div>
+        </div>
+        <div class="checklists-sections" id="checklistSections"></div>
+      </div>
+    </section>
+
+    <section class="page admin-only-page" id="page-checklists-beheer">
+      <div class="hero">
+        <h1>⚙️ Checklist beheer</h1>
+        <p>Beheer hier centraal je checklists, dagen, taken en subtaken zonder popup-gedoe.</p>
+      </div>
+      <div class="check-admin-page" id="checklistManagerPage"></div>
     </section>
 
     <section class="page" id="page-algemeen-dashboard">
@@ -2048,7 +2909,7 @@ HTML = r"""
 
     <section class="page" id="page-bar-indeling">
       <div class="hero">
-        <div class="hero-tools"><button class="icon-gear-btn admin-only-action" onclick="openBarLayoutModal()" title="Nieuwe indeling">⚙️</button></div>
+        <div class="hero-tools"><button class="icon-gear-btn layout-manage-action" onclick="openBarLayoutModal()" title="Nieuwe indeling">⚙️</button></div>
         <h1>🧊 Bar · Indeling</h1>
         <p>Werk hier per event met duidelijke presets. Kies een indeling, bekijk hem op de vloer en open de editor alleen als je echt iets wilt aanpassen.</p>
       </div>
@@ -2087,7 +2948,7 @@ HTML = r"""
               </div>
               <button class="btn" onclick="openBarLayoutView()">Bekijken</button>
             </div>
-            <div class="mini-row admin-only-action">
+            <div class="mini-row layout-manage-action">
               <div>
                 <strong>Bewerkmodus</strong>
                 <span>Pas units, koelkastjes, planken en producten aan in de editor</span>
@@ -2109,7 +2970,7 @@ HTML = r"""
           </div>
           <div class="fridge-editor-actions">
             <button class="fridge-editor-btn" onclick="openPage('bar-indeling')">Terug</button>
-            <button class="fridge-editor-btn primary" onclick="openBarLayoutEditor()">Bewerken</button>
+            <button class="fridge-editor-btn primary layout-manage-action" onclick="openBarLayoutEditor()">Bewerken</button>
           </div>
         </div>
         <div class="fridge-editor-body single-canvas">
@@ -2122,7 +2983,7 @@ HTML = r"""
               </div>
               <div class="actions">
                 <button class="btn" onclick="openPage('bar-indeling')">Overzicht</button>
-                <button class="btn accent" onclick="openBarLayoutEditor()">Open editor</button>
+                <button class="btn accent layout-manage-action" onclick="openBarLayoutEditor()">Open editor</button>
               </div>
             </div>
             <div class="fridge-editor-stage layout-readonly-stage" id="barLayoutReadonlyStage"></div>
@@ -2141,7 +3002,7 @@ HTML = r"""
           </div>
           <div class="fridge-editor-actions">
             <button class="fridge-editor-btn" onclick="openPage('bar-indeling')">Terug</button>
-            <button class="fridge-editor-btn primary admin-only-action" onclick="saveCurrentBarLayoutStructure()">Opslaan</button>
+            <button class="fridge-editor-btn primary layout-manage-action" onclick="saveCurrentBarLayoutStructure()">Opslaan</button>
           </div>
         </div>
         <div class="fridge-editor-body">
@@ -2155,7 +3016,7 @@ HTML = r"""
               </div>
               <div class="actions">
                 <button class="btn" onclick="openPage('bar-indeling')">Overzicht indelingen</button>
-                <button class="btn danger admin-only-action" onclick="requestRemoveBarLayoutUnit()">Unit verwijderen</button>
+                <button class="btn danger layout-manage-action" onclick="requestRemoveBarLayoutUnit()">Unit verwijderen</button>
               </div>
             </div>
             <div class="fridge-editor-stage" id="barLayoutFridgeStage"></div>
@@ -2177,7 +3038,7 @@ HTML = r"""
             <div id="barLayoutShelfMobileBody"></div>
             <div class="mobile-sheet-actions">
               <button class="fridge-editor-btn" type="button" onclick="closeBarLayoutMobileSheet()">Sluiten</button>
-              <button class="fridge-editor-btn primary admin-only-action" id="barLayoutMobileSaveBtn" type="button" onclick="saveCurrentBarLayoutMobileSelection()">Plank opslaan</button>
+              <button class="fridge-editor-btn primary layout-manage-action" id="barLayoutMobileSaveBtn" type="button" onclick="saveCurrentBarLayoutMobileSelection()">Plank opslaan</button>
             </div>
           </div>
         </div>
@@ -2352,12 +3213,16 @@ HTML = r"""
   let currentBarTaskDay = 'altijd';
   let currentBarLayoutId = null;
   let currentBarLayoutReadonlyUnitIndex = 0;
+  let currentChecklistFilter = 'all';
+  let currentChecklistDateISO = null;
+  let currentChecklistAdminEditor = { mode:'overview', section:'', listId:'', taskId:'', subtaskId:'' };
   const groupState = { algemeen:false, keuken:false, bar:false };
   window.currentKoelingId = null;
   window.currentKitchenListId = null;
   window.currentBarListId = null;
   currentKitchenTaskDay = getAmsterdamDayLabel();
   currentBarTaskDay = getAmsterdamDayLabel();
+  currentChecklistDateISO = getTodayString();
   window.currentBarLayoutId = null;
   window.currentBarLayoutReadonlyUnitIndex = 0;
 
@@ -2381,13 +3246,16 @@ HTML = r"""
   function isAdmin(){ return currentRole() === 'admin'; }
   function adminOnly(html){ return isAdmin() ? html : ''; }
   function hasPermission(key){ return isAdmin() ? true : !!(appData?.auth?.permissions || {})[key]; }
-  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','keuken-takenlijst-beheer','bar-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
+  function canManageBarLayouts(){ return hasPermission('manage_bar_layouts'); }
+  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','checklists-beheer','keuken-takenlijst-beheer','bar-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
   function pageAllowed(page){
     if (isAdmin()) return true;
     const map = {
       'dashboard': true,
       'algemeen-dashboard': hasPermission('access_general'),
       'diensten': hasPermission('access_general') && hasPermission('manage_diensten'),
+      'checklists': hasPermission('use_bar_tasklists') || hasPermission('use_kitchen_tasklists'),
+      'checklists-beheer': (hasPermission('access_bar') && hasPermission('manage_bar_tasklists')) || (hasPermission('access_kitchen') && hasPermission('manage_kitchen_tasklists')),
       'dienstsoorten': hasPermission('manage_dienst_types'),
       'fooienpot': hasPermission('access_general') && hasPermission('manage_tips'),
       'gebruikers': hasPermission('manage_users'),
@@ -2403,7 +3271,7 @@ HTML = r"""
       'bar-takenlijst-beheer': hasPermission('access_bar') && hasPermission('manage_bar_tasklists'),
       'bar-indeling': hasPermission('access_bar'),
       'bar-indeling-view': hasPermission('access_bar'),
-      'bar-indeling-editor': hasPermission('access_bar'),
+      'bar-indeling-editor': hasPermission('access_bar') && canManageBarLayouts(),
       'bar-productsoorten': hasPermission('manage_types'),
       'bar-locaties': hasPermission('manage_locations'),
       'bar-oplijst': hasPermission('access_bar') && hasPermission('view_oplijst'),
@@ -2459,6 +3327,7 @@ HTML = r"""
 
   function applyPermissions(){
     document.querySelectorAll('.admin-only, .admin-only-page, .admin-only-action').forEach(el => { el.style.display = isAdmin() ? '' : 'none'; });
+    document.querySelectorAll('.layout-manage-action').forEach(el => { el.style.display = canManageBarLayouts() ? '' : 'none'; });
     document.querySelectorAll('.nav-btn[data-page], .sub-btn[data-page]').forEach(btn => {
       btn.style.display = pageAllowed(btn.dataset.page) ? '' : 'none';
     });
@@ -2491,6 +3360,8 @@ HTML = r"""
     const map = {
       'dashboard': ['Dashboard', 'Casa Cara'],
       'algemeen-dashboard': ['Algemeen', 'Overzicht'],
+      'checklists': ['Werkvloer', 'Checklists'],
+      'checklists-beheer': ['Werkvloer', 'Checklist beheer'],
       'diensten': ['Algemeen', 'Diensten'],
       'dienstsoorten': ['Algemeen', 'Dienstsoorten'],
       'fooienpot': ['Algemeen', 'Fooienpot'],
@@ -2537,6 +3408,9 @@ HTML = r"""
     window.scrollTo({ top: 0, behavior: 'instant' });
     if(page === 'bar-bijvullen' && !window.selectedCooler){
       openRefillSelector();
+    }
+    if(page === 'checklists-beheer'){
+      renderChecklistManagerPage();
     }
   }
 
@@ -2881,8 +3755,7 @@ HTML = r"""
     if (pageAllowed('bar-bijvullen')) quickCards.push({label:'Bar', title:'Bijvullen', sub:'Wat direct aandacht nodig heeft', page:'bar-bijvullen'});
     if (pageAllowed('diensten')) quickCards.push({label:'Algemeen', title:'Diensten', sub:'Bekijk en plan je diensten', page:'diensten'});
     if (pageAllowed('fooienpot')) quickCards.push({label:'Algemeen', title:'Fooienpot', sub:'Huidige stand en snelle aanpassing', page:'fooienpot'});
-    if (pageAllowed('keuken-takenlijsten')) quickCards.push({label:'Keuken', title:'Takenlijsten', sub:'Open lijsten en vink taken af', page:'keuken-takenlijsten'});
-    if (pageAllowed('bar-takenlijsten')) quickCards.push({label:'Bar', title:'Takenlijsten', sub:'Open je bar-opstart en afsluit lijsten', page:'bar-takenlijsten'});
+    if (pageAllowed('checklists')) quickCards.push({label:'Werkvloer', title:'Checklists', sub:'Alle bar- en keukentaken op één centrale plek', page:'checklists'});
     if (pageAllowed('keuken-recepten')) quickCards.push({label:'Keuken', title:'Recepten', sub:'Open receptkaarten en ingrediënten', page:'keuken-recepten'});
     const quickGrid = document.getElementById('dashboardQuickGrid');
     if (quickGrid){
@@ -3172,17 +4045,6 @@ HTML = r"""
     const tasks = lists.flatMap(list => safeArray(list.tasks));
     const doneToday = tasks.filter(task => kitchenTaskIsChecked(task)).length;
     const cards = [];
-    if (pageAllowed('keuken-takenlijsten')){
-      cards.push({
-        kicker:'Keuken',
-        title:'Takenlijsten',
-        sub:'Open snel je checklist en zie meteen wat vandaag al gedaan is.',
-        badge:`${lists.length} lijsten`,
-        badgeClass:'accent',
-        meta:[`${doneToday} taken vandaag afgevinkt`, `${tasks.length} taken totaal`],
-        actions:[{ label:'Open takenlijsten', kind:'accent', onclick:`openPage('keuken-takenlijsten')` }]
-      });
-    }
     if (pageAllowed('keuken-recepten')){
       cards.push({
         kicker:'Keuken',
@@ -3223,7 +4085,6 @@ HTML = r"""
     const doneToday = tasks.filter(task => kitchenTaskIsChecked(task)).length;
     const cards = [];
     if (pageAllowed('bar-koelingen')) cards.push({ kicker:'Bar', title:'Koelingen', sub:'Bekijk koelingen en pas voorraad direct aan.', badge:`${koelingen.length} koelingen`, badgeClass:'accent', meta:[`${lowCount} lage voorraad`, `${opCount} producten op`], actions:[{ label:'Open koelingen', kind:'accent', onclick:`openPage('bar-koelingen')` }] });
-    if (pageAllowed('bar-takenlijsten')) cards.push({ kicker:'Bar', title:'Takenlijsten', sub:'Werk je bar-opstart of afsluiting rustig af vanaf je telefoon.', badge:`${lists.length} lijsten`, badgeClass:'accent', meta:[`${doneToday} taken vandaag afgevinkt`, `${tasks.length} taken totaal`], actions:[{ label:'Open takenlijsten', kind:'accent', onclick:`openPage('bar-takenlijsten')` }] });
     if (pageAllowed('bar-bijvullen')) cards.push({ kicker:'Bar', title:'Bijvuloverzicht', sub:'Zie meteen wat vandaag aandacht nodig heeft.', badge:`${fill.length} acties`, badgeClass: fill.length ? 'warn' : 'good', meta: fill.slice(0,2).map(item => `${item.product} · ${item.bijvullen} bijvullen`), actions:[{ label:'Open bijvullen', kind:'accent', onclick:`openPage('bar-bijvullen')` }] });
     if (pageAllowed('bar-oplijst')) cards.push({ kicker:'Bar', title:'Op-lijst', sub:'Alles wat op is of weer terug op voorraad moet.', badge:`${opCount} op`, badgeClass: opCount ? 'warn' : 'good', actions:[{ label:'Open op-lijst', kind:'accent', onclick:`openPage('bar-oplijst')` }] });
     if (pageAllowed('bar-productsoorten')) cards.push({ kicker:'Bar', title:'Productsoorten', sub:'Beheer soorten en indeling per locatie.', badge:`${safeArray(appData.types).length} soorten`, actions:[{ label:'Open soorten', kind:'accent', onclick:`openPage('bar-productsoorten')` }] });
@@ -3290,6 +4151,643 @@ HTML = r"""
     `;
     const target = document.getElementById(targetId);
     if (target) target.innerHTML = html;
+  }
+
+  function getChecklistDate(){
+    const base = currentChecklistDateISO || getTodayString();
+    const date = new Date(`${base}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  }
+
+  function getChecklistSelectedDateIso(){
+    if (!currentChecklistDateISO) currentChecklistDateISO = getTodayString();
+    return currentChecklistDateISO;
+  }
+
+  function isChecklistToday(){
+    return getChecklistSelectedDateIso() === getTodayString();
+  }
+
+  function getChecklistDayLabel(){
+    const date = getChecklistDate();
+    try{
+      const weekday = new Intl.DateTimeFormat('en-GB', { timeZone:'Europe/Amsterdam', weekday:'long' }).format(date).toLowerCase();
+      const mapping = { wednesday:'woensdag', thursday:'donderdag', friday:'vrijdag', saturday:'zaterdag', sunday:'zondag' };
+      return mapping[weekday] || 'altijd';
+    }catch(err){
+      return getAmsterdamDayLabel();
+    }
+  }
+
+  function formatChecklistDateLabel(){
+    const date = getChecklistDate();
+    try{
+      return new Intl.DateTimeFormat('nl-NL', { weekday:'long', day:'numeric', month:'long', timeZone:'Europe/Amsterdam' }).format(date);
+    }catch(err){
+      return formatTaskDayLabel(getChecklistDayLabel());
+    }
+  }
+
+  function shiftChecklistDate(delta){
+    const date = getChecklistDate();
+    date.setDate(date.getDate() + Number(delta || 0));
+    currentChecklistDateISO = date.toISOString().slice(0,10);
+    renderChecklistsPage();
+  }
+
+  function goChecklistToday(){
+    currentChecklistDateISO = getTodayString();
+    renderChecklistsPage();
+  }
+
+  function setChecklistFilter(filter){
+    currentChecklistFilter = filter || 'all';
+    renderChecklistsPage();
+  }
+
+  function checklistManageSections(){
+    const sections = [];
+    if (hasPermission('access_bar') && hasPermission('manage_bar_tasklists')) {
+      sections.push({ key:'bar', title:'Bar', lists:safeArray(appData.bar_tasks?.lists) });
+    }
+    if (hasPermission('access_kitchen') && hasPermission('manage_kitchen_tasklists')) {
+      sections.push({ key:'kitchen', title:'Keuken', lists:safeArray(appData.kitchen?.lists) });
+    }
+    return sections;
+  }
+
+  function renderChecklistManagerBody(){
+    const sections = checklistManageSections();
+    if (!sections.length){
+      return `<div class="check-admin-editor"><div class="check-admin-editor-title">Geen toegang</div><div class="check-admin-editor-sub">Je hebt geen beheerrechten voor checklists.</div></div>`;
+    }
+    return `
+      <div class="check-admin-layout">
+        <div class="check-admin-toolbar">
+          <div class="check-admin-note">Beheer hier centraal alle checklists, dagen, taken en subtaken.</div>
+          <button class="btn accent" onclick="setChecklistAdminEditor('new-list', { section: sections[0]?.key || '' })">+ Nieuwe checklist</button>
+        </div>
+        ${sections.map(section => `
+          <div class="check-admin-section">
+            <div class="check-admin-section-head">
+              <div>
+                <div class="check-admin-title">${section.title}</div>
+                <div class="check-admin-sub">${section.lists.length} checklist${section.lists.length === 1 ? '' : 's'}</div>
+              </div>
+              <button class="check-mini-btn" onclick="setChecklistAdminEditor('new-list', { section: '${section.key}' })">+ Checklist</button>
+            </div>
+            <div class="check-admin-lists">
+              ${section.lists.length ? section.lists.map(list => `
+                <div class="check-admin-list">
+                  <div class="check-admin-list-head">
+                    <div>
+                      <div class="check-admin-list-name">${escapeHtml(list.name || 'Checklist')}</div>
+                      <div class="check-admin-list-meta">${formatTaskDayLabel(list.day || 'altijd')} · ${safeArray(list.tasks).length} taken</div>
+                    </div>
+                    <div class="check-admin-actions">
+                      <button class="check-mini-btn" onclick="setChecklistAdminEditor('edit-list', { section: '${section.key}', listId: '${list.id}' })">Wijzig</button>
+                      <button class="check-mini-btn" onclick="setChecklistAdminEditor('new-task', { section: '${section.key}', listId: '${list.id}' })">+ Taak</button>
+                      <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','list','${list.id}')">Verwijder</button>
+                    </div>
+                  </div>
+                  <div class="check-admin-tasks">
+                    ${safeArray(list.tasks).length ? safeArray(list.tasks).map(task => `
+                      <div class="check-admin-task">
+                        <div class="check-admin-task-head">
+                          <div>
+                            <div class="check-admin-task-name">${escapeHtml(task.name || 'Taak')}</div>
+                            <div class="check-admin-task-meta">${safeArray(task.subtasks).length} subtaken</div>
+                          </div>
+                          <div class="check-admin-actions">
+                            <button class="check-mini-btn" onclick="setChecklistAdminEditor('edit-task', { section: '${section.key}', listId: '${list.id}', taskId: '${task.id}' })">Wijzig</button>
+                            <button class="check-mini-btn" onclick="setChecklistAdminEditor('new-subtask', { section: '${section.key}', listId: '${list.id}', taskId: '${task.id}' })">+ Subtaak</button>
+                            <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','task','${list.id}','${task.id}')">Verwijder</button>
+                          </div>
+                        </div>
+                        ${safeArray(task.subtasks).length ? `
+                          <div class="check-admin-subtasks">
+                            ${safeArray(task.subtasks).map(sub => `
+                              <div class="check-admin-subtask">
+                                <div>
+                                  <div class="check-admin-subtask-name">${escapeHtml(sub.name || 'Subtaak')}</div>
+                                  ${formatAuditLine(sub) ? `<div class="check-admin-subtask-meta">${formatAuditLine(sub)}</div>` : ''}
+                                </div>
+                                <div class="check-admin-actions">
+                                  <button class="check-mini-btn" onclick="setChecklistAdminEditor('edit-subtask', { section: '${section.key}', listId: '${list.id}', taskId: '${task.id}', subtaskId: '${sub.id}' })">Wijzig</button>
+                                  <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','subtask','${list.id}','${task.id}','${sub.id}')">Verwijder</button>
+                                </div>
+                              </div>
+                            `).join('')}
+                          </div>
+                        ` : `<div class="check-admin-empty">Nog geen subtaken.</div>`}
+                      </div>
+                    `).join('') : `<div class="check-admin-empty">Nog geen taken in deze checklist.</div>`}
+                  </div>
+                </div>
+              `).join('') : `<div class="check-admin-empty">Nog geen checklists in ${section.title.toLowerCase()}.</div>`}
+            </div>
+          </div>
+        `).join('')}
+      </div>`;
+  }
+
+  function setChecklistAdminEditor(mode='overview', payload={}){
+    currentChecklistAdminEditor = { mode, section:'', listId:'', taskId:'', subtaskId:'', ...payload };
+    renderChecklistManagerPage();
+  }
+
+  function openChecklistManagerPage(){
+    setChecklistAdminEditor('overview');
+    openPage('checklists-beheer');
+  }
+
+  function openChecklistSettings(){
+    openChecklistManagerPage();
+  }
+
+  function renderChecklistManagerEditor(){
+    const state = currentChecklistAdminEditor || { mode:'overview' };
+    const sectionTitle = state.section === 'bar' ? 'Bar' : state.section === 'kitchen' ? 'Keuken' : 'Checklist';
+    if (state.mode === 'overview'){
+      return `
+        <div class="check-admin-editor">
+          <div class="check-admin-editor-title">Checklist beheer</div>
+          <div class="check-admin-editor-sub">Kies links wat je wilt aanpassen. Je kunt checklists aan een dag koppelen en taken of subtaken rustig beheren vanaf deze pagina.</div>
+          <div class="form-actions">
+            ${checklistManageSections().map(section => `<button class="btn accent" onclick="setChecklistAdminEditor('new-list', { section: '${section.key}' })">+ ${section.title} checklist</button>`).join('')}
+            <button class="btn" onclick="openPage('checklists')">Terug naar checklists</button>
+          </div>
+        </div>`;
+    }
+    if (state.mode === 'new-list' || state.mode === 'edit-list'){
+      const list = state.mode === 'edit-list' ? getChecklistList(state.section, state.listId) : null;
+      return `
+        <div class="check-admin-editor">
+          <div class="check-admin-editor-title">${state.mode === 'new-list' ? 'Nieuwe checklist' : 'Checklist wijzigen'}</div>
+          <div class="check-admin-editor-sub">${sectionTitle}: stel naam en dag van deze checklist in.</div>
+          <div class="form-grid">
+            <div class="field"><label>Sectie</label><select id="checkAdminListSection">${checklistManageSections().map(section => `<option value="${section.key}" ${(section.key === state.section) ? 'selected' : ''}>${section.title}</option>`).join('')}</select></div>
+            <div class="field"><label>Naam checklist</label><input id="checkAdminListName" value="${escapeHtml(list?.name || '')}" placeholder="Bijv. Opening"></div>
+            <div class="field"><label>Dag</label><select id="checkAdminListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === (list?.day || getChecklistDayLabel()) ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
+            <div class="form-actions">
+              <button class="btn" onclick="setChecklistAdminEditor('overview')">Terug</button>
+              <button class="btn accent" onclick="saveChecklistAdminList('${state.mode}', '${state.listId || ''}')">Opslaan</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    if (state.mode === 'new-task' || state.mode === 'edit-task'){
+      const task = state.mode === 'edit-task' ? getChecklistTask(state.section, state.listId, state.taskId) : null;
+      const list = getChecklistList(state.section, state.listId);
+      return `
+        <div class="check-admin-editor">
+          <div class="check-admin-editor-title">${state.mode === 'new-task' ? 'Nieuwe taak' : 'Taak wijzigen'}</div>
+          <div class="check-admin-editor-sub">${sectionTitle} · ${escapeHtml(list?.name || 'Checklist')}</div>
+          <div class="form-grid">
+            <div class="field"><label>Naam taak</label><input id="checkAdminTaskName" value="${escapeHtml(task?.name || '')}" placeholder="Bijv. Koelingen checken"></div>
+            <div class="form-actions">
+              <button class="btn" onclick="setChecklistAdminEditor('overview')">Terug</button>
+              <button class="btn accent" onclick="saveChecklistAdminTask('${state.mode}', '${state.section}', '${state.listId}', '${state.taskId || ''}')">Opslaan</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    if (state.mode === 'new-subtask' || state.mode === 'edit-subtask'){
+      const task = getChecklistTask(state.section, state.listId, state.taskId);
+      const sub = safeArray(task?.subtasks).find(item => item.id === state.subtaskId) || null;
+      return `
+        <div class="check-admin-editor">
+          <div class="check-admin-editor-title">${state.mode === 'new-subtask' ? 'Nieuwe subtaak' : 'Subtaak wijzigen'}</div>
+          <div class="check-admin-editor-sub">${sectionTitle} · ${escapeHtml(task?.name || 'Taak')}</div>
+          <div class="form-grid">
+            <div class="field"><label>Naam subtaak</label><input id="checkAdminSubtaskName" value="${escapeHtml(sub?.name || '')}" placeholder="Bijv. Frisse doeken klaarleggen"></div>
+            <div class="form-actions">
+              <button class="btn" onclick="setChecklistAdminEditor('overview')">Terug</button>
+              <button class="btn accent" onclick="saveChecklistAdminSubtask('${state.mode}', '${state.section}', '${state.listId}', '${state.taskId}', '${state.subtaskId || ''}')">Opslaan</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    return '';
+  }
+
+  function renderChecklistManagerPage(){
+    const wrap = document.getElementById('checklistManagerPage');
+    if (!wrap) return;
+    wrap.innerHTML = `${renderChecklistManagerEditor()}${renderChecklistManagerBody()}`;
+  }
+
+  async function saveChecklistAdminList(mode, listId=''){
+    const section = document.getElementById('checkAdminListSection')?.value || currentChecklistAdminEditor.section;
+    const name = document.getElementById('checkAdminListName')?.value || '';
+    const day = document.getElementById('checkAdminListDay')?.value || 'altijd';
+    const url = mode === 'new-list' ? (section === 'bar' ? '/api/bar-tasks/list-save' : '/api/kitchen/list-save') : (section === 'bar' ? '/api/bar-tasks/list-rename' : '/api/kitchen/list-rename');
+    const payload = mode === 'new-list' ? { name, day } : { list_id: listId, name, day };
+    try{
+      await postJSON(url, payload);
+      await loadData();
+      renderChecklistsPage();
+      setChecklistAdminEditor('overview');
+      toast(mode === 'new-list' ? 'Checklist opgeslagen' : 'Checklist bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function saveChecklistAdminTask(mode, section, listId, taskId=''){
+    const name = document.getElementById('checkAdminTaskName')?.value || '';
+    const url = mode === 'new-task' ? (section === 'bar' ? '/api/bar-tasks/task-save' : '/api/kitchen/task-save') : (section === 'bar' ? '/api/bar-tasks/task-rename' : '/api/kitchen/task-rename');
+    const payload = mode === 'new-task' ? { list_id: listId, name } : { list_id: listId, task_id: taskId, name };
+    try{
+      await postJSON(url, payload);
+      await loadData();
+      renderChecklistsPage();
+      setChecklistAdminEditor('overview');
+      toast(mode === 'new-task' ? 'Taak opgeslagen' : 'Taak bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  async function saveChecklistAdminSubtask(mode, section, listId, taskId, subtaskId=''){
+    const name = document.getElementById('checkAdminSubtaskName')?.value || '';
+    const url = mode === 'new-subtask' ? (section === 'bar' ? '/api/bar-tasks/subtask-save' : '/api/kitchen/subtask-save') : (section === 'bar' ? '/api/bar-tasks/subtask-rename' : '/api/kitchen/subtask-rename');
+    const payload = mode === 'new-subtask' ? { list_id: listId, task_id: taskId, name } : { list_id: listId, task_id: taskId, subtask_id: subtaskId, name };
+    try{
+      await postJSON(url, payload);
+      await loadData();
+      renderChecklistsPage();
+      setChecklistAdminEditor('overview');
+      toast(mode === 'new-subtask' ? 'Subtaak opgeslagen' : 'Subtaak bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function refreshChecklistSettingsModal(){
+    renderChecklistManagerPage();
+  }
+
+  function getChecklistList(section, listId){
+    const source = section === 'bar' ? safeArray(appData.bar_tasks?.lists) : safeArray(appData.kitchen?.lists);
+    return source.find(item => item.id === listId) || null;
+  }
+
+  function getChecklistTask(section, listId, taskId){
+    const list = getChecklistList(section, listId);
+    return safeArray(list?.tasks).find(item => item.id === taskId) || null;
+  }
+
+  function openChecklistListModal(section){
+    setChecklistAdminEditor('new-list', { section });
+    return;
+    const canManage = section === 'bar' ? hasPermission('manage_bar_tasklists') : hasPermission('manage_kitchen_tasklists');
+    if (!canManage) return;
+    openModal(`${section === 'bar' ? 'Bar' : 'Keuken'} checklist toevoegen`, 'Maak een nieuwe checklist aan.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam checklist</label><input id="centralChecklistListName" placeholder="Bijv. Opening"></div>
+        <div class="field"><label>Dag</label><select id="centralChecklistListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === getChecklistDayLabel() ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
+        <div class="form-actions">
+          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn accent" onclick="saveCentralChecklistList('${section}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveCentralChecklistList(section){
+    const url = section === 'bar' ? '/api/bar-tasks/list-save' : '/api/kitchen/list-save';
+    try{
+      await postJSON(url, { name: document.getElementById('centralChecklistListName').value, day: document.getElementById('centralChecklistListDay').value });
+      await loadData();
+      renderChecklistsPage();
+      openChecklistSettings();
+      toast('Checklist opgeslagen');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openChecklistListEditModal(section, listId){
+    setChecklistAdminEditor('edit-list', { section, listId });
+    return;
+    const list = getChecklistList(section, listId);
+    if (!list) return;
+    openModal('Checklist wijzigen', 'Pas naam of dag van deze checklist aan.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam checklist</label><input id="centralChecklistEditListName" value="${escapeHtml(list.name || '')}"></div>
+        <div class="field"><label>Dag</label><select id="centralChecklistEditListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === (list.day || 'altijd') ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
+        <div class="form-actions">
+          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn accent" onclick="saveChecklistListEdit('${section}','${listId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveChecklistListEdit(section, listId){
+    const url = section === 'bar' ? '/api/bar-tasks/list-rename' : '/api/kitchen/list-rename';
+    try{
+      await postJSON(url, { list_id: listId, name: document.getElementById('centralChecklistEditListName').value, day: document.getElementById('centralChecklistEditListDay').value });
+      await loadData();
+      renderChecklistsPage();
+      openChecklistSettings();
+      toast('Checklist bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openChecklistTaskModal(section, listId){
+    setChecklistAdminEditor('new-task', { section, listId });
+    return;
+    openModal('Taak toevoegen', 'Voeg een taak toe aan deze checklist.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam taak</label><input id="centralChecklistTaskName" placeholder="Bijv. Koelingen checken"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn accent" onclick="saveCentralChecklistTask('${section}','${listId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveCentralChecklistTask(section, listId){
+    const url = section === 'bar' ? '/api/bar-tasks/task-save' : '/api/kitchen/task-save';
+    try{
+      await postJSON(url, { list_id: listId, name: document.getElementById('centralChecklistTaskName').value });
+      await loadData();
+      renderChecklistsPage();
+      openChecklistSettings();
+      toast('Taak opgeslagen');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openChecklistTaskEditModal(section, listId, taskId){
+    setChecklistAdminEditor('edit-task', { section, listId, taskId });
+    return;
+    const task = getChecklistTask(section, listId, taskId);
+    if (!task) return;
+    openModal('Taak wijzigen', 'Pas de naam van deze taak aan.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam taak</label><input id="centralChecklistEditTaskName" value="${escapeHtml(task.name || '')}"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn accent" onclick="saveChecklistTaskEdit('${section}','${listId}','${taskId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveChecklistTaskEdit(section, listId, taskId){
+    const url = section === 'bar' ? '/api/bar-tasks/task-rename' : '/api/kitchen/task-rename';
+    try{
+      await postJSON(url, { list_id: listId, task_id: taskId, name: document.getElementById('centralChecklistEditTaskName').value });
+      await loadData();
+      renderChecklistsPage();
+      openChecklistSettings();
+      toast('Taak bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openChecklistSubtaskModal(section, listId, taskId){
+    setChecklistAdminEditor('new-subtask', { section, listId, taskId });
+    return;
+    openModal('Subtaak toevoegen', 'Voeg een subtaak toe onder deze taak.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam subtaak</label><input id="centralChecklistSubtaskName" placeholder="Bijv. Frisse doeken klaarleggen"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn accent" onclick="saveCentralChecklistSubtask('${section}','${listId}','${taskId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveCentralChecklistSubtask(section, listId, taskId){
+    const url = section === 'bar' ? '/api/bar-tasks/subtask-save' : '/api/kitchen/subtask-save';
+    try{
+      await postJSON(url, { list_id: listId, task_id: taskId, name: document.getElementById('centralChecklistSubtaskName').value });
+      await loadData();
+      renderChecklistsPage();
+      openChecklistSettings();
+      toast('Subtaak opgeslagen');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function openChecklistSubtaskEditModal(section, listId, taskId, subtaskId){
+    setChecklistAdminEditor('edit-subtask', { section, listId, taskId, subtaskId });
+    return;
+    const task = getChecklistTask(section, listId, taskId);
+    const sub = safeArray(task?.subtasks).find(item => item.id === subtaskId) || null;
+    if (!sub) return;
+    openModal('Subtaak wijzigen', 'Pas de naam van deze subtaak aan.', `
+      <div class="form-grid">
+        <div class="field"><label>Naam subtaak</label><input id="centralChecklistEditSubtaskName" value="${escapeHtml(sub.name || '')}"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn accent" onclick="saveChecklistSubtaskEdit('${section}','${listId}','${taskId}','${subtaskId}')">Opslaan</button>
+        </div>
+      </div>`);
+  }
+
+  async function saveChecklistSubtaskEdit(section, listId, taskId, subtaskId){
+    const url = section === 'bar' ? '/api/bar-tasks/subtask-rename' : '/api/kitchen/subtask-rename';
+    try{
+      await postJSON(url, { list_id: listId, task_id: taskId, subtask_id: subtaskId, name: document.getElementById('centralChecklistEditSubtaskName').value });
+      await loadData();
+      renderChecklistsPage();
+      openChecklistSettings();
+      toast('Subtaak bijgewerkt');
+    }catch(err){ toast(err.message, 'error'); }
+  }
+
+  function confirmChecklistDelete(section, kind, listId, taskId='', subtaskId=''){
+    const title = kind === 'list' ? 'Checklist verwijderen' : kind === 'task' ? 'Taak verwijderen' : 'Subtaak verwijderen';
+    const text = kind === 'list' ? 'Weet je zeker dat je deze checklist wilt verwijderen?' : kind === 'task' ? 'Weet je zeker dat je deze taak wilt verwijderen?' : 'Weet je zeker dat je deze subtaak wilt verwijderen?';
+    openConfirm(title, text, async () => {
+      try{
+        let url = '';
+        let payload = { list_id: listId };
+        if (kind === 'list') {
+          url = section === 'bar' ? '/api/bar-tasks/list-delete' : '/api/kitchen/list-delete';
+        } else if (kind === 'task') {
+          url = section === 'bar' ? '/api/bar-tasks/task-delete' : '/api/kitchen/task-delete';
+          payload.task_id = taskId;
+        } else {
+          url = section === 'bar' ? '/api/bar-tasks/subtask-delete' : '/api/kitchen/subtask-delete';
+          payload.task_id = taskId;
+          payload.subtask_id = subtaskId;
+        }
+        await postJSON(url, payload);
+        await loadData();
+        renderChecklistsPage();
+        renderChecklistManagerPage();
+        toast(`${kind === 'list' ? 'Checklist' : kind === 'task' ? 'Taak' : 'Subtaak'} verwijderd`);
+      }catch(err){ toast(err.message, 'error'); }
+    });
+  }
+
+  function checklistTaskStatus(task, section){
+    const taskCheckedFn = section === 'bar' ? barTaskIsChecked : kitchenTaskIsChecked;
+    const subtaskCheckedFn = section === 'bar' ? barSubtaskIsChecked : kitchenSubtaskIsChecked;
+    return getTaskProgress(task, taskCheckedFn, subtaskCheckedFn);
+  }
+
+  function filterChecklistTasks(tasks, section){
+    const items = safeArray(tasks);
+    return items.filter(task => {
+      const progress = checklistTaskStatus(task, section);
+      if (currentChecklistFilter === 'done') return progress.isDone;
+      if (currentChecklistFilter === 'todo') return !progress.isDone;
+      return true;
+    });
+  }
+
+  function filterChecklistSubtasks(task, section){
+    const fn = section === 'bar' ? barSubtaskIsChecked : kitchenSubtaskIsChecked;
+    return safeArray(task?.subtasks).filter(sub => {
+      if (currentChecklistFilter === 'done') return fn(sub);
+      if (currentChecklistFilter === 'todo') return !fn(sub);
+      return true;
+    });
+  }
+
+  function getChecklistSectionStats(lists, section){
+    const taskCheckedFn = section === 'bar' ? barTaskIsChecked : kitchenTaskIsChecked;
+    const visibleLists = safeArray(lists).map(list => ({ ...list, filteredTasks: filterChecklistTasks(list.tasks, section) })).filter(list => list.filteredTasks.length || currentChecklistFilter === 'all');
+    const allTasks = safeArray(lists).flatMap(list => safeArray(list.tasks));
+    const done = allTasks.filter(taskCheckedFn).length;
+    return { visibleLists, total: allTasks.length, done, percent: allTasks.length ? Math.round((done / allTasks.length) * 100) : 0 };
+  }
+
+  function renderChecklistTaskItem(section, listId, task){
+    const taskCheckedFn = section === 'bar' ? barTaskIsChecked : kitchenTaskIsChecked;
+    const subtaskCheckedFn = section === 'bar' ? barSubtaskIsChecked : kitchenSubtaskIsChecked;
+    const progress = getTaskProgress(task, taskCheckedFn, subtaskCheckedFn);
+    const filteredSubs = filterChecklistSubtasks(task, section);
+    const readOnly = !isChecklistToday();
+    const taskAction = readOnly ? '' : (section === 'bar'
+      ? `onclick="toggleBarTask('${listId}','${task.id}')"`
+      : `onclick="toggleKitchenTask('${listId}','${task.id}')"`);
+    return `
+      <div class="check-task">
+        <div class="check-task-head" ${taskAction}>
+          <div class="check-circle ${progress.isDone ? 'done' : ''}">${progress.isDone ? '✓' : ''}</div>
+          <div style="min-width:0;flex:1">
+            <div class="check-task-title ${progress.isDone ? 'done' : ''}">${task.name || 'Taak'}</div>
+            <div class="check-task-sub">${formatAuditLine(task) || (progress.totalSubs ? `${progress.doneSubs}/${progress.totalSubs} subtaken gedaan` : 'Losse taak')}</div>
+          </div>
+          <div class="check-task-right">
+            <span class="badge ${progress.isDone ? 'good' : progress.status === 'progress' ? 'accent' : 'warn'}">${progress.isDone ? 'Klaar' : progress.status === 'progress' ? 'Bezig' : 'Open'}</span>
+          </div>
+        </div>
+        ${filteredSubs.length ? `
+          <div class="check-subtasks">
+            ${filteredSubs.map(sub => {
+              const done = subtaskCheckedFn(sub);
+              const subAction = readOnly ? '' : (section === 'bar'
+                ? `onclick="toggleBarSubtask('${listId}','${task.id}','${sub.id}')"`
+                : `onclick="toggleKitchenSubtask('${listId}','${task.id}','${sub.id}')"`);
+              return `
+                <div class="check-subtask" ${subAction}>
+                  <div class="check-subcircle ${done ? 'done' : ''}">${done ? '✓' : ''}</div>
+                  <div style="min-width:0;flex:1">
+                    <div class="check-subtask-title ${done ? 'done' : ''}">${sub.name || 'Subtaak'}</div>
+                    ${formatAuditLine(sub) ? `<div class="check-subtask-meta">${formatAuditLine(sub)}</div>` : ''}
+                  </div>
+                  <span class="badge ${done ? 'good' : ''}">${done ? 'Klaar' : 'Open'}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function toggleChecklistList(section, listId){
+    const el = document.getElementById(`checklist-list-${section}-${listId}`);
+    if (el) el.classList.toggle('open');
+  }
+
+  function renderChecklistSection(target, title, section, lists){
+    const stats = getChecklistSectionStats(lists, section);
+    if (!stats.visibleLists.length && !stats.total){
+      return '';
+    }
+    return `
+      <div class="check-zone">
+        <div class="check-zone-head">
+          <div>
+            <div class="check-zone-title">${title}</div>
+            <div class="check-zone-sub">${stats.done} van ${stats.total} taken gedaan · ${formatTaskDayLabel(getChecklistDayLabel())}</div>
+          </div>
+          <div class="check-zone-right">
+            <span class="check-zone-pill">${stats.percent}%</span>
+            <span class="check-zone-count">${stats.done}/${stats.total || 0}</span>
+          </div>
+        </div>
+        <div class="check-zone-progress"><span style="width:${stats.percent}%"></span></div>
+        <div style="display:grid;gap:12px;margin-top:0">
+          ${stats.visibleLists.map((list, index) => {
+            const filteredTasks = list.filteredTasks;
+            const total = safeArray(list.tasks).length;
+            const done = safeArray(list.tasks).filter(section === 'bar' ? barTaskIsChecked : kitchenTaskIsChecked).length;
+            const percent = total ? Math.round((done / total) * 100) : 0;
+            return `
+              <div class="check-list-card ${index === 0 ? 'open' : ''}" id="checklist-list-${section}-${list.id}">
+                <div class="check-list-head" onclick="toggleChecklistList('${section}','${list.id}')">
+                  <div class="check-list-main">
+                    <div class="check-list-name">${list.name || 'Takenlijst'}</div>
+                    <div class="check-list-meta">${done}/${total} taken gedaan · ${formatTaskDayLabel(list.day || 'altijd')}</div>
+                  </div>
+                  <div class="check-list-right">
+                    <span class="badge accent">${percent}%</span>
+                    <div class="check-list-toggle">⌄</div>
+                  </div>
+                </div>
+                <div class="check-list-body">
+                  ${filteredTasks.length ? filteredTasks.map(task => renderChecklistTaskItem(section, list.id, task)).join('') : `<div class="check-empty">Geen taken zichtbaar voor het filter <strong>${currentChecklistFilter === 'todo' ? 'Te doen' : 'Klaar'}</strong>.</div>`}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderChecklistsPage(){
+    const selectedDay = getChecklistDayLabel();
+    currentKitchenTaskDay = selectedDay;
+    currentBarTaskDay = selectedDay;
+    ['all','todo','done'].forEach(filter => {
+      const btn = document.getElementById(`checkFilter-${filter}`);
+      if (btn) btn.classList.toggle('active', currentChecklistFilter === filter);
+    });
+    setText('checklistDateLabel', formatChecklistDateLabel());
+    const sub = isChecklistToday()
+      ? `Vandaag · ${formatTaskDayLabel(selectedDay)} · direct afvinken staat aan`
+      : `${formatTaskDayLabel(selectedDay)} · je bekijkt de planning voor deze dag`; 
+    setText('checklistDateSub', sub);
+
+    const canSeeBarChecklists = hasPermission('access_bar') && hasPermission('use_bar_tasklists');
+    const canSeeKitchenChecklists = hasPermission('access_kitchen') && hasPermission('use_kitchen_tasklists');
+    const barLists = canSeeBarChecklists ? safeArray(appData.bar_tasks?.lists).filter(list => taskListMatchesDay(list, selectedDay)) : [];
+    const kitchenLists = canSeeKitchenChecklists ? safeArray(appData.kitchen?.lists).filter(list => taskListMatchesDay(list, selectedDay)) : [];
+    const barStats = getChecklistSectionStats(barLists, 'bar');
+    const kitchenStats = getChecklistSectionStats(kitchenLists, 'kitchen');
+    const total = barStats.total + kitchenStats.total;
+    const done = barStats.done + kitchenStats.done;
+    const percent = total ? Math.round((done / total) * 100) : 0;
+    const progress = document.getElementById('checklistProgressCard');
+    if (progress){
+      progress.innerHTML = `
+        <div class="check-progress-top">
+          <div>
+            <div class="check-progress-title">Voortgang ${isChecklistToday() ? 'vandaag' : 'planning'}</div>
+            <div class="check-progress-count">${done}/${total} taken</div>
+            <div class="check-progress-meta">${currentChecklistFilter === 'all' ? 'Alles in beeld' : currentChecklistFilter === 'todo' ? 'Alleen wat nog open staat' : 'Alleen afgeronde taken'}</div>
+          </div>
+          <div class="check-progress-percent">${percent}%</div>
+        </div>
+        <div class="check-progress-bar"><span style="width:${percent}%"></span></div>
+        ${!isChecklistToday() ? `<div class="check-readonly" style="margin-top:12px">Voor andere dagen zie je alvast de juiste lijsten. Afvinken kan alleen op vandaag, zodat je bestaande systeem intact blijft.</div>` : ''}
+      `;
+    }
+    const sections = document.getElementById('checklistSections');
+    if (sections){
+      const parts = [];
+      if (canSeeBarChecklists) parts.push(renderChecklistSection(sections, 'Bar', 'bar', barLists));
+      if (canSeeKitchenChecklists) parts.push(renderChecklistSection(sections, 'Keuken', 'kitchen', kitchenLists));
+      sections.innerHTML = parts.filter(Boolean).join('') || '<div class="check-empty">Nog geen checklists gevonden voor deze dag.</div>';
+    }
   }
 
   function kitchenTaskIsChecked(task){
@@ -3858,7 +5356,10 @@ function renderKitchenListDetail(){
     const selected = items.find(x => x.id === currentBarLayoutId) || null;
     if(activeBadge) if(activeBadge) activeBadge.textContent = items.find(x => x.id === activeId)?.name || 'Geen actief';
     if(selectedBadge) selectedBadge.textContent = selected?.name || 'Geen indeling gekozen';
-    if(openEditorBtn) openEditorBtn.disabled = !selected;
+    if(openEditorBtn){
+      openEditorBtn.disabled = !selected || !canManageBarLayouts();
+      openEditorBtn.style.display = canManageBarLayouts() ? '' : 'none';
+    }
     if(info){
       info.textContent = selected ? ((selected.note || 'Preset voor een event of standaard baropstelling.') + ' Gebruik Bekijken op de vloer en open de editor alleen voor echte wijzigingen.') : 'Kies een indeling uit de lijst. Daarna kun je direct naar Bekijken of Bewerken.';
     }
@@ -3884,8 +5385,8 @@ function renderKitchenListDetail(){
         </div>
         <div class="item-actions" onclick="event.stopPropagation()">
           <button class="btn" onclick="openBarLayoutView('${item.id}')">Bekijken</button>
-          <button class="btn accent" onclick="openBarLayoutEditor('${item.id}')">Bewerken</button>
-          ${adminOnly(`${item.id === activeId ? `<span class="badge accent">Actief</span>` : `<button class="btn good" onclick="setActiveBarLayout('${item.id}')">Maak actief</button>`}<button class="btn" onclick="openBarLayoutModal('${item.id}')">Gegevens</button><button class="btn danger" onclick="confirmAction('Indeling verwijderen','Weet je zeker dat je deze indeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteBarLayout','${item.id}')&quot;)">Verwijderen</button>`) }
+          ${canManageBarLayouts() ? `<button class="btn accent" onclick="openBarLayoutEditor('${item.id}')">Bewerken</button>` : ''}
+          ${canManageBarLayouts() ? `${item.id === activeId ? `<span class="badge accent">Actief</span>` : `<button class="btn good" onclick="setActiveBarLayout('${item.id}')">Maak actief</button>`}<button class="btn" onclick="openBarLayoutModal('${item.id}')">Gegevens</button><button class="btn danger" onclick="confirmAction('Indeling verwijderen','Weet je zeker dat je deze indeling wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteBarLayout','${item.id}')&quot;)">Verwijderen</button>` : `${item.id === activeId ? `<span class="badge accent">Actief</span>` : ''}`}
         </div>
       </div>
     `).join('');
@@ -3991,6 +5492,7 @@ function renderKitchenListDetail(){
   }
 
 function openBarLayoutModal(layoutId=null){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     const items = safeArray(appData.bar_layouts?.items).map(normalizeClientBarLayout);
     const item = layoutId ? (items.find(entry => entry.id === layoutId) || {}) : {};
     openModal(
@@ -4008,6 +5510,7 @@ function openBarLayoutModal(layoutId=null){
   }
 
   async function saveBarLayout(layoutId=''){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     try{
       const name = (document.getElementById('barLayoutName')?.value || '').trim();
       const note = (document.getElementById('barLayoutNote')?.value || '').trim();
@@ -4034,6 +5537,7 @@ function openBarLayoutModal(layoutId=null){
   }
 
   async function setActiveBarLayout(layoutId){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     try{
       await postJSON('/api/manage/bar-layout-set-active', { layout_id: layoutId });
       await loadData();
@@ -4046,6 +5550,7 @@ function openBarLayoutModal(layoutId=null){
   }
 
   async function deleteBarLayout(layoutId){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     try{
       await postJSON('/api/manage/bar-layout-delete', { layout_id: layoutId });
       await loadData();
@@ -4220,6 +5725,7 @@ function openBarLayoutModal(layoutId=null){
   }
 
   function saveCurrentBarLayoutMobileSelection(){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     const target = window.currentBarLayoutShelfTarget;
     if(!target){
       closeBarLayoutMobileSheet();
@@ -4231,6 +5737,7 @@ function openBarLayoutModal(layoutId=null){
   }
 
 function openBarLayoutEditor(layoutId=null){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen alleen bekijken.', 'error'); openBarLayoutView(layoutId || currentBarLayoutId); return; }
     if(layoutId) currentBarLayoutId = layoutId;
     window.currentBarLayoutId = currentBarLayoutId;
     window.currentBarLayoutShelfTarget = null;
@@ -4247,6 +5754,7 @@ function openBarLayoutEditor(layoutId=null){
         renderBarLayoutEditor();
   }
   function requestRemoveBarLayoutUnit(){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     const layout = getSelectedBarLayout();
     const unitIndex = getSelectedEditorUnitIndex(layout);
     if(!layout || safeArray(layout.units).length <= 1){
@@ -4258,6 +5766,7 @@ function openBarLayoutEditor(layoutId=null){
   }
 
   function confirmRemoveBarLayoutUnit(){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     const layout = getSelectedBarLayout();
     const unitIndex = getSelectedEditorUnitIndex(layout);
     if(!layout || safeArray(layout.units).length <= 1){
@@ -4662,6 +6171,7 @@ function openBarLayoutEditor(layoutId=null){
   }
 
   function renderBarLayoutEditor(){
+    if(!canManageBarLayouts()){ openPage('bar-indeling-view'); return; }
     const layout = getSelectedBarLayout();
     const legacyWrap = document.getElementById('barLayoutEditor');
     if(legacyWrap){
@@ -4693,6 +6203,7 @@ function openBarLayoutEditor(layoutId=null){
   }
 
 async function saveCurrentBarLayoutStructure(){
+    if(!canManageBarLayouts()){ toast('Je mag indelingen niet aanpassen.', 'error'); return; }
     const layout = getSelectedBarLayout();
     if(!layout){
       toast('Kies eerst een indeling', 'error');
@@ -5119,7 +6630,7 @@ function derivePermissionPreset(user){
       manage_diensten:false, manage_tips:false, view_bijvullen:false, view_oplijst:false,
       adjust_stock:false, view_recipes:false, use_tasklists:false, use_kitchen_tasklists:false, use_bar_tasklists:false,
       manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false,
-      manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_kitchen_tasklists:false, manage_bar_tasklists:false, manage_coolers:false
+      manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_kitchen_tasklists:false, manage_bar_tasklists:false, manage_coolers:false, manage_bar_layouts:false
     };
     if (preset === 'medewerker'){
       return { ...empty,
@@ -5232,6 +6743,7 @@ function derivePermissionPreset(user){
             ${permissionRow('perm_manage_locations', 'Locaties beheren', !!p.manage_locations)}
             ${permissionRow('perm_manage_recipes', 'Recepten beheren', !!p.manage_recipes)}
             ${permissionRow('perm_manage_coolers', 'Koelingen beheren', !!p.manage_coolers)}
+            ${permissionRow('perm_manage_bar_layouts', 'Bar indelingen beheren', !!p.manage_bar_layouts)}
           </div>
         </div>
       </div>
@@ -5243,7 +6755,7 @@ function derivePermissionPreset(user){
       'access_general','access_bar','access_kitchen',
       'manage_diensten','manage_tips','view_bijvullen','view_oplijst','adjust_stock','view_recipes',
       'use_bar_tasklists','manage_bar_tasklists','use_kitchen_tasklists','manage_kitchen_tasklists',
-      'manage_dienst_types','manage_users','manage_products','manage_types','manage_locations','manage_recipes','manage_coolers'
+      'manage_dienst_types','manage_users','manage_products','manage_types','manage_locations','manage_recipes','manage_coolers','manage_bar_layouts'
     ];
     const result = {};
     keys.forEach(key => {
@@ -5264,6 +6776,7 @@ function derivePermissionPreset(user){
     if (p.manage_users) beheer.push('Medewerkers');
     if (p.manage_products) beheer.push('Producten');
     if (p.manage_coolers) beheer.push('Koelingen');
+    if (p.manage_bar_layouts) beheer.push('Indelingen');
     if (p.manage_recipes) beheer.push('Recepten');
     let base = sections.length ? sections.join(' · ') : 'Beperkt';
     if (beheer.length) base += ` · Beheer: ${beheer.join(', ')}`;
@@ -5272,7 +6785,7 @@ function derivePermissionPreset(user){
 
 function openUserModal(index=null){
     if (!isAdmin()) return;
-    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : { role: 'medewerker', permissions: { access_general:true, access_bar:true, access_kitchen:true, manage_diensten:true, manage_tips:true, view_bijvullen:true, view_oplijst:true, adjust_stock:true, view_recipes:true, use_tasklists:true, use_kitchen_tasklists:true, use_bar_tasklists:true, manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false, manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_kitchen_tasklists:false, manage_bar_tasklists:false, manage_coolers:false } };
+    const user = index !== null ? safeArray(appData.auth?.users)[index] || {} : { role: 'medewerker', permissions: { access_general:true, access_bar:true, access_kitchen:true, manage_diensten:true, manage_tips:true, view_bijvullen:true, view_oplijst:true, adjust_stock:true, view_recipes:true, use_tasklists:true, use_kitchen_tasklists:true, use_bar_tasklists:true, manage_dienst_types:false, manage_users:false, manage_products:false, manage_types:false, manage_locations:false, manage_recipes:false, manage_tasklists:false, manage_kitchen_tasklists:false, manage_bar_tasklists:false, manage_coolers:false, manage_bar_layouts:false } };
     openModal(index === null ? 'Medewerker toevoegen' : 'Medewerker bewerken', 'Alleen admin kan Casa Cara medewerkers en rechten beheren.', `
       <div class="form-grid">
         <div class="field"><label>Naam</label><input id="userName" value="${user.name || ''}" placeholder="Bijv. Lisa"></div>
@@ -5317,6 +6830,7 @@ function openUserModal(index=null){
     if (newDienstBtn) newDienstBtn.style.display = hasPermission('manage_diensten') ? '' : 'none';
     initFilters();
     renderDashboard();
+    renderChecklistsPage();
     renderGeneralOverview();
     renderCoolers();
     renderTypes();
@@ -5921,8 +7435,8 @@ def api_bar_layouts():
 
 @casa_cara.route("/api/manage/bar-layout-save", methods=["POST"])
 def manage_bar_layout_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_layout_manage_permission():
+        return permission_denied_response("Je mag indelingen niet aanpassen.")
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     note = (payload.get("note") or "").strip()
@@ -5962,8 +7476,8 @@ def manage_bar_layout_save():
 
 @casa_cara.route("/api/manage/bar-layout-delete", methods=["POST"])
 def manage_bar_layout_delete():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_layout_manage_permission():
+        return permission_denied_response("Je mag indelingen niet aanpassen.")
     payload = request.get_json(silent=True) or {}
     layout_id = str(payload.get("layout_id") or "").strip()
     if not layout_id:
@@ -5980,8 +7494,8 @@ def manage_bar_layout_delete():
 
 @casa_cara.route("/api/manage/bar-layout-set-active", methods=["POST"])
 def manage_bar_layout_set_active():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_layout_manage_permission():
+        return permission_denied_response("Je mag indelingen niet aanpassen.")
     payload = request.get_json(silent=True) or {}
     layout_id = str(payload.get("layout_id") or "").strip()
     data = get_bar_layouts_data()
@@ -6019,8 +7533,8 @@ def backfill_layout_product_images(units):
 
 @casa_cara.route("/api/manage/bar-layout-structure-save", methods=["POST"])
 def manage_bar_layout_structure_save():
-    if not is_casa_admin():
-        return admin_only_response()
+    if not has_layout_manage_permission():
+        return permission_denied_response("Je mag indelingen niet aanpassen.")
     payload = request.get_json(silent=True) or {}
     layout_id = str(payload.get("layout_id") or "").strip()
     if not layout_id:
@@ -6171,6 +7685,7 @@ def manage_location_delete():
         return permission_denied_response()
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
+    day = normalize_task_day(payload.get("day"))
     if not name:
         return jsonify({"ok": False, "message": "Locatie ontbreekt."}), 400
     locations = [x for x in get_locations() if x != name]
@@ -6549,8 +8064,8 @@ def api_kitchen():
 
 @casa_cara.route("/api/kitchen/list-save", methods=["POST"])
 def kitchen_list_save():
-    if not has_tasklist_access("bar", manage=True):
-        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
     if not name:
@@ -6576,8 +8091,8 @@ def kitchen_list_save():
 
 @casa_cara.route("/api/kitchen/list-delete", methods=["POST"])
 def kitchen_list_delete():
-    if not has_tasklist_access("bar", manage=True):
-        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     data = get_kitchen_data()
@@ -6588,10 +8103,29 @@ def kitchen_list_delete():
     save_kitchen_data(data)
     return jsonify({"ok": True})
 
+@casa_cara.route("/api/kitchen/list-rename", methods=["POST"])
+def kitchen_list_rename():
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    name = (payload.get("name") or "").strip()
+    day = normalize_task_day(payload.get("day"))
+    if not list_id or not name:
+        return jsonify({"ok": False, "message": "Checklist gegevens ontbreken."}), 400
+    data = get_kitchen_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            item["name"] = name
+            item["day"] = day
+            save_kitchen_data(data)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+
 @casa_cara.route("/api/kitchen/task-save", methods=["POST"])
 def kitchen_task_save():
-    if not has_tasklist_access("bar", manage=True):
-        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
@@ -6623,8 +8157,8 @@ def kitchen_task_save():
 
 @casa_cara.route("/api/kitchen/task-delete", methods=["POST"])
 def kitchen_task_delete():
-    if not has_tasklist_access("bar", manage=True):
-        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -6638,6 +8172,26 @@ def kitchen_task_delete():
             save_kitchen_data(data)
             return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+
+@casa_cara.route("/api/kitchen/task-rename", methods=["POST"])
+def kitchen_task_rename():
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    name = (payload.get("name") or "").strip()
+    if not list_id or not task_id or not name:
+        return jsonify({"ok": False, "message": "Taak gegevens ontbreken."}), 400
+    data = get_kitchen_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    task["name"] = name
+                    save_kitchen_data(data)
+                    return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
 
 @casa_cara.route("/api/kitchen/task-toggle", methods=["POST"])
 def kitchen_task_toggle():
@@ -6670,8 +8224,8 @@ def kitchen_task_toggle():
 
 @casa_cara.route("/api/kitchen/subtask-save", methods=["POST"])
 def kitchen_subtask_save():
-    if not has_tasklist_access("bar", manage=True):
-        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -6705,8 +8259,8 @@ def kitchen_subtask_save():
 
 @casa_cara.route("/api/kitchen/subtask-delete", methods=["POST"])
 def kitchen_subtask_delete():
-    if not has_tasklist_access("bar", manage=True):
-        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     task_id = payload.get("task_id")
@@ -6724,6 +8278,29 @@ def kitchen_subtask_delete():
                     save_kitchen_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
+
+@casa_cara.route("/api/kitchen/subtask-rename", methods=["POST"])
+def kitchen_subtask_rename():
+    if not has_tasklist_access("kitchen", manage=True):
+        return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    subtask_id = payload.get("subtask_id")
+    name = (payload.get("name") or "").strip()
+    if not list_id or not task_id or not subtask_id or not name:
+        return jsonify({"ok": False, "message": "Subtaak gegevens ontbreken."}), 400
+    data = get_kitchen_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    for sub in task.get("subtasks", []):
+                        if sub.get("id") == subtask_id:
+                            sub["name"] = name
+                            save_kitchen_data(data)
+                            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
 
 @casa_cara.route("/api/kitchen/subtask-toggle", methods=["POST"])
 def kitchen_subtask_toggle():
@@ -6817,6 +8394,25 @@ def bar_list_delete():
     save_bar_tasks_data(data)
     return jsonify({"ok": True})
 
+@casa_cara.route("/api/bar-tasks/list-rename", methods=["POST"])
+def bar_list_rename():
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    name = (payload.get("name") or "").strip()
+    day = normalize_task_day(payload.get("day"))
+    if not list_id or not name:
+        return jsonify({"ok": False, "message": "Checklist gegevens ontbreken."}), 400
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            item["name"] = name
+            item["day"] = day
+            save_bar_tasks_data(data)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+
 @casa_cara.route("/api/bar-tasks/task-save", methods=["POST"])
 def bar_task_save():
     if not has_tasklist_access("bar", manage=True):
@@ -6866,6 +8462,26 @@ def bar_task_delete():
             save_bar_tasks_data(data)
             return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/task-rename", methods=["POST"])
+def bar_task_rename():
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    name = (payload.get("name") or "").strip()
+    if not list_id or not task_id or not name:
+        return jsonify({"ok": False, "message": "Taak gegevens ontbreken."}), 400
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    task["name"] = name
+                    save_bar_tasks_data(data)
+                    return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
 
 @casa_cara.route("/api/bar-tasks/task-toggle", methods=["POST"])
 def bar_task_toggle():
@@ -6951,6 +8567,29 @@ def bar_subtask_delete():
                     save_bar_tasks_data(data)
                     return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Taak niet gevonden."}), 404
+
+@casa_cara.route("/api/bar-tasks/subtask-rename", methods=["POST"])
+def bar_subtask_rename():
+    if not has_tasklist_access("bar", manage=True):
+        return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
+    payload = request.get_json(silent=True) or {}
+    list_id = payload.get("list_id")
+    task_id = payload.get("task_id")
+    subtask_id = payload.get("subtask_id")
+    name = (payload.get("name") or "").strip()
+    if not list_id or not task_id or not subtask_id or not name:
+        return jsonify({"ok": False, "message": "Subtaak gegevens ontbreken."}), 400
+    data = get_bar_tasks_data()
+    for item in data.get("lists", []):
+        if item.get("id") == list_id:
+            for task in item.get("tasks", []):
+                if task.get("id") == task_id:
+                    for sub in task.get("subtasks", []):
+                        if sub.get("id") == subtask_id:
+                            sub["name"] = name
+                            save_bar_tasks_data(data)
+                            return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Subtaak niet gevonden."}), 404
 
 @casa_cara.route("/api/bar-tasks/subtask-toggle", methods=["POST"])
 def bar_subtask_toggle():
