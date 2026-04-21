@@ -1531,7 +1531,8 @@ HTML = r"""
     .fridge-editor-kicker{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#7d8ca3;margin-bottom:6px}
     .fridge-editor-title{font-size:34px;font-weight:900;letter-spacing:-.04em;color:#f5f7fb;margin:0}
     .fridge-editor-sub{font-size:14px;color:#8d9bb0;margin-top:6px;line-height:1.5}
-    .fridge-editor-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+    .fridge-editor-headcopy{min-width:0;flex:1 1 auto}
+    .fridge-editor-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end;flex:0 0 auto}
     .fridge-editor-btn{min-height:46px;padding:0 18px;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);color:#f5f7fb;cursor:pointer;font-weight:800;box-shadow:0 8px 24px rgba(0,0,0,.14)}
     .fridge-editor-btn.primary{background:#ff7a11;border-color:#ff7a11;color:#fff}
     .fridge-editor-body{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;padding:10px;align-items:start;min-height:calc(100dvh - 76px)}
@@ -1630,24 +1631,25 @@ HTML = r"""
     .fridge-editor-mobile-tip{display:none}
     .mobile-sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.56);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:.2s ease;z-index:72}
     .mobile-sheet-backdrop.open{opacity:1;pointer-events:auto}
-    .mobile-sheet{position:fixed;left:0;right:0;bottom:0;z-index:73;transform:translateY(104%);transition:transform .24s ease;pointer-events:none}
+    .mobile-sheet{position:fixed;left:0;right:0;bottom:0;z-index:73;transform:translateY(104%);transition:transform .24s ease;pointer-events:none;padding:0 8px}
     .mobile-sheet.open{transform:translateY(0);pointer-events:auto}
-    .mobile-sheet-card{background:linear-gradient(180deg,#111a28,#0d1420);border-top-left-radius:24px;border-top-right-radius:24px;border:1px solid rgba(255,255,255,.08);box-shadow:0 -20px 40px rgba(0,0,0,.36);max-height:min(82dvh,820px);overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:12px 14px calc(18px + env(safe-area-inset-bottom,0px))}
+    .mobile-sheet-card{background:linear-gradient(180deg,#111a28,#0d1420);border-top-left-radius:24px;border-top-right-radius:24px;border:1px solid rgba(255,255,255,.08);box-shadow:0 -20px 40px rgba(0,0,0,.36);max-height:min(86dvh,820px);overflow:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:12px 14px 0;display:flex;flex-direction:column}
     .mobile-sheet-grab{width:56px;height:5px;border-radius:999px;background:rgba(255,255,255,.20);margin:0 auto 10px}
     .mobile-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
     .mobile-sheet-kicker{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:800;margin-bottom:4px}
     .mobile-sheet-title{font-size:18px;font-weight:900;letter-spacing:-.03em;color:#f5f7fb}
     .mobile-sheet-sub{font-size:13px;color:#97a6bb;line-height:1.45;margin-top:2px}
     .mobile-sheet-close{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#fff;display:grid;place-items:center}
-    #barLayoutShelfMobileBody{padding-bottom:16px}
-    .mobile-sheet-actions{display:none;position:sticky;bottom:0;z-index:4;gap:10px;justify-content:flex-end;padding:12px 0 calc(12px + env(safe-area-inset-bottom,0px));margin-top:12px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg, rgba(13,20,32,0), rgba(13,20,32,.94) 28%, #0d1420 100%)}
+    #barLayoutShelfMobileBody{padding:0 0 132px;overflow:auto;-webkit-overflow-scrolling:touch;min-height:0}
+    .mobile-sheet-actions{display:none;position:sticky;bottom:0;z-index:4;gap:10px;justify-content:flex-end;padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));margin:0 -14px 0;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg, rgba(13,20,32,.18), rgba(13,20,32,.96) 26%, #0d1420 100%);box-shadow:0 -12px 32px rgba(0,0,0,.30)}
     .mobile-sheet-actions .fridge-editor-btn{flex:1 1 0;justify-content:center}
     .mobile-sheet-actions .fridge-editor-btn.primary{box-shadow:0 10px 26px rgba(255,122,17,.22)}
     @media (max-width: 900px){
-      .fridge-editor-topbar{padding:14px 14px 12px;align-items:flex-start}
+      .fridge-editor-topbar{padding:14px 14px 12px;align-items:stretch;flex-direction:column;justify-content:flex-start}
       .fridge-editor-title{font-size:24px;line-height:1.02;max-width:100%}
       .fridge-editor-sub{font-size:13px;max-width:100%;padding-right:0}
-      .fridge-editor-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}
+      .fridge-editor-actions{width:100%;justify-content:stretch;flex-wrap:nowrap;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+      .fridge-editor-actions .fridge-editor-btn{width:100%}
       .fridge-editor-btn{min-height:40px;padding:0 14px;border-radius:12px;font-size:13px}
       .fridge-editor-body{grid-template-columns:1fr;padding:8px}
       .fridge-editor-panel{display:none !important}
@@ -1687,6 +1689,12 @@ HTML = r"""
       .fridge-product-preview{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
       .fridge-preview-card{min-height:96px}
       .fridge-preview-name{font-size:11px}
+      .mobile-sheet .fridge-panel-inline-actions--simple{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+      .mobile-sheet .fridge-panel-inline-actions--simple .fridge-inline-accent,
+      .mobile-sheet .fridge-panel-inline-actions--simple .fridge-inline-danger{width:100%;justify-content:center}
+      .mobile-sheet .fridge-panel-inline-actions--simple .fridge-panel-save{display:none}
+      .mobile-sheet .fridge-panel-inline-actions:not(.fridge-panel-inline-actions--simple){display:flex;flex-direction:column}
+      .mobile-sheet .fridge-panel-inline-actions:not(.fridge-panel-inline-actions--simple) > *{width:100%}
     }
 
 </style>
@@ -2059,7 +2067,7 @@ HTML = r"""
     <section class="page fridge-editor-page" id="page-bar-indeling-view">
       <div class="fridge-editor-shell readonly-mode-shell">
         <div class="fridge-editor-topbar">
-          <div>
+          <div class="fridge-editor-headcopy">
             <div class="fridge-editor-kicker">Bar · Indeling · Kijkmodus</div>
             <h1 class="fridge-editor-title" id="barLayoutViewTitle">Indeling bekijken</h1>
             <div class="fridge-editor-sub">Gebruik deze pagina op de vloer om snel te zien hoe een unit opgebouwd moet worden. Geen knoppen om per ongeluk iets te wijzigen.</div>
@@ -2091,7 +2099,7 @@ HTML = r"""
     <section class="page fridge-editor-page" id="page-bar-indeling-editor">
       <div class="fridge-editor-shell">
         <div class="fridge-editor-topbar">
-          <div>
+          <div class="fridge-editor-headcopy">
             <div class="fridge-editor-kicker">Bar · Indeling · Full editor</div>
             <h1 class="fridge-editor-title" id="fridgeEditorTitle">Indeling editor</h1>
             <div class="fridge-editor-sub">Werk per unit met 3 brede koelkastjes naast elkaar. Klik op een plank en stel rechts het product, de facings en het beeld van die hele rij in.</div>
@@ -2134,7 +2142,7 @@ HTML = r"""
             <div id="barLayoutShelfMobileBody"></div>
             <div class="mobile-sheet-actions">
               <button class="fridge-editor-btn" type="button" onclick="closeBarLayoutMobileSheet()">Sluiten</button>
-              <button class="fridge-editor-btn primary admin-only-action" id="barLayoutMobileSaveBtn" type="button" onclick="saveCurrentBarLayoutStructure()">Indeling opslaan</button>
+              <button class="fridge-editor-btn primary admin-only-action" id="barLayoutMobileSaveBtn" type="button" onclick="saveCurrentBarLayoutMobileSelection()">Plank opslaan</button>
             </div>
           </div>
         </div>
@@ -4084,14 +4092,22 @@ function openBarLayoutModal(layoutId=null){
     window.barLayoutDirty = !!isDirty;
     const dirty = !!window.barLayoutDirty;
     const label = dirty ? 'Indeling opslaan *' : 'Indeling opslaan';
-    ['barLayoutBottomSaveBtn','barLayoutMobileSaveBtn'].forEach(id => {
+    ['barLayoutBottomSaveBtn'].forEach(id => {
       const btn = document.getElementById(id);
       if(btn) btn.textContent = label;
     });
+    refreshBarLayoutMobileSaveLabel();
     document.querySelectorAll('.fridge-editor-btn.primary[onclick="saveCurrentBarLayoutStructure()"]')?.forEach?.(btn => {
       btn.textContent = dirty ? 'Opslaan *' : 'Opslaan';
     });
   }
+
+  function refreshBarLayoutMobileSaveLabel(){
+    const btn = document.getElementById('barLayoutMobileSaveBtn');
+    if(!btn) return;
+    btn.textContent = 'Plank opslaan';
+  }
+
 
   function updateSelectedBarLayout(mutator){
     const items = safeArray(appData.bar_layouts?.items);
@@ -4166,6 +4182,17 @@ function openBarLayoutModal(layoutId=null){
     }else if(!isBarLayoutMobile()){
       closeBarLayoutMobileSheet();
     }
+  }
+
+  function saveCurrentBarLayoutMobileSelection(){
+    const target = window.currentBarLayoutShelfTarget;
+    if(!target){
+      closeBarLayoutMobileSheet();
+      return;
+    }
+    applyBarShelfSettings(target.unitIndex, target.coolerIndex, target.shelfIndex);
+    toast('Plankinstellingen bijgewerkt');
+    refreshBarLayoutMobileSaveLabel();
   }
 
 function openBarLayoutEditor(layoutId=null){
