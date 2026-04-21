@@ -1626,7 +1626,65 @@ HTML = r"""
     @media (max-width: 820px){.layout-orientation-hint{display:block}.layout-unit-top{align-items:flex-start;flex-direction:column}.layout-plan{min-width:760px}}
     @media (max-width: 560px){.layout-slot{min-height:100px}.layout-cooler-window{min-height:520px}}
 
-  </style>
+  
+    .fridge-editor-mobile-tip{display:none}
+    .mobile-sheet-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.56);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:.2s ease;z-index:72}
+    .mobile-sheet-backdrop.open{opacity:1;pointer-events:auto}
+    .mobile-sheet{position:fixed;left:0;right:0;bottom:0;z-index:73;transform:translateY(104%);transition:transform .24s ease;pointer-events:none}
+    .mobile-sheet.open{transform:translateY(0);pointer-events:auto}
+    .mobile-sheet-card{background:linear-gradient(180deg,#111a28,#0d1420);border-top-left-radius:24px;border-top-right-radius:24px;border:1px solid rgba(255,255,255,.08);box-shadow:0 -20px 40px rgba(0,0,0,.36);max-height:min(78dvh,780px);overflow:auto;padding:12px 14px calc(18px + env(safe-area-inset-bottom,0px))}
+    .mobile-sheet-grab{width:56px;height:5px;border-radius:999px;background:rgba(255,255,255,.20);margin:0 auto 10px}
+    .mobile-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}
+    .mobile-sheet-kicker{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:800;margin-bottom:4px}
+    .mobile-sheet-title{font-size:18px;font-weight:900;letter-spacing:-.03em;color:#f5f7fb}
+    .mobile-sheet-sub{font-size:13px;color:#97a6bb;line-height:1.45;margin-top:2px}
+    .mobile-sheet-close{width:38px;height:38px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#fff;display:grid;place-items:center}
+    @media (max-width: 900px){
+      .fridge-editor-topbar{padding:14px 14px 12px;align-items:flex-start}
+      .fridge-editor-title{font-size:24px;line-height:1.02;max-width:100%}
+      .fridge-editor-sub{font-size:13px;max-width:100%;padding-right:0}
+      .fridge-editor-actions{width:100%;justify-content:flex-start}
+      .fridge-editor-btn{min-height:40px;padding:0 14px;border-radius:12px;font-size:13px}
+      .fridge-editor-body{grid-template-columns:1fr;padding:8px}
+      .fridge-editor-panel{display:none !important}
+      .fridge-editor-canvas{padding:10px}
+      .fridge-editor-toolbar{flex-direction:column;align-items:stretch;gap:10px;margin-bottom:8px}
+      .fridge-editor-toolbar-left{display:grid;grid-template-columns:minmax(108px,140px) 1fr;gap:8px;align-items:center}
+      .fridge-editor-toolbar .actions{display:none}
+      .fridge-editor-select{min-height:42px}
+      .fridge-editor-stage{overflow:visible;padding-bottom:0}
+      .fridge-unit{padding:10px;border-radius:18px}
+      .fridge-unit-top{padding:0 2px 8px}
+      .fridge-unit-name{font-size:18px}
+      .fridge-unit-note{font-size:12px;line-height:1.4}
+      .fridge-door-badge{display:none}
+      .fridge-bank{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(84vw,84vw);gap:10px;overflow-x:auto;overflow-y:hidden;padding-bottom:10px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+      .fridge-bank::-webkit-scrollbar{height:6px}
+      .fridge-bank::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px}
+      .fridge-door{min-height:0;scroll-snap-align:start;padding:7px;border-radius:18px}
+      .fridge-door-frame{padding:8px 8px 7px;border-radius:14px}
+      .fridge-door-window{min-height:320px;padding:10px 6px 8px;border-radius:12px}
+      .fridge-handle{top:52px;height:120px}
+      .fridge-door-title{font-size:11px}
+      .fridge-door-header{margin-bottom:4px}
+      .fridge-door-shelves{gap:7px;padding-top:8px}
+      .fridge-shelf{padding-bottom:12px}
+      .fridge-shelf-track{padding:8px 3px 10px;border-radius:12px}
+      .fridge-shelf-products{gap:4px}
+      .fridge-item{min-width:0;border-radius:10px}
+      .fridge-item-thumb{padding:2px}
+      .fridge-item-thumb img{max-height:64px}
+      .fridge-rotate-hint{display:none !important}
+      .fridge-editor-mobile-tip{display:block;margin-bottom:10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(212,176,106,.24);background:rgba(212,176,106,.10);color:#f5dfb5;font-size:12px;line-height:1.45}
+      .fridge-panel-section,.fridge-panel-block{margin-bottom:12px}
+      .fridge-panel-grid{grid-template-columns:1fr !important}
+      .fridge-facing-grid{grid-template-columns:repeat(4,minmax(0,1fr)) !important}
+      .fridge-product-preview{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+      .fridge-preview-card{min-height:96px}
+      .fridge-preview-name{font-size:11px}
+    }
+
+</style>
 </head>
 <body>
 <div class="app">
@@ -2040,6 +2098,7 @@ HTML = r"""
         </div>
         <div class="fridge-editor-body">
           <div class="fridge-editor-canvas">
+            <div class="fridge-editor-mobile-tip">Op telefoon swipe je nu tussen de 3 koelkastjes. Tik op een plank om onderin direct product, facings en plankinstellingen te openen.</div>
             <div class="fridge-rotate-hint">Voor het beste overzicht gebruik je deze editor op telefoon in liggende stand.</div>
             <div class="fridge-editor-toolbar">
               <div class="fridge-editor-toolbar-left">
@@ -2054,6 +2113,21 @@ HTML = r"""
             <div class="fridge-editor-stage" id="barLayoutFridgeStage"></div>
           </div>
           <aside class="fridge-editor-panel" id="barLayoutShelfPanel"></aside>
+        </div>
+        <div class="mobile-sheet-backdrop" id="barLayoutShelfMobileBackdrop" onclick="closeBarLayoutMobileSheet()"></div>
+        <div class="mobile-sheet" id="barLayoutShelfMobile">
+          <div class="mobile-sheet-card">
+            <div class="mobile-sheet-grab"></div>
+            <div class="mobile-sheet-head">
+              <div>
+                <div class="mobile-sheet-kicker">Indeling editor</div>
+                <div class="mobile-sheet-title" id="barLayoutShelfMobileTitle">Plank aanpassen</div>
+                <div class="mobile-sheet-sub" id="barLayoutShelfMobileSub">Tik op een plank om hem op telefoon te bewerken.</div>
+              </div>
+              <button class="mobile-sheet-close" type="button" onclick="closeBarLayoutMobileSheet()">✕</button>
+            </div>
+            <div id="barLayoutShelfMobileBody"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -4012,10 +4086,43 @@ function openBarLayoutModal(layoutId=null){
     return normalized;
   }
 
-  function openBarLayoutEditor(layoutId=null){
+  
+  function isBarLayoutMobile(){
+    return window.matchMedia('(max-width: 900px)').matches;
+  }
+
+  function closeBarLayoutMobileSheet(){
+    document.getElementById('barLayoutShelfMobile')?.classList.remove('open');
+    document.getElementById('barLayoutShelfMobileBackdrop')?.classList.remove('open');
+    document.body.classList.remove('bar-layout-mobile-sheet-open');
+  }
+
+  function openBarLayoutMobileSheet(){
+    document.getElementById('barLayoutShelfMobile')?.classList.add('open');
+    document.getElementById('barLayoutShelfMobileBackdrop')?.classList.add('open');
+    document.body.classList.add('bar-layout-mobile-sheet-open');
+  }
+
+  function syncBarLayoutMobileSheet(html='', meta=null){
+    const body = document.getElementById('barLayoutShelfMobileBody');
+    const title = document.getElementById('barLayoutShelfMobileTitle');
+    const sub = document.getElementById('barLayoutShelfMobileSub');
+    if(!body) return;
+    body.innerHTML = html || '<div class="fridge-editor-empty">Tik op een plank om hem op telefoon te bewerken.</div>';
+    if(title) title.textContent = meta?.title || 'Plank aanpassen';
+    if(sub) sub.textContent = meta?.sub || 'Tik op een plank om hem op telefoon te bewerken.';
+    if(isBarLayoutMobile() && html){
+      openBarLayoutMobileSheet();
+    }else if(!isBarLayoutMobile()){
+      closeBarLayoutMobileSheet();
+    }
+  }
+
+function openBarLayoutEditor(layoutId=null){
     if(layoutId) currentBarLayoutId = layoutId;
     window.currentBarLayoutId = currentBarLayoutId;
     window.currentBarLayoutShelfTarget = null;
+    closeBarLayoutMobileSheet();
         openPage('bar-indeling-editor');
     renderBarLayoutEditor();
   }
@@ -4023,6 +4130,7 @@ function openBarLayoutModal(layoutId=null){
   function changeBarLayoutEditorUnit(value){
     window.currentBarLayoutUnitIndex = Number(value || 0);
     window.currentBarLayoutShelfTarget = null;
+    closeBarLayoutMobileSheet();
         renderBarLayoutEditor();
   }
   function requestRemoveBarLayoutUnit(){
@@ -4105,6 +4213,7 @@ function openBarLayoutModal(layoutId=null){
   function selectBarLayoutShelf(unitIndex, coolerIndex, shelfIndex, slotIndex=0){
     window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex, slotIndex };
         renderBarLayoutEditor();
+    if(isBarLayoutMobile()) openBarLayoutMobileSheet();
   }
 
   function setBarShelfSlotProduct(unitIndex, coolerIndex, shelfIndex, slotIndex, productId){
@@ -4178,18 +4287,24 @@ function openBarLayoutModal(layoutId=null){
     const panel = document.getElementById('barLayoutShelfPanel');
     if(!panel) return;
     if(!layout){
-      panel.innerHTML = `<div class="fridge-editor-empty">Selecteer een indeling om de editor te gebruiken.</div>`;
+      const emptyHtml = `<div class="fridge-editor-empty">Selecteer een indeling om de editor te gebruiken.</div>`;
+      panel.innerHTML = emptyHtml;
+      syncBarLayoutMobileSheet('', null);
       return;
     }
     if(!target){
-      panel.innerHTML = `<div class="fridge-editor-empty">Selecteer een plank om rechts producten, facings en afbeeldingen te beheren.</div>`;
+      const emptyHtml = `<div class="fridge-editor-empty">Tik op een plank om op telefoon direct product, facings en plankinstellingen te openen.</div>`;
+      panel.innerHTML = emptyHtml;
+      syncBarLayoutMobileSheet('', null);
       return;
     }
     const unit = layout?.units?.[target.unitIndex];
     const cooler = unit?.coolers?.[target.coolerIndex];
     const shelf = cooler?.shelves?.[target.shelfIndex];
     if(!unit || !cooler || !shelf){
-      panel.innerHTML = `<div class="fridge-editor-empty">Selecteer een plank in de editor om rechts producten en facings aan te passen.</div>`;
+      const emptyHtml = `<div class="fridge-editor-empty">Selecteer een plank in de editor om product, facings en instellingen te openen.</div>`;
+      panel.innerHTML = emptyHtml;
+      syncBarLayoutMobileSheet('', null);
       return;
     }
     const selectedSlot = safeArray(shelf.slots)[target.slotIndex] || defaultClientBarSlot(target.slotIndex + 1);
@@ -4198,7 +4313,7 @@ function openBarLayoutModal(layoutId=null){
     const selectedProduct = options.find(opt => opt.id === selectedProductId) || null;
     const maxFacings = Math.max(1, Math.min(Number(shelf.facings || 9) || 9, 9));
     const activeFacingCount = Math.max(1, Math.min(Number(document.getElementById('barShelfFacingCount')?.value || 1) || 1, maxFacings));
-    panel.innerHTML = `
+    const panelHtml = `
       <h3>${escapeHtml(unit.name || `GB${target.unitIndex + 1}`)} · ${escapeHtml(cooler.name || `Koelkast ${target.coolerIndex + 1}`)}</h3>
       <p>${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${target.shelfIndex + 1}`))} · plek ${target.slotIndex + 1}</p>
       <div class="fridge-panel-section">
@@ -4278,8 +4393,12 @@ function openBarLayoutModal(layoutId=null){
           }).join('')}
         </div>
       </div>
-      <div class="fridge-editor-note">Klik links op een plek in de plank. Kies rechts het product en gebruik facings om vanaf die plek door te vullen.</div>
+      <div class="fridge-editor-note">Klik links op een plank of plek. Op telefoon opent onderin direct een slimme editor, zodat je niet meer hoeft te scrollen door één lange pagina.</div>
     `;
+    panel.innerHTML = panelHtml;
+    const mobileTitle = `${escapeHtml(unit.name || `GB${target.unitIndex + 1}`)} · ${escapeHtml(cooler.name || `Koelkast ${target.coolerIndex + 1}`)}`;
+    const mobileSub = `${escapeHtml(shelf.name || (shelf.is_floor ? 'Bodem' : `Plank ${target.shelfIndex + 1}`))} · plek ${target.slotIndex + 1}`;
+    syncBarLayoutMobileSheet(panelHtml, { title: mobileTitle, sub: mobileSub });
   }
 
   function applyBarShelfSettings(unitIndex, coolerIndex, shelfIndex){
