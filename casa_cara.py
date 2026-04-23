@@ -1,9 +1,14 @@
 
-from flask import Blueprint, render_template_string, jsonify, request, session, redirect
+from flask import Blueprint, render_template_string, jsonify, request, session, redirect, Response, Response
 import json
+import secrets
+import base64
+import calendar
+from io import BytesIO
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from pathlib import Path
+from PIL import Image
 
 casa_cara = Blueprint("casa_cara", __name__)
 
@@ -84,8 +89,7 @@ DEFAULT_PERMISSIONS = {
     "manage_kitchen_tasklists": False,
     "manage_bar_tasklists": False,
     "manage_coolers": False,
-    "manage_bar_layouts": False,
-}
+    "manage_bar_layouts": False}
 
 
 def default_permissions_for_role(role: str):
@@ -154,8 +158,7 @@ def permission_labels():
         "manage_kitchen_tasklists": "Keuken takenlijsten beheren",
         "manage_bar_tasklists": "Bar takenlijsten beheren",
         "manage_coolers": "Koelingen beheren",
-        "manage_bar_layouts": "Bar indelingen beheren",
-    }
+        "manage_bar_layouts": "Bar indelingen beheren"}
 
 
 def load_casa_auth_data():
@@ -180,8 +183,8 @@ def load_casa_auth_data():
                 "code": pin,
                 "role": role,
                 "active": bool(item.get("active", True)),
-                "permissions": normalize_permissions(role, item.get("permissions")),
-            })
+                "calendar_token": str(item.get("calendar_token") or item.get("agenda_token") or "").strip(),
+                "permissions": normalize_permissions(role, item.get("permissions"))})
             seen_pins.add(pin)
     return {"users": merged_users}
 
@@ -204,8 +207,8 @@ def save_casa_auth_data(data):
             "code": clean_pin,
             "role": role,
             "active": bool(item.get("active", True)),
-            "permissions": normalize_permissions(role, item.get("permissions")),
-        })
+            "calendar_token": str(item.get("calendar_token") or "").strip(),
+            "permissions": normalize_permissions(role, item.get("permissions"))})
     payload = {"users": users}
     for auth_path in CASA_AUTH_CANDIDATES:
         try:
@@ -231,6 +234,46 @@ def get_current_casa_user():
         session["casa_user_name"] = user.get("name")
         session["casa_user_role"] = user.get("role")
     return user
+
+
+
+def ensure_calendar_token_for_current_user():
+    user = get_current_casa_user()
+    if not user:
+        return ""
+    pin = str(user.get("pin") or session.get("casa_user_pin") or "").strip()
+    data = load_casa_auth_data()
+    changed = False
+    token = ""
+    for item in data.get("users", []):
+        if str(item.get("pin") or "") == pin:
+            token = str(item.get("calendar_token") or "").strip()
+            if not token:
+                token = secrets.token_urlsafe(24)
+                item["calendar_token"] = token
+                changed = True
+            break
+    if changed:
+        save_casa_auth_data(data)
+    return token
+
+
+def get_casa_user_by_calendar_token(token: str):
+    token = str(token or "").strip()
+    if not token:
+        return None
+    for user in load_casa_auth_data().get("users", []):
+        if user.get("active", True) and str(user.get("calendar_token") or "").strip() == token:
+            return user
+    return None
+
+
+def calendar_feed_url_for_current_user():
+    token = ensure_calendar_token_for_current_user()
+    if not token:
+        return ""
+    base = request.host_url.rstrip("/")
+    return f"{base}/casa-cara-calendar/{token}.ics"
 
 
 def current_permissions():
@@ -276,14 +319,12 @@ def get_tip_context():
         return {
             "amount": round(amount, 2),
             "label": f"Fooienpot van {user_name}" if user_name else "Jouw fooienpot",
-            "is_personal": True,
-        }
+            "is_personal": True}
     amount = float(data.get("fooienpot", 0) or 0)
     return {
         "amount": round(amount, 2),
         "label": "Algemene fooienpot",
-        "is_personal": False,
-    }
+        "is_personal": False}
 
 def admin_only_response():
     return jsonify({"ok": False, "message": "Alleen een admin mag dit doen."}), 403
@@ -335,11 +376,434 @@ def get_general_data():
     data.setdefault("fooienpot_per_user", {})
     if not isinstance(data.get("fooienpot_per_user"), dict):
         data["fooienpot_per_user"] = {}
-    data.setdefault("diensten", [])
+    data["diensten"] = normalize_diensten(data.get("diensten", []))
     return data
 
 def save_general_data(data):
     save_json(GENERAL_FILE, data)
+
+
+def normalize_dienst_status(value):
+    value = (value or "").strip().lower()
+    allowed = {"ingepland", "bevestigd", "gewijzigd", "vervallen"}
+    return value if value in allowed else "ingepland"
+
+
+def normalize_dienst_time_value(value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    if len(parts) != 2:
+        return ""
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except Exception:
+        return ""
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return ""
+    return f"{hour:02d}:{minute:02d}"
+
+
+def build_dienst_time_label(start: str = "", einde: str = "") -> str:
+    start = normalize_dienst_time_value(start)
+    einde = normalize_dienst_time_value(einde)
+    if start and einde:
+        return f"{start} - {einde}"
+    if start:
+        return f"{start}"
+    if einde:
+        return f"tot {einde}"
+    return ""
+
+
+def extract_dienst_times(start: str = "", einde: str = "", tijd: str = ""):
+    start = normalize_dienst_time_value(start)
+    einde = normalize_dienst_time_value(einde)
+    tijd = (tijd or "").strip().replace("–", "-").replace("—", "-")
+    if not (start or einde) and tijd:
+        import re
+        matches = re.findall(r"(\d{1,2}:\d{2})", tijd)
+        if matches:
+            start = normalize_dienst_time_value(matches[0])
+            if len(matches) > 1:
+                einde = normalize_dienst_time_value(matches[1])
+    return start, einde, build_dienst_time_label(start, einde)
+
+
+def month_grid_for_import(year: int, month: int):
+    cal = calendar.Calendar(firstweekday=0)
+    return cal.monthdayscalendar(year, month)
+
+
+def decode_image_from_data_url(data_url: str):
+    data_url = (data_url or "").strip()
+    if not data_url:
+        raise ValueError("Geen afbeelding ontvangen.")
+    encoded = data_url.split(",", 1)[1] if "," in data_url else data_url
+    raw = base64.b64decode(encoded)
+    return Image.open(BytesIO(raw)).convert("RGB")
+
+
+def _find_calendar_panel_bounds(image: Image.Image):
+    width, height = image.size
+    pixels = image.load()
+
+    def is_light(x, y):
+        r, g, b = pixels[x, y]
+        return r > 228 and g > 228 and b > 228
+
+    crop_x1 = int(width * 0.04)
+    crop_x2 = int(width * 0.96)
+    crop_y1 = int(height * 0.18)
+    crop_y2 = int(height * 0.58)
+    scan_step_y = max(2, int(height / 260))
+    rows = []
+    for y in range(crop_y1, crop_y2, scan_step_y):
+        total = 0
+        light_count = 0
+        for x in range(crop_x1, crop_x2, 4):
+            total += 1
+            if is_light(x, y):
+                light_count += 1
+        rows.append((y, light_count / max(total, 1)))
+
+    segments = []
+    start = None
+    values = []
+    for y, ratio in rows:
+        if ratio > 0.72:
+            if start is None:
+                start = y
+                values = [ratio]
+            else:
+                values.append(ratio)
+        elif start is not None:
+            segments.append((start, y, sum(values) / len(values)))
+            start = None
+            values = []
+    if start is not None:
+        segments.append((start, rows[-1][0], sum(values) / len(values)))
+
+    best = None
+    best_score = 0
+    for top, bottom, avg in segments:
+        h = bottom - top
+        if h < height * 0.09:
+            continue
+        mid_y = int((top + bottom) / 2)
+        cols = []
+        for x in range(crop_x1, crop_x2, 4):
+            total = 0
+            light_count = 0
+            for yy in range(max(top, mid_y - 8), min(bottom, mid_y + 8), 2):
+                total += 1
+                if is_light(x, yy):
+                    light_count += 1
+            cols.append((x, light_count / max(total, 1)))
+
+        cx1 = None
+        cx2 = None
+        run = None
+        for x, ratio in cols:
+            if ratio > 0.72 and run is None:
+                run = x
+            elif ratio <= 0.72 and run is not None:
+                if x - run > width * 0.45:
+                    cx1, cx2 = run, x
+                    break
+                run = None
+        if cx1 is None and run is not None:
+            cx1, cx2 = run, cols[-1][0]
+
+        if cx1 is None or cx2 is None:
+            continue
+
+        area = max(0, (cx2 - cx1) * h)
+        score = area * avg
+        if score > best_score:
+            best_score = score
+            best = (cx1, top, cx2, bottom)
+
+    if best:
+        return best
+
+    return (
+        int(width * 0.05),
+        int(height * 0.26),
+        int(width * 0.95),
+        int(height * 0.48),
+    )
+
+
+
+def _fixed_dish_calendar_panel_bounds(image: Image.Image):
+    width, height = image.size
+    return (
+        int(width * 0.04),
+        int(height * 0.24),
+        int(width * 0.95),
+        int(height * 0.615),
+    )
+
+
+def detect_dish_calendar_days(image: Image.Image, year: int, month: int, include_colors=None):
+    # v5: alleen volledig blauwe DISH-dagen herkennen.
+    # Groen wordt genegeerd en omcirkelde blauwe dagen vallen buiten de detectie.
+    width, height = image.size
+    pixels = image.load()
+
+    x1, y1, x2, y2 = _fixed_dish_calendar_panel_bounds(image)
+    x1 = max(0, min(width - 1, x1))
+    x2 = max(x1 + 1, min(width, x2))
+    y1 = max(0, min(height - 1, y1))
+    y2 = max(y1 + 1, min(height, y2))
+
+    panel_w = max(1, x2 - x1)
+    panel_h = max(1, y2 - y1)
+
+    weeks = month_grid_for_import(year, month)
+    rows = max(1, len(weeks))
+    cols = 7
+
+    # Deze verhoudingen zijn afgestemd op het DISH maandrooster uit de app:
+    # alleen het raster met dagen wordt geanalyseerd.
+    grid_x1 = int(x1 + panel_w * 0.158)
+    grid_x2 = int(x1 + panel_w * 0.952)
+    grid_y1 = int(y1 + panel_h * 0.336)
+    grid_y2 = int(y1 + panel_h * 0.975)
+
+    grid_x1 = max(0, min(width - 1, grid_x1))
+    grid_x2 = max(grid_x1 + 1, min(width, grid_x2))
+    grid_y1 = max(0, min(height - 1, grid_y1))
+    grid_y2 = max(grid_y1 + 1, min(height, grid_y2))
+
+    cell_w = (grid_x2 - grid_x1) / cols
+    cell_h = (grid_y2 - grid_y1) / rows
+
+    def is_full_blue(r, g, b):
+        # Relaxte blauwe detectie voor DISH, maar wel duidelijk gevuld blauw.
+        return (
+            b >= 145
+            and g >= 120
+            and r <= 165
+            and (b - r) >= 18
+            and (g - r) >= 6
+        )
+
+    # Bouw masker alleen binnen het kalendergrid.
+    mask_w = max(1, grid_x2 - grid_x1)
+    mask_h = max(1, grid_y2 - grid_y1)
+    mask = [[False] * mask_w for _ in range(mask_h)]
+    for yy in range(mask_h):
+        py = grid_y1 + yy
+        for xx in range(mask_w):
+            px = grid_x1 + xx
+            r, g, b = pixels[px, py]
+            if is_full_blue(r, g, b):
+                mask[yy][xx] = True
+
+    # Vind blauwe componenten.
+    components = []
+    visited = [[False] * mask_w for _ in range(mask_h)]
+    for sy in range(mask_h):
+        for sx in range(mask_w):
+            if not mask[sy][sx] or visited[sy][sx]:
+                continue
+            stack = [(sx, sy)]
+            visited[sy][sx] = True
+            area = 0
+            min_x = max_x = sx
+            min_y = max_y = sy
+            while stack:
+                cx, cy = stack.pop()
+                area += 1
+                if cx < min_x:
+                    min_x = cx
+                if cx > max_x:
+                    max_x = cx
+                if cy < min_y:
+                    min_y = cy
+                if cy > max_y:
+                    max_y = cy
+                if cx > 0 and mask[cy][cx - 1] and not visited[cy][cx - 1]:
+                    visited[cy][cx - 1] = True
+                    stack.append((cx - 1, cy))
+                if cx + 1 < mask_w and mask[cy][cx + 1] and not visited[cy][cx + 1]:
+                    visited[cy][cx + 1] = True
+                    stack.append((cx + 1, cy))
+                if cy > 0 and mask[cy - 1][cx] and not visited[cy - 1][cx]:
+                    visited[cy - 1][cx] = True
+                    stack.append((cx, cy - 1))
+                if cy + 1 < mask_h and mask[cy + 1][cx] and not visited[cy + 1][cx]:
+                    visited[cy + 1][cx] = True
+                    stack.append((cx, cy + 1))
+
+            bbox_w = max_x - min_x + 1
+            bbox_h = max_y - min_y + 1
+            fill_ratio = area / max(1, bbox_w * bbox_h)
+
+            # Alleen echt gevulde blauwe vormen:
+            # - kleine dunne ringen (zoals omcirkeld blauw) vallen hier af
+            # - grote blauwe balken en gevulde bollen blijven over
+            if area < 900:
+                continue
+            if fill_ratio < 0.18:
+                continue
+
+            components.append({
+                "x1": grid_x1 + min_x,
+                "y1": grid_y1 + min_y,
+                "x2": grid_x1 + max_x + 1,
+                "y2": grid_y1 + max_y + 1,
+                "area": area,
+                "fill_ratio": fill_ratio})
+
+    results = []
+    for row in range(rows):
+        for col in range(cols):
+            day = weeks[row][col]
+            if not day:
+                continue
+
+            cell_x1 = int(grid_x1 + col * cell_w)
+            cell_x2 = int(grid_x1 + (col + 1) * cell_w)
+            cell_y1 = int(grid_y1 + row * cell_h)
+            cell_y2 = int(grid_y1 + (row + 1) * cell_h)
+
+            # Gebruik een kernvlak per dagcel; daardoor is de match stabieler.
+            core_x1 = int(cell_x1 + cell_w * 0.12)
+            core_x2 = int(cell_x2 - cell_w * 0.12)
+            core_y1 = int(cell_y1 + cell_h * 0.08)
+            core_y2 = int(cell_y2 - cell_h * 0.10)
+            core_area = max(1, (core_x2 - core_x1) * (core_y2 - core_y1))
+
+            matched = False
+            for comp in components:
+                ix1 = max(core_x1, comp["x1"])
+                iy1 = max(core_y1, comp["y1"])
+                ix2 = min(core_x2, comp["x2"])
+                iy2 = min(core_y2, comp["y2"])
+                inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                if inter_area >= min(700, int(core_area * 0.09)):
+                    matched = True
+                    break
+
+            if matched:
+                results.append({
+                    "color": "blue",
+                    "date": f"{year:04d}-{month:02d}-{day:02d}",
+                    "day": day})
+
+    deduped = []
+    seen = set()
+    for item in sorted(results, key=lambda x: x["date"]):
+        key = item["date"]
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def build_dish_import_preview(image_data: str, year: int, month: int, color_map=None, include_colors=None):
+    color_map = color_map or {}
+    image = decode_image_from_data_url(image_data)
+    detected = detect_dish_calendar_days(image, year, month, include_colors=include_colors)
+    dienst_types = {item.get("naam"): item for item in get_dienst_types()}
+    preview = []
+    for item in detected:
+        mapped_name = (color_map.get(item["color"]) or "").strip()
+        dienst_type = dienst_types.get(mapped_name, {}) if mapped_name else {}
+        start = normalize_dienst_time_value(dienst_type.get("start") or "")
+        einde = normalize_dienst_time_value(dienst_type.get("einde") or "")
+        preview.append({
+            "naam": mapped_name,
+            "suggested_name": mapped_name,
+            "datum": item["date"],
+            "color": item["color"],
+            "start": start,
+            "einde": einde,
+            "tijd": build_dienst_time_label(start, einde),
+            "status": "ingepland",
+            "source": "dish_screenshot"})
+    return preview
+
+
+
+def normalize_dienst_item(item):
+    item = item if isinstance(item, dict) else {}
+    naam = (item.get("naam") or item.get("medewerker") or item.get("persoon") or "").strip()
+    datum = (item.get("datum") or item.get("date") or "").strip()
+    start, einde, tijd = extract_dienst_times(
+        item.get("start") or item.get("starttijd") or "",
+        item.get("einde") or item.get("eindtijd") or "",
+        item.get("tijd") or "",
+    )
+    rol = str(item.get("rol") or "").strip()
+    notitie = str(item.get("notitie") or "").strip()
+    locatie = (item.get("locatie") or item.get("afdeling") or "").strip()
+    source = (item.get("source") or "manual").strip() or "manual"
+    return {
+        **item,
+        "naam": naam,
+        "datum": datum,
+        "start": start,
+        "einde": einde,
+        "tijd": tijd,
+        "rol": rol,
+        "notitie": notitie,
+        "locatie": locatie,
+        "status": normalize_dienst_status(item.get("status")),
+        "source": source,
+        "owner_name": str(item.get("owner_name") or item.get("eigenaar") or item.get("user_name") or "").strip(),
+        "external_id": str(item.get("external_id") or "").strip(),
+        "calendar_event_id": str(item.get("calendar_event_id") or "").strip(),
+        "last_synced_at": str(item.get("last_synced_at") or "").strip(),
+        "created_at": str(item.get("created_at") or "").strip(),
+        "updated_at": str(item.get("updated_at") or "").strip()}
+
+
+def normalize_diensten(items):
+    cleaned = []
+    for item in items if isinstance(items, list) else []:
+        normalized = normalize_dienst_item(item)
+        if normalized.get("naam") or normalized.get("datum") or normalized.get("tijd"):
+            cleaned.append(normalized)
+    return cleaned
+
+
+def current_casa_owner_name():
+    user = get_current_casa_user() or {}
+    return str(user.get("name") or "").strip()
+
+
+def dienst_is_visible_for_current_user(item):
+    if is_casa_admin():
+        return True
+    owner = str((item or {}).get("owner_name") or "").strip().lower()
+    current = current_casa_owner_name().lower()
+    return bool(owner and current and owner == current)
+
+
+def dienst_can_current_user_modify(item):
+    if is_casa_admin():
+        return True
+    return dienst_is_visible_for_current_user(item)
+
+
+def diensten_for_current_user_with_indices(diensten):
+    result = []
+    current = current_casa_owner_name().lower()
+    for index, item in enumerate(diensten or []):
+        normalized = normalize_dienst_item(item)
+        if is_casa_admin() or (str(normalized.get("owner_name") or "").strip().lower() == current):
+            visible_item = dict(normalized)
+            visible_item["_global_index"] = index
+            result.append(visible_item)
+    return result
+
 
 def get_types():
     raw = load_json(PRODUCT_TYPES_FILE, [])
@@ -350,8 +814,7 @@ def get_types():
         elif isinstance(item, dict):
             result.append({
                 "naam": item.get("naam", "Overig"),
-                "locatie": item.get("locatie", "-"),
-            })
+                "locatie": item.get("locatie", "-")})
     deduped = {}
     for item in result:
         deduped[item["naam"]] = {"naam": item["naam"], "locatie": item["locatie"]}
@@ -400,8 +863,7 @@ def get_dienst_types():
                 items.append({
                     "naam": name,
                     "start": (item.get("start") or "").strip(),
-                    "einde": (item.get("einde") or "").strip(),
-                })
+                    "einde": (item.get("einde") or "").strip()})
     deduped = {}
     for item in items:
         deduped[item["naam"]] = item
@@ -525,8 +987,7 @@ def default_layout_slot(index: int):
         "product_id": "",
         "product_name": "",
         "image_url": "",
-        "note": "",
-    }
+        "note": ""}
 
 
 def default_layout_shelf(index: int, slots_per_shelf: int = 9, *, name: str = "", height: str = "medium", is_floor: bool = False):
@@ -540,8 +1001,7 @@ def default_layout_shelf(index: int, slots_per_shelf: int = 9, *, name: str = ""
         "facings": slots_per_shelf,
         "height": height,
         "is_floor": bool(is_floor),
-        "slots": [default_layout_slot(i + 1) for i in range(slots_per_shelf)],
-    }
+        "slots": [default_layout_slot(i + 1) for i in range(slots_per_shelf)]}
 
 
 def default_layout_cooler(index: int, cooler_name: str = ""):
@@ -553,16 +1013,14 @@ def default_layout_cooler(index: int, cooler_name: str = ""):
             default_layout_shelf(2, name="Plank 2"),
             default_layout_shelf(3, name="Plank 3"),
             default_layout_shelf(4, slots_per_shelf=9, name="Bodem", height="low", is_floor=True),
-        ],
-    }
+        ]}
 
 
 def default_layout_unit(index: int):
     return {
         "id": f"unit_{index}",
         "name": f"GB{index}",
-        "coolers": [default_layout_cooler(i + 1) for i in range(3)],
-    }
+        "coolers": [default_layout_cooler(i + 1) for i in range(3)]}
 
 
 def default_bar_layout_structure():
@@ -578,8 +1036,7 @@ def normalize_layout_slot(item, index: int):
         "product_id": str(item.get("product_id") or item.get("productId") or "").strip(),
         "product_name": product_name,
         "image_url": str(item.get("image_url") or item.get("image") or item.get("photo") or item.get("thumb") or "").strip(),
-        "note": str(item.get("note") or "").strip(),
-    }
+        "note": str(item.get("note") or "").strip()}
 
 
 def normalize_layout_shelf(item, index: int):
@@ -601,8 +1058,7 @@ def normalize_layout_shelf(item, index: int):
         "facings": facings,
         "height": height,
         "is_floor": is_floor,
-        "slots": slots,
-    }
+        "slots": slots}
 
 
 def normalize_layout_cooler(item, index: int):
@@ -621,8 +1077,7 @@ def normalize_layout_cooler(item, index: int):
     return {
         "id": (item.get("id") or f"cooler_{index}").strip() or f"cooler_{index}",
         "name": (item.get("name") or f"Koelkast {index}").strip() or f"Koelkast {index}",
-        "shelves": shelves,
-    }
+        "shelves": shelves}
 
 
 def normalize_layout_unit(item, index: int):
@@ -634,8 +1089,7 @@ def normalize_layout_unit(item, index: int):
     return {
         "id": (item.get("id") or f"unit_{index}").strip() or f"unit_{index}",
         "name": (item.get("name") or f"GB{index}").strip() or f"GB{index}",
-        "coolers": coolers[:3],
-    }
+        "coolers": coolers[:3]}
 
 
 def normalize_layout_units(raw_units):
@@ -661,8 +1115,7 @@ def get_bar_layouts_data():
             "name": name,
             "note": (item.get("note") or "").strip(),
             "created_at": (item.get("created_at") or "").strip(),
-            "units": normalize_layout_units(item.get("units")),
-        })
+            "units": normalize_layout_units(item.get("units"))})
     data["items"] = items
     data["active_id"] = str(data.get("active_id") or "").strip()
     if data["active_id"] and not any(item["id"] == data["active_id"] for item in items):
@@ -688,8 +1141,7 @@ def save_bar_layouts_data(data):
             "name": name,
             "note": (item.get("note") or "").strip(),
             "created_at": (item.get("created_at") or "").strip(),
-            "units": normalize_layout_units(item.get("units")),
-        })
+            "units": normalize_layout_units(item.get("units"))})
     if clean["active_id"] and not any(item["id"] == clean["active_id"] for item in clean["items"]):
         clean["active_id"] = ""
     save_json(BAR_LAYOUTS_FILE, clean)
@@ -729,8 +1181,7 @@ def build_fill_items(bar_data):
                     "voorraad": voorraad,
                     "minimum": minimum,
                     "bijvullen": max(minimum - voorraad, 0),
-                    "locatie": type_location(soort),
-                })
+                    "locatie": type_location(soort)})
     items.sort(key=lambda x: (
         (x.get("locatie") or "").lower(),
         (x.get("soort") or "").lower(),
@@ -744,6 +1195,8 @@ def serialize_app_data():
     general_data = get_general_data()
     tip_context = get_tip_context()
     general_view = dict(general_data)
+    general_view["diensten"] = diensten_for_current_user_with_indices(general_data.get("diensten", []))
+    general_view["diensten_personal_view"] = not is_casa_admin()
     general_view["fooienpot"] = tip_context["amount"]
     general_view["fooienpot_label"] = tip_context["label"]
     general_view["fooienpot_is_personal"] = tip_context["is_personal"]
@@ -752,8 +1205,7 @@ def serialize_app_data():
     return {
         "bar": {
             "koelingen": bar_data.get("koelingen", []),
-            "fill_items": build_fill_items(bar_data),
-        },
+            "fill_items": build_fill_items(bar_data)},
         "general": general_view,
         "types": get_types(),
         "locations": get_locations(),
@@ -769,8 +1221,161 @@ def serialize_app_data():
             "permissions": permissions,
             "permission_labels": permission_labels(),
             "users": load_casa_auth_data().get("users", []) if is_casa_admin() else [],
-        },
-    }
+            "calendar_url": calendar_feed_url_for_current_user()}}
+
+
+def ics_escape(value):
+    value = str(value or "")
+    value = value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    value = value.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
+    return value
+
+
+def parse_ics_datetime(datum, time_value, *, fallback_hour=9, fallback_minute=0):
+    try:
+        day = date.fromisoformat(str(datum or "")[:10])
+    except Exception:
+        return None
+    hour = fallback_hour
+    minute = fallback_minute
+    raw = str(time_value or "").strip()
+    if ":" in raw:
+        try:
+            parts = raw.split(":")
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except Exception:
+            pass
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=AMSTERDAM_TZ)
+
+
+def calendar_diensten_for_user(user):
+    owner_name = str((user or {}).get("name") or "").strip()
+    owner_key = owner_name.lower()
+    diensten = []
+    for raw in get_general_data().get("diensten", []):
+        item = normalize_dienst_item(raw)
+        if str(item.get("owner_name") or "").strip().lower() == owner_key:
+            if normalize_dienst_status(item.get("status")) == "vervallen":
+                continue
+            diensten.append(item)
+    diensten.sort(key=lambda item: ((item.get("datum") or "9999-99-99"), normalize_dienst_time_value(item.get("start") or "23:59"), (item.get("naam") or "").lower()))
+    return diensten
+
+
+def build_calendar_feed_for_user(user):
+    from datetime import timedelta
+    owner_name = str((user or {}).get("name") or "").strip()
+    owner_key = owner_name.lower()
+    diensten = calendar_diensten_for_user(user)
+
+    now_stamp = datetime.now(AMSTERDAM_TZ).strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Casa Cara//Diensten//NL",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        f"X-WR-CALNAME:Casa Cara diensten - {ics_escape(owner_name)}",
+        "X-WR-TIMEZONE:Europe/Amsterdam",
+        "BEGIN:VTIMEZONE",
+        "TZID:Europe/Amsterdam",
+        "X-LIC-LOCATION:Europe/Amsterdam",
+        "BEGIN:DAYLIGHT",
+        "TZOFFSETFROM:+0100",
+        "TZOFFSETTO:+0200",
+        "TZNAME:CEST",
+        "DTSTART:19700329T020000",
+        "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+        "END:DAYLIGHT",
+        "BEGIN:STANDARD",
+        "TZOFFSETFROM:+0200",
+        "TZOFFSETTO:+0100",
+        "TZNAME:CET",
+        "DTSTART:19701025T030000",
+        "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+        "END:STANDARD",
+        "END:VTIMEZONE",
+    ]
+
+    for index, item in enumerate(diensten):
+        start_dt = parse_ics_datetime(item.get("datum"), item.get("start"), fallback_hour=9)
+        end_dt = parse_ics_datetime(item.get("datum"), item.get("einde"), fallback_hour=10)
+        if not start_dt:
+            continue
+        if not end_dt:
+            end_dt = start_dt + timedelta(hours=1)
+        if end_dt <= start_dt:
+            end_dt = end_dt + timedelta(days=1)
+        if end_dt <= start_dt:
+            end_dt = start_dt + timedelta(hours=1)
+
+        uid_base = f"{owner_key}-{item.get('datum')}-{item.get('start')}-{item.get('einde')}-{item.get('naam')}-{index}"
+        title = item.get("naam") or "Dienst"
+        location = item.get("locatie") or ""
+        description_parts = []
+        if item.get("rol"):
+            description_parts.append(f"Rol: {item.get('rol')}")
+        if item.get("notitie"):
+            description_parts.append(f"Notitie: {item.get('notitie')}")
+        if item.get("source"):
+            description_parts.append(f"Bron: {item.get('source')}")
+        description = "\\n".join(description_parts)
+
+        lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:{ics_escape(uid_base)}@casa-cara",
+            f"DTSTAMP:{now_stamp}",
+            f"DTSTART;TZID=Europe/Amsterdam:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+            f"DTEND;TZID=Europe/Amsterdam:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+            f"SUMMARY:{ics_escape(title)}",
+        ])
+        if location:
+            lines.append(f"LOCATION:{ics_escape(location)}")
+        if description:
+            lines.append(f"DESCRIPTION:{ics_escape(description)}")
+        lines.append("END:VEVENT")
+
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(lines) + "\r\n"
+
+
+@casa_cara.route("/casa-cara-calendar/<token>.ics")
+def casa_cara_calendar_feed(token):
+    user = get_casa_user_by_calendar_token(token)
+    if not user:
+        return Response("Agenda feed niet gevonden.", status=404, mimetype="text/plain")
+    ics = build_calendar_feed_for_user(user)
+    response = Response(ics, mimetype="text/calendar; charset=utf-8")
+    response.headers["Content-Disposition"] = "inline; filename=casa-cara-diensten.ics"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
+@casa_cara.route("/api/casa/calendar-link")
+def casa_cara_calendar_link():
+    url = calendar_feed_url_for_current_user()
+    if not url:
+        return jsonify({"ok": False, "message": "Geen ingelogde gebruiker gevonden."}), 401
+    user = get_current_casa_user() or {}
+    diensten = calendar_diensten_for_user(user)
+    return jsonify({"ok": True, "url": url, "count": len(diensten), "first": diensten[0] if diensten else None})
+
+
+@casa_cara.route("/api/casa/calendar-status")
+def casa_cara_calendar_status():
+    user = get_current_casa_user() or {}
+    url = calendar_feed_url_for_current_user()
+    diensten = calendar_diensten_for_user(user)
+    return jsonify({
+        "ok": True,
+        "url": url,
+        "count": len(diensten),
+        "items": diensten[:10],
+        "user": user.get("name", "")
+    })
+
+
 
 HTML = r"""
 <!DOCTYPE html>
@@ -974,7 +1579,7 @@ HTML = r"""
       .btn{min-height:34px;padding:0 11px;font-size:12px}
     }
 
-    .badge{
+    .badge{font-size:11px;padding:2px 6px;
       display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:999px;
       border:1px solid var(--line);color:var(--muted);background:rgba(255,255,255,.02);font-size:12px;white-space:nowrap;
     }
@@ -1002,6 +1607,117 @@ HTML = r"""
     .perm-item input{margin-top:1px;width:15px;height:15px}
     .perm-label{font-size:12px;color:var(--text);line-height:1.3}
     .overview-grid{display:grid;grid-template-columns:1fr;gap:12px}.overview-card{border:1px solid var(--line);border-radius:18px;padding:15px;background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));box-shadow:0 12px 24px rgba(0,0,0,.14)}.overview-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px}.overview-kicker{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800;margin-bottom:6px}.overview-title{font-size:18px;font-weight:900;letter-spacing:-.02em;color:var(--text);margin:0 0 4px}.overview-sub{font-size:13px;color:var(--muted);line-height:1.45}.overview-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.mini-list{display:grid;gap:8px}.mini-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:12px;background:rgba(255,255,255,.02)}.mini-row strong{display:block;font-size:14px;color:var(--text)}.mini-row span{font-size:12px;color:var(--muted);line-height:1.35}.overview-note{padding:12px 14px;border:1px dashed var(--line-strong);border-radius:14px;color:var(--muted);font-size:13px;line-height:1.5;background:rgba(255,255,255,.02)}
+        .dashboard-compact-shell{display:grid;gap:10px}
+    .dashboard-next-hero{
+      border:1px solid rgba(255,122,0,.18);
+      background:
+        radial-gradient(circle at top right, rgba(255,122,0,.14), transparent 34%),
+        linear-gradient(180deg, rgba(18,27,40,.98), rgba(12,19,30,.98));
+      border-radius:22px;
+      padding:16px;
+      box-shadow:var(--shadow);
+    }
+    .dashboard-next-hero-top{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .dashboard-next-hero-title{
+      font-size:24px;
+      font-weight:900;
+      letter-spacing:-.04em;
+      color:var(--text);
+      line-height:1.02;
+      margin-top:4px;
+    }
+    .dashboard-next-hero-sub{
+      font-size:14px;
+      color:var(--muted);
+      line-height:1.45;
+      margin-top:8px;
+      max-width:36rem;
+    }
+    .dashboard-next-hero-meta{
+      display:flex;
+      flex-wrap:wrap;
+      align-items:center;
+      gap:10px;
+      margin-top:14px;
+    }
+    .dashboard-next-hero-time{
+      font-size:28px;
+      font-weight:900;
+      letter-spacing:-.04em;
+      color:var(--text);
+    }
+    .dashboard-next-hero-countdown{
+      min-height:30px;
+      display:inline-flex;
+      align-items:center;
+      padding:0 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,122,0,.18);
+      background:rgba(255,122,0,.10);
+      color:#ffd9bf;
+      font-size:13px;
+      font-weight:800;
+    }
+    .dashboard-compact-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .dashboard-mini-card{
+    .dashboard-mini-card.salary-card{
+      background:
+        radial-gradient(circle at top right, rgba(255,122,0,.12), transparent 40%),
+        linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));
+      border:1px solid rgba(255,122,0,.15);
+    }
+    #dashboardSalaryTitle{
+      font-size:20px;
+      font-weight:900;
+      letter-spacing:-0.03em;
+    }
+    #dashboardSalarySub{
+      font-size:12px;
+      color:var(--muted);
+    }
+    #dashboardSalaryBadge{
+      background:rgba(255,122,0,.12);
+      border:1px solid rgba(255,122,0,.2);
+      color:#ffd9bf;
+    }
+    
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:13px;
+      background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));
+      box-shadow:0 10px 22px rgba(0,0,0,.12);
+      min-width:0;
+    }
+    .dashboard-mini-kicker{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800;margin-bottom:6px}
+    .dashboard-mini-title{font-size:16px;font-weight:900;letter-spacing:-.02em;color:var(--text);line-height:1.15}
+    .dashboard-mini-sub{font-size:12px;color:var(--muted);line-height:1.4;margin:6px 0 10px}
+    .dashboard-chip-row{display:flex;flex-wrap:wrap;gap:8px}
+    .dashboard-chip-btn{
+      min-height:34px;
+      padding:0 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.03);
+      color:var(--text);
+      cursor:pointer;
+      font-size:12px;
+      font-weight:700;
+    }
+    .dashboard-chip-btn:hover{border-color:rgba(255,122,0,.24);background:rgba(255,122,0,.08);color:#ffd9bf}
+    @media (min-width:860px){
+      .dashboard-compact-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+    }
+    @media (max-width:640px){
+      .dashboard-compact-grid{grid-template-columns:1fr}
+      .dashboard-mini-card{padding:12px}
+      .dashboard-mini-title{font-size:15px}
+    }
+
     .bot-panel{margin:16px 0 18px;border:1px solid var(--line);background:linear-gradient(180deg, rgba(18,27,40,.98), rgba(12,19,30,.98));border-radius:22px;padding:16px;box-shadow:var(--shadow);display:grid;gap:12px}
     .bot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
     .bot-title{margin:0;font-size:18px;font-weight:900;letter-spacing:-.02em;color:var(--text)}
@@ -1294,6 +2010,7 @@ HTML = r"""
     .task-switcher-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;font-weight:800;margin-bottom:8px}
     .task-switcher-row{display:flex;gap:8px;overflow:auto;padding-bottom:2px;scrollbar-width:none}
     .task-switcher-row::-webkit-scrollbar{display:none}
+    .diensten-day-switcher{margin-bottom:12px}
     .task-switcher-btn{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);border-radius:999px;min-height:34px;padding:0 12px;white-space:nowrap;cursor:pointer}
     .task-switcher-btn.active{background:rgba(255,122,0,.12);border-color:rgba(255,122,0,.24);color:#ffd9bf}
     .khead-top{
@@ -1364,9 +2081,195 @@ HTML = r"""
       transition:transform .18s ease;
     }
     .task-group[open] .group-chevron{transform:rotate(180deg)}
+    .dienst-week-compact{margin-top:8px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:rgba(255,255,255,.02);
+      margin-top:12px;
+      overflow:hidden;
+      box-shadow:0 10px 22px rgba(0,0,0,.10);
+    }
+    .dienst-week-summary{
+      list-style:none;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      padding:10px 12px;
+      background:linear-gradient(180deg, rgba(18,27,40,.94), rgba(12,19,30,.94));
+    }
+    .dienst-week-summary::-webkit-details-marker{display:none}
+    .dienst-week-summary-left{min-width:0}
+    .dienst-week-summary-title{font-size:14px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+    .dienst-week-summary-sub{font-size:11px;color:var(--muted);margin-top:4px}
+    .dienst-week-summary-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .dienst-week-compact .group-chevron{transition:transform .18s ease;color:var(--muted)}
+    .dienst-week-compact[open] .group-chevron{transform:rotate(180deg)}
+    .dienst-week-compact-body{padding:6px;display:grid;gap:10px;border-top:1px solid rgba(255,255,255,.06)}
+    .dienst-day-compact{padding:6px 7px !important;
+      border:1px solid rgba(255,255,255,.06);
+      background:rgba(255,255,255,.018);
+      border-radius:10px;
+      padding:8px;
+    }
+    .dienst-day-compact-head{gap:6px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:8px;
+    }
+    .dienst-day-compact-title{font-size:14px;font-weight:800;color:var(--text)}
+    .dienst-day-compact.is-today{
+      border-color:rgba(255,122,0,.22);
+      background:
+        radial-gradient(circle at top right, rgba(255,122,0,.08), transparent 38%),
+        rgba(255,255,255,.025);
+      box-shadow:0 12px 24px rgba(0,0,0,.12);
+    }
+    .dienst-day-compact-head-left{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      min-width:0;
+    }
+    .dienst-card-item-compact.is-today{
+      border-color:rgba(255,122,0,.22);
+      background:
+        linear-gradient(180deg, rgba(255,122,0,.08), rgba(255,255,255,.02));
+    }
+
+    .dienst-cards-compact{
+      display:grid;
+      gap:4px;
+    }
+    .dienst-card-item-compact{
+      padding:6px 8px !important;
+      border-radius:8px !important;
+      min-height:0;
+    }
+    .dienst-card-item-compact .dienst-card-top{
+      display:grid;
+      grid-template-columns:minmax(74px,88px) minmax(0,1fr) auto;
+      align-items:center;
+      gap:8px;
+      margin:0;
+    }
+    .dienst-card-item-compact .dienst-card-time{
+      font-size:12px !important;
+      font-weight:900 !important;
+      letter-spacing:-.01em;
+      white-space:nowrap;
+      margin:0;
+    }
+    .dienst-card-item-compact .dienst-card-title{
+      font-size:13px !important;
+      font-weight:800 !important;
+      line-height:1.15;
+      margin:0;
+    }
+    .dienst-card-item-compact .dienst-card-sub{
+      font-size:11px !important;
+      line-height:1.2;
+      margin-top:1px;
+      opacity:.82;
+    }
+    .dienst-card-main{
+      min-width:0;
+    }
+    .dienst-card-side{
+      display:flex;
+      align-items:center;
+      gap:6px;
+      justify-self:end;
+      flex-wrap:nowrap;
+    }
+    .dienst-inline-actions{
+      display:flex;
+      align-items:center;
+      gap:4px;
+      margin:0;
+    }
+    .dienst-inline-btn{
+      min-height:26px;
+      height:26px;
+      padding:0 8px;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,.09);
+      background:rgba(255,255,255,.03);
+      color:var(--text);
+      cursor:pointer;
+      font-size:11px;
+      font-weight:700;
+      line-height:1;
+      white-space:nowrap;
+    }
+    .dienst-inline-btn.accent{
+      background:rgba(255,122,0,.10);
+      border-color:rgba(255,122,0,.18);
+      color:#ffd9bf;
+    }
+    .dienst-inline-btn.danger{
+      background:rgba(224,107,107,.08);
+      border-color:rgba(224,107,107,.18);
+      color:#ffd7d7;
+    }
+    .dienst-card-item-compact .meta-row{
+      display:none !important;
+    }
+    .dienst-card-item-compact .item-actions{
+      display:none !important;
+    }
+    @media (max-width:700px){
+      .dienst-card-item-compact{
+        padding:6px 7px !important;
+      }
+      .dienst-card-item-compact .dienst-card-top{
+        grid-template-columns:70px minmax(0,1fr);
+        align-items:start;
+      }
+      .dienst-card-side{
+        grid-column:1 / -1;
+        justify-self:start;
+        padding-left:70px;
+        margin-top:4px;
+      }
+      .dienst-inline-btn{
+        min-height:24px;
+        height:24px;
+        padding:0 7px;
+        font-size:10px;
+      }
+    }
+    .dienst-cards-compact{gap:4px}
+    .dienst-card-item-compact{padding:6px;border-radius:8px}
+    .dienst-card-item-compact .item-actions{margin-top:6px}
+    .dienst-card-item-compact .meta-row{margin-top:4px}
+
     .task-group.done-group:not([open]){
       opacity:.96;
     }
+    .diensten-top-grid{display:grid;grid-template-columns:1fr;gap:12px}
+    .diensten-quick-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .diensten-quick-card{min-height:118px;justify-content:flex-start;align-items:flex-start;padding:14px;text-align:left}
+    .diensten-quick-card .stat-value{font-size:24px;margin-top:4px}
+    .diensten-quick-note{margin-top:12px;color:var(--muted);font-size:13px;line-height:1.45}
+    .diensten-list-head{align-items:flex-start}
+    .diensten-groups{display:grid;gap:12px}
+    .dienst-group-card{border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));padding:14px;box-shadow:var(--shadow)}
+    .dienst-group-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .dienst-group-kicker{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.10em;font-weight:800;margin-bottom:5px}
+    .dienst-group-title{margin:0;font-size:19px;font-weight:900;letter-spacing:-.02em;color:var(--text)}
+    .dienst-cards{display:grid;gap:10px}
+    .dienst-card-item{border:1px solid rgba(255,255,255,.07);border-radius:16px;background:rgba(255,255,255,.03);padding:14px}
+    .dienst-card-item.is-changed{border-color:rgba(255,154,61,.28);background:rgba(255,154,61,.06)}
+    .dienst-card-top{gap:6px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+    .dienst-card-time{font-size:12px;font-weight:800;font-size:22px;font-weight:900;letter-spacing:-.03em;color:var(--text);margin-bottom:6px}
+    .dienst-card-title{font-size:13px;font-weight:700;font-size:15px;font-weight:800;letter-spacing:-.01em;color:var(--text)}
+    .dienst-card-sub{font-size:11px;opacity:.8;font-size:13px;color:var(--muted);margin-top:3px;line-height:1.4}
+    @media (min-width:860px){.diensten-top-grid{grid-template-columns:1.2fr .8fr}.diensten-quick-actions{grid-template-columns:1fr 1fr}.dienst-cards{grid-template-columns:1fr 1fr}}
+    @media (max-width:640px){.diensten-quick-actions{grid-template-columns:1fr}.dienst-group-title{font-size:17px}.dienst-card-time{font-size:12px;font-weight:800;font-size:19px}}
     .ktask{
       border:1px solid var(--line);
       background:rgba(255,255,255,.018);
@@ -1458,7 +2361,7 @@ HTML = r"""
       .klist-icon{width:32px;height:32px;min-width:32px}
       .klist-name{font-size:14px}
       .kprogress{margin-top:8px}
-      .badge{font-size:11px;padding:0 8px;min-height:24px}
+      .badge{font-size:11px;padding:2px 6px;font-size:11px;padding:0 8px;min-height:24px}
       .kmeta{font-size:12px;margin-top:8px}
       .ksub-wrap{gap:8px;padding-left:10px}
       .task-group summary{padding:11px 12px}
@@ -1677,7 +2580,7 @@ HTML = r"""
       .fridge-editor-toolbar{flex-direction:column;align-items:stretch;gap:10px;margin-bottom:8px}
       .fridge-editor-toolbar-left{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0}
       .fridge-editor-toolbar-left > *{min-width:0}
-      .fridge-editor-toolbar .badge{display:block;width:100%;white-space:normal;line-height:1.35}
+      .fridge-editor-toolbar .badge{font-size:11px;padding:2px 6px;display:block;width:100%;white-space:normal;line-height:1.35}
       .fridge-editor-toolbar .actions{display:none}
       .fridge-editor-select{min-height:42px;width:100%}
       .fridge-editor-stage{overflow-x:hidden;overflow-y:visible;padding-bottom:0;width:100%;max-width:100%}
@@ -2579,6 +3482,225 @@ HTML = r"""
   font-size:13px !important;
 }
 
+
+    .drawer-brand{
+      background:rgba(255,255,255,.02);
+      border:1px solid rgba(255,255,255,.06);
+      border-radius:18px;
+      padding:12px 12px 14px;
+      margin-bottom:12px;
+    }
+    .sidebar-kicker{
+      margin:10px 4px 4px;
+      color:var(--muted);
+      font-size:10px;
+      letter-spacing:.13em;
+      text-transform:uppercase;
+      font-weight:900;
+      opacity:.85;
+    }
+    .nav-btn[data-page="diensten"]{
+      border-color:rgba(255,122,0,.20);
+      background:rgba(255,122,0,.06);
+    }
+    .nav-btn,.sub-btn{
+      min-height:40px;
+    }
+    .sub-list{
+      gap:5px;
+      padding:4px 0 4px 12px;
+      margin-bottom:2px;
+    }
+    .sub-btn{
+      min-height:34px;
+      border-radius:12px;
+      font-size:13px;
+      padding:0 12px;
+    }
+    .nav-icon{
+      font-size:14px;
+    }
+
+
+    .nav-icon{
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight:900;
+      font-size:13px;
+      color:#ffd9bf;
+      background:rgba(255,122,0,.08);
+      border:1px solid rgba(255,122,0,.12);
+    }
+    .nav-btn:not(.active) .nav-icon{
+      color:var(--muted);
+      background:rgba(255,255,255,.035);
+      border-color:rgba(255,255,255,.06);
+    }
+    .nav-btn[data-page="diensten"] .nav-icon{
+      color:#ffd9bf;
+      background:rgba(255,122,0,.10);
+      border-color:rgba(255,122,0,.18);
+    }
+
+
+    .overview-hero{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+      overflow:hidden;
+    }
+    .overview-hero-metric{
+      min-width:92px;
+      border:1px solid rgba(255,122,0,.18);
+      background:rgba(255,122,0,.10);
+      border-radius:18px;
+      padding:12px;
+      text-align:center;
+      color:#ffd9bf;
+      box-shadow:0 14px 28px rgba(0,0,0,.14);
+    }
+    .overview-hero-metric span{
+      display:block;
+      font-size:28px;
+      font-weight:900;
+      letter-spacing:-.04em;
+      line-height:1;
+    }
+    .overview-hero-metric small{
+      display:block;
+      margin-top:5px;
+      color:var(--muted);
+      font-size:11px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .overview-hub-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:10px;
+    }
+    .overview-hub-card{
+      border:1px solid var(--line);
+      border-radius:18px;
+      padding:14px;
+      background:
+        radial-gradient(circle at top right, rgba(255,122,0,.08), transparent 34%),
+        linear-gradient(180deg, rgba(18,27,40,.96), rgba(12,19,30,.96));
+      box-shadow:0 12px 24px rgba(0,0,0,.12);
+      min-height:112px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .overview-hub-top{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:flex-start;
+    }
+    .overview-hub-kicker{
+      color:var(--muted);
+      font-size:10px;
+      font-weight:900;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      margin-bottom:5px;
+    }
+    .overview-hub-title{
+      font-size:17px;
+      font-weight:900;
+      letter-spacing:-.03em;
+      color:var(--text);
+      line-height:1.05;
+    }
+    .overview-hub-sub{
+      margin-top:5px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+    .overview-hub-actions{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+    }
+    .overview-hub-actions .btn{
+      min-height:30px;
+      font-size:12px;
+      border-radius:10px;
+      padding:0 10px;
+    }
+    .overview-focus-panel{padding:14px}
+    .compact-mini-list .mini-row{padding:9px 10px;border-radius:11px}
+    .compact-mini-list .mini-row strong{font-size:13px}
+    .compact-mini-list .mini-row span{font-size:11px}
+    @media (max-width:700px){
+      .overview-hero{align-items:stretch}
+      .overview-hero-metric{min-width:80px;padding:10px}
+      .overview-hero-metric span{font-size:24px}
+      .overview-hub-grid{grid-template-columns:1fr}
+      .overview-hub-card{min-height:auto}
+    }
+
+
+    .calendar-link-card{
+      display:grid;
+      gap:14px;
+    }
+    .calendar-link-status{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      border:1px solid rgba(255,122,0,.16);
+      background:
+        radial-gradient(circle at top right, rgba(255,122,0,.10), transparent 36%),
+        rgba(255,255,255,.025);
+      border-radius:16px;
+      padding:14px;
+    }
+    .calendar-link-kicker{
+      color:var(--muted);
+      font-size:10px;
+      font-weight:900;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      margin-bottom:5px;
+    }
+    .calendar-link-title{
+      color:var(--text);
+      font-size:17px;
+      line-height:1.15;
+      font-weight:900;
+      letter-spacing:-.03em;
+    }
+    .calendar-link-sub{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.4;
+      margin-top:6px;
+    }
+    .calendar-link-actions{
+      display:grid;
+      grid-template-columns:1fr;
+      gap:8px;
+    }
+    .calendar-main-action{
+      width:100%;
+      min-height:44px;
+      font-size:14px;
+    }
+    .calendar-secondary-action{
+      width:100%;
+      min-height:40px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:var(--text);
+    }
+
 </style>
 </head>
 <body>
@@ -2592,57 +3714,56 @@ HTML = r"""
     </div>
 
     <nav class="nav">
+      <div class="sidebar-kicker">Hoofdmenu</div>
       <button class="nav-btn active" data-page="dashboard" onclick="openPage('dashboard'); closeDrawer();">
         <span class="nav-left"><span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span></span>
       </button>
-
+      <button class="nav-btn" data-page="diensten" onclick="openPage('diensten'); closeDrawer();">
+        <span class="nav-left"><span class="nav-icon">◷</span><span class="nav-label">Diensten</span></span>
+      </button>
       <button class="nav-btn" data-page="checklists" onclick="openPage('checklists'); closeDrawer();">
         <span class="nav-left"><span class="nav-icon">✓</span><span class="nav-label">Checklists</span></span>
       </button>
 
-      <button class="nav-btn" id="toggle-algemeen" onclick="toggleGroup('algemeen')">
-        <span class="nav-left"><span class="nav-icon">A</span><span class="nav-label">Algemeen</span></span>
-        <span class="nav-caret">›</span>
-      </button>
-      <div class="sub-list" id="group-algemeen">
-        <button class="sub-btn" data-page="algemeen-dashboard" onclick="openPage('algemeen-dashboard'); closeDrawer();">Overzicht</button>
-        <button class="sub-btn" data-page="diensten" onclick="openPage('diensten'); closeDrawer();">Diensten</button>
-        <button class="sub-btn admin-only" data-page="dienstsoorten" onclick="openPage('dienstsoorten'); closeDrawer();">Dienstsoorten</button>
-        <button class="sub-btn" data-page="fooienpot" onclick="openPage('fooienpot'); closeDrawer();">Fooienpot</button>
-        
-      </div>
-
-      <button class="nav-btn" id="toggle-keuken" onclick="toggleGroup('keuken')">
-        <span class="nav-left"><span class="nav-icon">K</span><span class="nav-label">Keuken</span></span>
-        <span class="nav-caret">›</span>
-      </button>
-      <div class="sub-list" id="group-keuken">
-        <button class="sub-btn" data-page="keuken-overzicht" onclick="openPage('keuken-overzicht'); closeDrawer();">Overzicht</button>
-        <button class="sub-btn" data-page="keuken-recepten" onclick="openPage('keuken-recepten'); closeDrawer();">Recepten</button>
-      </div>
-
+      <div class="sidebar-kicker">Werkvloer</div>
       <button class="nav-btn" id="toggle-bar" onclick="toggleGroup('bar')">
-        <span class="nav-left"><span class="nav-icon">B</span><span class="nav-label">Bar</span></span>
+        <span class="nav-left"><span class="nav-icon">▦</span><span class="nav-label">Bar</span></span>
         <span class="nav-caret">›</span>
       </button>
       <div class="sub-list" id="group-bar">
-        <div class="sub-section-label">Werkvloer</div>
         <button class="sub-btn" data-page="bar-overzicht" onclick="openPage('bar-overzicht'); closeDrawer();">Overzicht</button>
         <button class="sub-btn" data-page="bar-indeling" onclick="openPage('bar-indeling'); closeDrawer();">Indeling</button>
-
-        <div class="sub-section-label">Voorraad</div>
         <button class="sub-btn" data-page="bar-koelingen" onclick="openPage('bar-koelingen'); closeDrawer();">Koelingen</button>
-        <button class="sub-btn" data-page="bar-oplijst" onclick="openPage('bar-oplijst'); closeDrawer();">Op / niet op voorraad</button>
         <button class="sub-btn" data-page="bar-bijvullen" onclick="openPage('bar-bijvullen'); closeDrawer();">Bijvuloverzicht</button>
+        <button class="sub-btn" data-page="bar-oplijst" onclick="openPage('bar-oplijst'); closeDrawer();">Op / niet op voorraad</button>
+      </div>
 
-        <div class="sub-section-label admin-only">Beheer</div>
+      <button class="nav-btn" data-page="keuken-recepten" onclick="openPage('keuken-recepten'); closeDrawer();">
+        <span class="nav-left"><span class="nav-icon">□</span><span class="nav-label">Recepten</span></span>
+      </button>
+
+      <div class="sidebar-kicker">Algemeen</div>
+      <button class="nav-btn" data-page="fooienpot" onclick="openPage('fooienpot'); closeDrawer();">
+        <span class="nav-left"><span class="nav-icon">€</span><span class="nav-label">Fooienpot</span></span>
+      </button>
+      <button class="nav-btn" data-page="algemeen-dashboard" onclick="openPage('algemeen-dashboard'); closeDrawer();">
+        <span class="nav-left"><span class="nav-icon">⋯</span><span class="nav-label">Overzicht</span></span>
+      </button>
+
+      <div class="sidebar-kicker admin-only">Beheer</div>
+      <button class="nav-btn admin-only" id="toggle-beheer" onclick="toggleGroup('beheer')">
+        <span class="nav-left"><span class="nav-icon">⚙</span><span class="nav-label">Beheer</span></span>
+        <span class="nav-caret">›</span>
+      </button>
+      <div class="sub-list" id="group-beheer">
+        <button class="sub-btn admin-only" data-page="gebruikers" onclick="openPage('gebruikers'); closeDrawer();">Medewerkers</button>
+        <button class="sub-btn admin-only" data-page="dienstsoorten" onclick="openPage('dienstsoorten'); closeDrawer();">Dienstsoorten</button>
         <button class="sub-btn admin-only" data-page="bar-productsoorten" onclick="openPage('bar-productsoorten'); closeDrawer();">Productsoorten</button>
         <button class="sub-btn admin-only" data-page="bar-locaties" onclick="openPage('bar-locaties'); closeDrawer();">Locaties</button>
       </div>
     </nav>
 
     <div class="logout-wrap">
-      <button class="home-btn admin-only" onclick="openPage('gebruikers'); closeDrawer();">👥 Medewerkers</button>
       <a class="logout-btn" href="/casa-cara-logout">⎋ Uitloggen</a>
     </div>
   </aside>
@@ -2720,6 +3841,59 @@ HTML = r"""
 
       <div class="section">
         <div class="section-head">
+          <h2 class="section-title">Diensten in beeld</h2>
+          <div class="section-kicker">Compact overzicht</div>
+        </div>
+        <div class="dashboard-compact-shell">
+          <div class="dashboard-next-hero">
+            <div class="dashboard-next-hero-top">
+              <div>
+                <div class="dashboard-mini-kicker">Eerstvolgende dienst</div>
+                <div class="dashboard-next-hero-title" id="dashboardHeroNextTitle">Nog geen dienst gepland</div>
+                <div class="dashboard-next-hero-sub" id="dashboardHeroNextSub">Zodra er iets gepland staat, zie je hier direct wanneer je weer aan de beurt bent.</div>
+              </div>
+              <span class="badge accent" id="dashboardHeroNextBadge">Planning</span>
+            </div>
+            <div class="dashboard-next-hero-meta">
+              <span class="dashboard-next-hero-time" id="dashboardHeroNextTime">—</span>
+              <span class="dashboard-next-hero-countdown" id="dashboardHeroNextCountdown">Nog niets gepland</span>
+            </div>
+          </div>
+          <div class="dashboard-compact-grid">
+            <div class="dashboard-mini-card salary-card">
+              <div class="dashboard-mini-kicker">Vandaag</div>
+              <div class="dashboard-mini-title" id="dashboardTodayTitle">0 diensten</div>
+              <div class="dashboard-mini-sub" id="dashboardTodaySub">Je planning van vandaag.</div>
+              <span class="badge" id="dashboardTodayBadge">Vandaag</span>
+            </div>
+            <div class="dashboard-mini-card">
+              <div class="dashboard-mini-kicker">Deze week</div>
+              <div class="dashboard-mini-title" id="dashboardWeekTitle">0 diensten</div>
+              <div class="dashboard-mini-sub" id="dashboardWeekSub">Compact overzicht van deze week.</div>
+              <span class="badge good" id="dashboardWeekBadge">Week</span>
+            </div>
+            <div class="dashboard-mini-card">
+              <div class="dashboard-mini-kicker">💰 Salaris</div>
+              <div class="dashboard-mini-title" id="dashboardSalaryTitle">Uurloon instellen</div>
+              <div class="dashboard-mini-sub" id="dashboardSalarySub">Stel je uurloon in voor een maandindicatie.</div>
+              <span class="badge accent" id="dashboardSalaryBadge">Instellen</span>
+              <div style="margin-top:8px">
+                <button class="dienst-inline-btn accent" onclick="openHourlyRateModal()">Uurloon</button>
+              </div>
+            </div>
+            <div class="dashboard-mini-card">
+              <div class="dashboard-mini-kicker">Uren</div>
+              <div class="dashboard-mini-title" id="dashboardHoursTitle">0,0 uur</div>
+              <div class="dashboard-mini-sub" id="dashboardHoursSub">Deze week op basis van je planning.</div>
+              <span class="badge good" id="dashboardHoursBadge">Deze maand 0,0u</span>
+            </div>
+          </div>
+          <div class="dashboard-chip-row" id="dashboardActionChips"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
           <h2 class="section-title">Snelle ingangen</h2>
           <div class="section-kicker">Direct door naar de juiste plek</div>
         </div>
@@ -2765,33 +3939,73 @@ HTML = r"""
     </section>
 
     <section class="page" id="page-algemeen-dashboard">
-      <div class="hero">
-        <h1>📋 Algemeen overzicht</h1>
-        <p>Alles wat niet specifiek bij keuken of bar hoort, op één rustige plek.</p>
+      <div class="hero overview-hero">
+        <div>
+          <div class="overview-kicker">Algemeen</div>
+          <h1>Overzicht</h1>
+          <p>Je persoonlijke planning, fooienpot en snelle acties compact bij elkaar.</p>
+        </div>
+        <div class="overview-hero-metric">
+          <span id="generalHeroMetric">0</span>
+          <small>deze week</small>
+        </div>
       </div>
       <div class="stack">
-        <div class="overview-grid" id="generalOverviewGrid"></div>
-        <div class="panel">
+        <div class="overview-hub-grid" id="generalOverviewGrid"></div>
+        <div class="panel overview-focus-panel">
           <div class="panel-head">
-            <h3 class="panel-title">Vandaag in beeld</h3>
+            <div>
+              <h3 class="panel-title">Vandaag in beeld</h3>
+              <div class="section-kicker">Alleen de belangrijkste punten</div>
+            </div>
             <span class="badge" id="generalTodayBadge">Rustig</span>
           </div>
-          <div class="mini-list" id="generalTodayList"></div>
+          <div class="mini-list compact-mini-list" id="generalTodayList"></div>
         </div>
       </div>
     </section>
-
     <section class="page" id="page-diensten">
       <div class="hero">
         <h1>👥 Diensten</h1>
-        <p>Overzicht van alle ingeplande diensten uit je huidige data.</p>
+        <p>Een rustige dienstenpagina met snelle inzichten, handige acties en een overzicht per dag.</p>
       </div>
-      <div class="panel">
-        <div class="panel-head">
-          <h3 class="panel-title">Geplande diensten</h3>
-          <button class="btn accent" id="newDienstBtn" onclick="openDienstModal()">Nieuwe dienst</button>
+      <div class="stack">
+        <div class="diensten-top-grid">
+          <div class="panel diensten-focus-panel">
+            <div class="panel-head">
+              <h3 class="panel-title">Snel in beeld</h3>
+              <span class="badge accent" id="dienstenWeekBadge">0 diensten</span>
+            </div>
+            <div class="mini-list" id="dienstenWeekList"></div>
+          </div>
+          <div class="panel diensten-quick-panel">
+            <div class="panel-head">
+              <h3 class="panel-title">Snelle acties</h3>
+              <span class="badge" id="dienstenQuickBadge">Planning</span>
+            </div>
+            <div class="diensten-quick-actions" id="dienstenQuickActions"></div>
+            <div class="diensten-quick-note" id="dienstenQuickNote">Gebruik deze knoppen om snel naar de juiste weergave te springen.</div>
+          </div>
         </div>
-        <div class="list" id="dienstenList"></div>
+        <div class="panel" id="dienstenListPanel">
+          <div class="panel-head diensten-list-head">
+            <div>
+              <h3 class="panel-title">Geplande diensten</h3>
+              <div class="section-kicker" id="dienstenListIntro">Rustig overzicht per dag, zonder lange onoverzichtelijke lijst.</div>
+            </div>
+            <div class="actions">
+              <button class="btn" id="dienstenFilterAllBtn" onclick="setDienstenView('all')">Alles</button>
+              <button class="btn" id="dienstenFilterWeekBtn" onclick="setDienstenView('week')">Alleen deze week</button>
+              
+              <button class="btn accent" id="newDienstBtn" onclick="openDienstModal()">Nieuwe dienst</button>
+            </div>
+          </div>
+          <div class="task-switcher diensten-day-switcher">
+            <div class="task-switcher-label">Filter op dag</div>
+            <div class="task-switcher-row" id="dienstenDayFilterRow"></div>
+          </div>
+          <div class="diensten-groups" id="dienstenList"></div>
+        </div>
       </div>
     </section>
 
@@ -2916,18 +4130,28 @@ HTML = r"""
     </section>
 
     <section class="page" id="page-bar-overzicht">
-      <div class="hero">
-        <h1>🍸 Bar overzicht</h1>
-        <p>De bar-sectie is nu opgesplitst in losse pagina’s met beheeracties op de juiste plek.</p>
+      <div class="hero overview-hero">
+        <div>
+          <div class="overview-kicker">Bar</div>
+          <h1>Overzicht</h1>
+          <p>Voorraad, bijvullen en bar-indeling in één rustig controlepaneel.</p>
+        </div>
+        <div class="overview-hero-metric">
+          <span id="barHeroMetric">0</span>
+          <small>acties</small>
+        </div>
       </div>
       <div class="stack">
-        <div class="overview-grid" id="barOverviewGrid"></div>
-        <div class="panel">
+        <div class="overview-hub-grid" id="barOverviewGrid"></div>
+        <div class="panel overview-focus-panel">
           <div class="panel-head">
-            <h3 class="panel-title">Actuele focus</h3>
+            <div>
+              <h3 class="panel-title">Actuele focus</h3>
+              <div class="section-kicker">Wat nu aandacht nodig heeft</div>
+            </div>
             <span class="badge warn" id="barFocusBadge">0 acties</span>
           </div>
-          <div class="mini-list" id="barFocusList"></div>
+          <div class="mini-list compact-mini-list" id="barFocusList"></div>
         </div>
       </div>
     </section>
@@ -3240,6 +4464,8 @@ HTML = r"""
   let currentBarLayoutReadonlyUnitIndex = 0;
   let currentChecklistFilter = 'all';
   let currentChecklistDateISO = null;
+  let currentDienstView = 'all';
+  let currentDienstDayFilter = 'all';
   let currentChecklistAdminEditor = { mode:'overview', section:'', listId:'', taskId:'', subtaskId:'' };
   const groupState = { algemeen:false, keuken:false, bar:false };
   window.currentKoelingId = null;
@@ -3267,6 +4493,264 @@ HTML = r"""
   }
   function pageId(name){ return 'page-' + name; }
   function safeArray(value){ return Array.isArray(value) ? value : []; }
+  function toDateInputValue(value){
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const offset = date.getTimezoneOffset();
+    const local = new Date(date.getTime() - offset * 60000);
+    return local.toISOString().slice(0, 10);
+  }
+  function getTodayString(){ return toDateInputValue(new Date()); }
+  function pad2(value){ return String(value || '').padStart(2, '0'); }
+  function parseDienstDate(value){
+    if (!value) return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    const parts = text.split('-');
+    if (parts.length !== 3) return null;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+    if (!year || !month || !day) return null;
+    const date = new Date(year, month - 1, day);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  function parseTimeValue(value){
+    const text = String(value || '').trim();
+    if (!text) return 9999;
+    const match = text.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return 9999;
+    return Number(match[1]) * 60 + Number(match[2]);
+  }
+  function normalizeDienstStatus(value){
+    const text = String(value || '').trim().toLowerCase();
+    return ['ingepland','bevestigd','gewijzigd','vervallen'].includes(text) ? text : 'ingepland';
+  }
+  function dienstStatusLabel(value){
+    const map = { ingepland:'Ingepland', bevestigd:'Bevestigd', gewijzigd:'Gewijzigd', vervallen:'Vervallen' };
+    return map[normalizeDienstStatus(value)] || 'Ingepland';
+  }
+  function dienstStatusBadgeClass(value){
+    const map = { ingepland:'', bevestigd:'good', gewijzigd:'warn', vervallen:'danger' };
+    return map[normalizeDienstStatus(value)] || '';
+  }
+  function getDienstStart(item){
+    return String(item?.start || item?.starttijd || '').trim();
+  }
+  function getDienstEnd(item){
+    return String(item?.einde || item?.eindtijd || '').trim();
+  }
+  function normalizeDienstTimeValue(value){
+    const text = String(value || '').trim();
+    const match = text.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return '';
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+    return `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+  }
+  function buildDienstTimeLabel(start='', end=''){
+    const normalizedStart = normalizeDienstTimeValue(start);
+    const normalizedEnd = normalizeDienstTimeValue(end);
+    if (normalizedStart && normalizedEnd) return `${normalizedStart} - ${normalizedEnd}`;
+    if (normalizedStart) return normalizedStart;
+    if (normalizedEnd) return `tot ${normalizedEnd}`;
+    return '';
+  }
+  function getDienstTimeLabel(item){
+    const start = getDienstStart(item);
+    const end = getDienstEnd(item);
+    const direct = buildDienstTimeLabel(start, end);
+    if (direct) return direct;
+    const fallback = String(item?.tijd || '').trim().replace(/[–—]/g, '-');
+    const matches = fallback.match(/\d{1,2}:\d{2}/g) || [];
+    if (matches.length) return buildDienstTimeLabel(matches[0], matches[1] || '');
+    return fallback;
+  }
+  function setDienstenView(view='all', options={}){
+    currentDienstView = view === 'week' ? 'week' : 'all';
+    if (currentDienstView === 'week' && !options.keepDayFilter && currentDienstDayFilter === 'all'){
+      currentDienstDayFilter = String(new Date().getDay());
+    }
+    if (options.render !== false) renderDiensten();
+    if (options.scroll !== false) document.getElementById('dienstenListPanel')?.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+  function getDienstDisplayName(item){
+    return item?.naam || item?.medewerker || item?.persoon || 'Dienst';
+  }
+  function getDienstNote(item){
+    return String(item?.notitie || item?.rol || '').trim();
+  }
+  function getDienstLocation(item){
+    return String(item?.locatie || item?.afdeling || '').trim();
+  }
+  function formatDienstDate(value){
+    const date = parseDienstDate(value);
+    if (!date) return value || 'Geen datum';
+    return new Intl.DateTimeFormat('nl-NL', { weekday:'short', day:'numeric', month:'short' }).format(date);
+  }
+  function isoWeekKey(date){
+    const current = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayNr = (current.getDay() + 6) % 7;
+    current.setDate(current.getDate() - dayNr + 3);
+    const firstThursday = new Date(current.getFullYear(), 0, 4);
+    const firstDayNr = (firstThursday.getDay() + 6) % 7;
+    firstThursday.setDate(firstThursday.getDate() - firstDayNr + 3);
+    const week = 1 + Math.round((current - firstThursday) / 604800000);
+    return `${current.getFullYear()}-W${pad2(week)}`;
+  }
+  function getCurrentWeekKey(){
+    return isoWeekKey(new Date());
+  }
+  function weekLabelFromKey(key){
+    const match = String(key || '').match(/^(\d{4})-W(\d{2})$/);
+    if (!match) return key || 'Week';
+    return `Week ${Number(match[2])} · ${match[1]}`;
+  }
+  function isDienstThisWeek(item){
+    const date = parseDienstDate(item?.datum);
+    return !!date && isoWeekKey(date) === getCurrentWeekKey();
+  }
+  function getDienstWeekday(item){
+    const date = parseDienstDate(item?.datum);
+    return date ? String(date.getDay()) : '';
+  }
+  function isDienstOnSelectedDay(item){
+    if (currentDienstDayFilter === 'all') return true;
+    return getDienstWeekday(item) === currentDienstDayFilter;
+  }
+  function setDienstDayFilter(value='all', options={}){
+    const nextValue = String(value);
+    if (options.toggle !== false && currentDienstDayFilter === nextValue && nextValue !== 'all'){
+      currentDienstDayFilter = 'all';
+    } else {
+      currentDienstDayFilter = nextValue;
+    }
+    if (options.render !== false) renderDiensten();
+    if (options.scroll !== false) document.getElementById('dienstenListPanel')?.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+  function dienstDayLabel(day){
+    const map = {'1':'Ma','2':'Di','3':'Woe','4':'Do','5':'Vrij','6':'Zat','0':'Zo'};
+    return map[String(day)] || '?';
+  }
+  function sortDiensten(items){
+    return safeArray(items).slice().sort((a,b) => {
+      const dateA = String(a?.datum || '9999-99-99');
+      const dateB = String(b?.datum || '9999-99-99');
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const startA = parseTimeValue(getDienstStart(a) || String(a?.tijd || '').split(' - ')[0]);
+      const startB = parseTimeValue(getDienstStart(b) || String(b?.tijd || '').split(' - ')[0]);
+      if (startA !== startB) return startA - startB;
+      return getDienstDisplayName(a).localeCompare(getDienstDisplayName(b));
+    });
+  }
+  function collectDienstStats(){
+    const diensten = sortDiensten(appData.general?.diensten);
+    const todayIso = getTodayString();
+    const today = diensten.filter(item => String(item?.datum || '') === todayIso && normalizeDienstStatus(item?.status) !== 'vervallen');
+    const thisWeek = diensten.filter(item => isDienstThisWeek(item));
+    const upcoming = diensten.filter(item => String(item?.datum || '') >= todayIso && normalizeDienstStatus(item?.status) !== 'vervallen');
+    const changed = diensten.filter(item => normalizeDienstStatus(item?.status) === 'gewijzigd');
+    return { diensten, thisWeek, upcoming, changed, today, todayIso };
+  }
+  function dashboardRelativeDienstLabel(item){
+    if (!item || !item.datum) return '';
+    const today = parseDienstDate(getTodayString());
+    const date = parseDienstDate(item.datum);
+    if (!today || !date) return formatDienstDate(item.datum);
+    const diff = Math.round((date - today) / 86400000);
+    if (diff === 0) return 'Vandaag';
+    if (diff === 1) return 'Morgen';
+    if (diff > 1 && diff < 7) return `Over ${diff} dagen`;
+    return formatDienstDate(item.datum);
+  }
+
+  function dashboardCountdownLabel(item){
+    if (!item || !item.datum) return 'Nog niets gepland';
+    const timeValue = String(item.start || '').trim();
+    const targetDate = parseDienstDate(item.datum);
+    if (!targetDate) return formatDienstDate(item.datum);
+    let target = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 9, 0, 0, 0);
+    const timeMatch = timeValue.match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch){
+      target.setHours(Number(timeMatch[1] || 0), Number(timeMatch[2] || 0), 0, 0);
+    }
+    const now = new Date();
+    const diffMs = target.getTime() - now.getTime();
+    const diffMin = Math.round(diffMs / 60000);
+    if (diffMin <= -180) return 'Al begonnen of voorbij';
+    if (diffMin < 0) return 'Begint zo';
+    if (diffMin < 60) return `Over ${diffMin} min`;
+    if (diffMin < 24 * 60){
+      const hours = Math.floor(diffMin / 60);
+      const mins = diffMin % 60;
+      return mins ? `Over ${hours}u ${mins}m` : `Over ${hours} uur`;
+    }
+    const days = Math.floor(diffMin / (24 * 60));
+    return days <= 1 ? 'Morgen' : `Over ${days} dagen`;
+  }
+
+  function dashboardDienstRows(stats){
+    const rows = [];
+    if (stats.today[0]){
+      rows.push({
+        title: `Vandaag · ${getDienstDisplayName(stats.today[0])}`,
+        sub: `${getDienstTimeLabel(stats.today[0]) || 'Tijd volgt'}${getDienstLocation(stats.today[0]) ? ' · ' + getDienstLocation(stats.today[0]) : ''}`,
+        badge: dienstStatusLabel(stats.today[0].status),
+        badgeClass: dienstStatusBadgeClass(stats.today[0].status)
+      });
+    }
+    const nextUpcoming = stats.upcoming.find(item => String(item?.datum || '') >= stats.todayIso);
+    if (nextUpcoming){
+      rows.push({
+        title: `Volgende · ${getDienstDisplayName(nextUpcoming)}`,
+        sub: `${dashboardRelativeDienstLabel(nextUpcoming)}${getDienstTimeLabel(nextUpcoming) ? ' · ' + getDienstTimeLabel(nextUpcoming) : ''}`,
+        badge: getDienstLocation(nextUpcoming) || 'Gepland',
+        badgeClass: getDienstLocation(nextUpcoming) ? 'accent' : ''
+      });
+    }
+    if (stats.thisWeek[0]){
+      rows.push({
+        title: `Deze week · ${stats.thisWeek.length} ${stats.thisWeek.length === 1 ? 'dienst' : 'diensten'}`,
+        sub: stats.thisWeek.slice(0,2).map(item => `${formatDienstDate(item.datum)}${getDienstTimeLabel(item) ? ' · ' + getDienstTimeLabel(item) : ''}`).join(' • '),
+        badge: stats.changed.length ? `${stats.changed.length} gewijzigd` : 'Op schema',
+        badgeClass: stats.changed.length ? 'warn' : 'good'
+      });
+    }
+    return rows;
+  }
+  function dashboardActionRows(stats){
+    const rows = [];
+    rows.push({
+      title: 'Diensten openen',
+      sub: 'Ga direct naar je compacte weekoverzicht.',
+      badge: 'Open',
+      badgeClass: 'accent'
+    });
+    rows.push({
+      title: 'DISH import',
+      sub: 'Importeer nieuwe blauwe dagen vanuit DISH.',
+      badge: 'Import',
+      badgeClass: 'accent'
+    });
+    if (pageAllowed('dienstsoorten')){
+      rows.push({
+        title: 'Dienstsoorten',
+        sub: `${safeArray(appData.dienst_types).length} soorten beschikbaar voor snelle planning.`,
+        badge: 'Beheer'
+      });
+    }
+    if (stats.changed.length){
+      rows.push({
+        title: 'Gewijzigde diensten',
+        sub: 'Loop even door je planning om wijzigingen te checken.',
+        badge: `${stats.changed.length}`,
+        badgeClass: 'warn'
+      });
+    }
+    return rows;
+  }
   function currentRole(){ return appData?.auth?.role || ''; }
   function isAdmin(){ return currentRole() === 'admin'; }
   function adminOnly(html){ return isAdmin() ? html : ''; }
@@ -3301,8 +4785,7 @@ HTML = r"""
       'bar-locaties': hasPermission('manage_locations'),
       'bar-oplijst': hasPermission('access_bar') && hasPermission('view_oplijst'),
       'bar-bijvullen': hasPermission('access_bar') && hasPermission('view_bijvullen'),
-      'bar-koeling-detail': hasPermission('access_bar') && (hasPermission('adjust_stock') || hasPermission('manage_products') || hasPermission('manage_coolers')),
-    };
+      'bar-koeling-detail': hasPermission('access_bar') && (hasPermission('adjust_stock') || hasPermission('manage_products') || hasPermission('manage_coolers'))};
     return !!map[page];
   }
 
@@ -3360,8 +4843,7 @@ HTML = r"""
     const sectionVisibility = {
       algemeen: isAdmin() || hasPermission('access_general'),
       keuken: isAdmin() || hasPermission('access_kitchen'),
-      bar: isAdmin() || hasPermission('access_bar'),
-    };
+      bar: isAdmin() || hasPermission('access_bar')};
     Object.entries(sectionVisibility).forEach(([key, visible]) => {
       const toggle = document.getElementById('toggle-' + key);
       const group = document.getElementById('group-' + key);
@@ -3408,8 +4890,7 @@ HTML = r"""
       'bar-locaties': ['Bar', 'Locaties'],
       'bar-oplijst': ['Bar', 'Op / niet op voorraad'],
       'bar-bijvullen': ['Bar', 'Bijvuloverzicht'],
-      'bar-koeling-detail': ['Bar', 'Koeling detail'],
-    };
+      'bar-koeling-detail': ['Bar', 'Koeling detail']};
     return map[page] || ['Casa Cara', 'Overzicht'];
   }
 
@@ -3659,8 +5140,7 @@ HTML = r"""
   const botState = {
     lastAction: null,
     awaitingChoice: false,
-    askedOnce: false,
-  };
+    askedOnce: false};
 
   function appendBotMessage(text, role='bot', muted=false){
     const chat = document.getElementById('botChat');
@@ -3744,7 +5224,92 @@ HTML = r"""
   }
 
 
-  function renderDashboard(){
+  
+
+  function hourlyRateStorageKey(){
+    const userName = String(appData?.auth?.user_name || 'gebruiker').trim().toLowerCase();
+    const safeName = userName.replace(/[^a-z0-9_-]+/g, '_') || 'gebruiker';
+    return `hourlyRate:${safeName}`;
+  }
+
+  function getHourlyRate(){
+    const personalKey = hourlyRateStorageKey();
+    const raw = localStorage.getItem(personalKey) || '';
+    const normalized = String(raw).replace(',', '.').trim();
+    const value = Number(normalized);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  function openHourlyRateModal(){
+    const current = getHourlyRate();
+    const userName = String(appData?.auth?.user_name || 'jouw account').trim() || 'jouw account';
+    openModal(
+      'Uurloon instellen',
+      `Dit uurloon geldt alleen voor ${userName}. Andere medewerkers zien of wijzigen dit niet.`,
+      `<div class="form-grid">
+        <div class="field">
+          <label>Uurloon in euro</label>
+          <input id="hourlyRateInput" type="number" step="0.01" min="0" value="${current ? current : ''}" placeholder="Bijv. 18.50">
+        </div>
+        <div class="overview-note">De app rekent hiermee alleen een persoonlijke indicatie uit. Het houdt nog geen rekening met pauzes, toeslagen, belasting of correcties.</div>
+        <div class="form-actions">
+          <button class="btn" onclick="closeModal()">Annuleren</button>
+          <button class="btn danger" onclick="clearHourlyRate()">Wissen</button>
+          <button class="btn accent" onclick="saveHourlyRate()">Opslaan</button>
+        </div>
+      </div>`
+    );
+  }
+
+  function saveHourlyRate(){
+    const input = document.getElementById('hourlyRateInput');
+    const value = Number(String(input?.value || '').replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0){
+      toast('Vul een geldig uurloon in.', 'error');
+      return;
+    }
+    localStorage.setItem(hourlyRateStorageKey(), String(value));
+    closeModal();
+    renderDashboard();
+    toast('Persoonlijk uurloon opgeslagen.');
+  }
+
+  function clearHourlyRate(){
+    localStorage.removeItem(hourlyRateStorageKey());
+    closeModal();
+    renderDashboard();
+    toast('Persoonlijk uurloon gewist.');
+  }
+
+  function calcDienstHours(item){
+    if(!item || !item.start || !item.einde) return 0;
+    const [sh, sm] = item.start.split(':').map(Number);
+    const [eh, em] = item.einde.split(':').map(Number);
+    let start = sh*60+sm;
+    let end = eh*60+em;
+    if(end < start) end += 24*60;
+    return (end-start)/60;
+  }
+
+  function calcHoursStats(){
+    const stats = collectDienstStats();
+    const all = stats.diensten;
+    const week = stats.thisWeek;
+    const now = new Date();
+    const month = all.filter(d=>{
+      const dt = parseDienstDate(d.datum);
+      return dt && dt.getMonth()===now.getMonth() && dt.getFullYear()===now.getFullYear();
+    });
+
+    const sum = arr => arr.reduce((t,i)=>t+calcDienstHours(i),0);
+
+    return {
+      weekHours: sum(week),
+      monthHours: sum(month)
+    };
+  }
+
+function renderDashboard(){
     const koelingen = safeArray(appData.bar.koelingen);
     const fill = safeArray(appData.bar.fill_items);
     const diensten = safeArray(appData.general.diensten);
@@ -3753,6 +5318,7 @@ HTML = r"""
     const tips = appData.general.fooienpot || 0;
     const tipLabel = appData.general.fooienpot_label || 'Fooienpot';
     const currentUserName = appData?.auth?.user_name || '';
+    const dienstStats = collectDienstStats();
 
     setText('dashboardWelcome', currentUserName ? `Welkom ${currentUserName}!` : 'Welkom!');
     setText('statLowStock', String(fill.length));
@@ -3773,6 +5339,64 @@ HTML = r"""
     setText('barOverviewTypes', String(types.length));
     setText('barOverviewLocations', String(locations.length));
     setText('barOverviewFill', String(fill.length));
+
+    const nextUpcoming = dienstStats.upcoming.find(item => String(item?.datum || '') >= dienstStats.todayIso);
+    const nextTimeLabel = nextUpcoming ? getDienstTimeLabel(nextUpcoming) : '';
+    const nextCountdown = nextUpcoming ? dashboardCountdownLabel(nextUpcoming) : 'Nog niets gepland';
+    setText('dashboardHeroNextTitle', nextUpcoming ? getDienstDisplayName(nextUpcoming) : 'Nog geen dienst gepland');
+    setText('dashboardHeroNextSub', nextUpcoming
+      ? `${dashboardRelativeDienstLabel(nextUpcoming)}${getDienstLocation(nextUpcoming) ? ' · ' + getDienstLocation(nextUpcoming) : ''}${getDienstNote(nextUpcoming) ? ' · ' + getDienstNote(nextUpcoming) : ''}`
+      : 'Zodra er iets gepland staat, zie je hier direct wanneer je weer aan de beurt bent.');
+    setText('dashboardHeroNextBadge', nextUpcoming ? dienstStatusLabel(nextUpcoming.status) : 'Planning');
+    setText('dashboardHeroNextTime', nextTimeLabel || 'Tijd volgt');
+    setText('dashboardHeroNextCountdown', nextCountdown);
+
+    setText('dashboardNextTitle', nextUpcoming ? getDienstDisplayName(nextUpcoming) : 'Nog geen dienst');
+    setText('dashboardNextSub', nextUpcoming
+      ? `${dashboardRelativeDienstLabel(nextUpcoming)}${nextTimeLabel ? ' · ' + nextTimeLabel : ''}${getDienstLocation(nextUpcoming) ? ' · ' + getDienstLocation(nextUpcoming) : ''}`
+      : 'Zodra er iets gepland staat, zie je het hier direct.');
+    setText('dashboardNextBadge', nextUpcoming ? dienstStatusLabel(nextUpcoming.status) : 'Planning');
+
+    setText('dashboardTodayTitle', `${dienstStats.today.length} ${dienstStats.today.length === 1 ? 'dienst' : 'diensten'}`);
+    setText('dashboardTodaySub', dienstStats.today.length
+      ? dienstStats.today.slice(0,2).map(item => `${getDienstDisplayName(item)}${getDienstTimeLabel(item) ? ' · ' + getDienstTimeLabel(item) : ''}`).join(' • ')
+      : 'Geen diensten voor vandaag ingepland.');
+    setText('dashboardTodayBadge', 'Vandaag');
+
+    setText('dashboardWeekTitle', `${dienstStats.thisWeek.length} ${dienstStats.thisWeek.length === 1 ? 'dienst' : 'diensten'}`);
+    setText('dashboardWeekSub', dienstStats.thisWeek.length
+      ? dienstStats.thisWeek.slice(0,2).map(item => `${formatDienstDate(item.datum)}${getDienstTimeLabel(item) ? ' · ' + getDienstTimeLabel(item) : ''}`).join(' • ')
+      : 'Nog geen diensten in deze week.');
+    setText('dashboardWeekBadge', dienstStats.changed.length ? `${dienstStats.changed.length} gewijzigd` : 'Op schema');
+    const hours = calcHoursStats();
+    const hourlyRate = getHourlyRate();
+    const weekHours = Number(hours.weekHours || 0);
+    const monthHours = Number(hours.monthHours || 0);
+    const weekHoursLabel = `${weekHours.toFixed(1).replace('.', ',')} uur`;
+    const monthHoursLabel = `${monthHours.toFixed(1).replace('.', ',')}u`;
+    const monthSalary = hourlyRate ? monthHours * hourlyRate : 0;
+    const monthSalaryFull = monthSalary ? `± €${monthSalary.toFixed(2).replace('.', ',')}` : 'Uurloon instellen';
+    const monthSalaryShort = monthSalary ? `± €${monthSalary.toFixed(0).replace('.', ',')}` : 'Instellen';
+
+    setText('dashboardSalaryTitle', monthSalaryFull);
+    setText('dashboardSalarySub', hourlyRate
+      ? `${monthHoursLabel} deze maand · €${hourlyRate.toFixed(2).replace('.', ',')} per uur.`
+      : 'Stel je uurloon in voor je maandindicatie.');
+    setText('dashboardSalaryBadge', monthSalaryShort);
+
+    setText('dashboardHoursTitle', weekHoursLabel);
+    setText('dashboardHoursSub', `Deze week ingepland. Maand: ${monthHoursLabel}.`);
+    setText('dashboardHoursBadge', `Deze maand ${monthHoursLabel}`);
+
+    const actionChips = [];
+    if (pageAllowed('diensten')) actionChips.push(`<button class="dashboard-chip-btn" onclick="openPage('diensten')">Open diensten</button>`);
+    if (pageAllowed('diensten')) actionChips.push(`<button class="dashboard-chip-btn" onclick="openPage('diensten'); setDienstenView('week', { keepDayFilter: false });">Deze week</button>`);
+    if (pageAllowed('dienstsoorten')) actionChips.push(`<button class="dashboard-chip-btn" onclick="openPage('dienstsoorten')">Dienstsoorten</button>`);
+    if (pageAllowed('diensten')) actionChips.push(`<button class="dashboard-chip-btn" onclick="openDishImportModal()">DISH import</button>`);
+    const actionChipEl = document.getElementById('dashboardActionChips');
+    if (actionChipEl) actionChipEl.innerHTML = actionChips.join('');
+
+    
 
     const quickCards = [];
     if (pageAllowed('bar-koelingen')) quickCards.push({label:'Bar', title:'Koelingen', sub:'Overzicht per koeling en status', page:'bar-koelingen'});
@@ -4012,6 +5636,32 @@ HTML = r"""
     `).join('');
   }
 
+
+  function renderHubCards(targetId, cards, emptyText){
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    if (!cards.length){
+      el.innerHTML = `<div class="overview-note">${emptyText}</div>`;
+      return;
+    }
+    el.innerHTML = cards.map(card => `
+      <div class="overview-hub-card">
+        <div class="overview-hub-top">
+          <div>
+            <div class="overview-hub-kicker">${card.kicker || 'Overzicht'}</div>
+            <div class="overview-hub-title">${card.title}</div>
+            <div class="overview-hub-sub">${card.sub || ''}</div>
+          </div>
+          ${card.badge ? `<span class="badge ${card.badgeClass || ''}">${card.badge}</span>` : ''}
+        </div>
+        ${card.meta && card.meta.length ? `<div class="meta-row">${card.meta.slice(0,2).map(x => `<span class="meta-chip">${x}</span>`).join('')}</div>` : ''}
+        <div class="overview-hub-actions">
+          ${(card.actions || []).slice(0,2).map(action => `<button class="btn ${action.kind || ''}" onclick="${action.onclick}">${action.label}</button>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+
   function renderMiniRows(targetId, rows, emptyText){
     const el = document.getElementById(targetId);
     if (!el) return;
@@ -4031,7 +5681,7 @@ HTML = r"""
   }
 
   function renderGeneralOverview(){
-    const diensten = safeArray(appData.general?.diensten);
+    const { diensten, upcoming, thisWeek, changed } = collectDienstStats();
     const cards = [];
     if (pageAllowed('fooienpot')){
       cards.push({
@@ -4045,25 +5695,34 @@ HTML = r"""
       });
     }
     if (pageAllowed('diensten')){
-      const upcoming = diensten.slice().sort((a,b)=> String(a.datum||'').localeCompare(String(b.datum||'')) || String(a.tijd||'').localeCompare(String(b.tijd||''))).slice(0,3);
       cards.push({
         kicker:'Algemeen',
-        title:'Diensten',
-        sub: upcoming.length ? 'Je eerstvolgende diensten staan direct klaar.' : 'Plan hier diensten voor de komende dagen.',
+        title:'Jouw diensten',
+        sub: upcoming.length ? 'Je eerstvolgende diensten staan direct klaar.' : 'Plan of importeer je komende diensten.',
         badge:`${diensten.length} gepland`,
-        meta: upcoming.map(item => `${item.datum || 'Geen datum'}${item.tijd ? ' · ' + item.tijd : ''}`),
-        actions:[{ label:'Open diensten', kind:'accent', onclick:`openPage('diensten')` }, { label:'Dienst toevoegen', onclick:'openDienstModal()' }]
+        meta:[
+          `Deze week: ${thisWeek.length}`,
+          `Wijzigingen: ${changed.length}`,
+          upcoming[0] ? `Volgende: ${formatDienstDate(upcoming[0].datum)}${getDienstTimeLabel(upcoming[0]) ? ' · ' + getDienstTimeLabel(upcoming[0]) : ''}` : 'Nog niets gepland'
+        ],
+        actions:[{ label:'Open diensten', kind:'accent', onclick:`openPage('diensten')` }, { label:'DISH import', onclick:'openPage(\'diensten\'); setTimeout(openDishImportModal, 80)' }]
       });
     }
-    renderOverviewCards('generalOverviewGrid', cards, 'Je hebt binnen Algemeen nu alleen toegang tot onderdelen die voor jouw werkdag relevant zijn.');
+    renderHubCards('generalOverviewGrid', cards, 'Je hebt binnen Algemeen nu alleen toegang tot onderdelen die voor jouw werkdag relevant zijn.');
+    setText('generalHeroMetric', String(thisWeek.length));
 
     const rows = [];
-    const sorted = diensten.slice().sort((a,b)=> String(a.datum||'').localeCompare(String(b.datum||'')) || String(a.tijd||'').localeCompare(String(b.tijd||'')));
-    sorted.slice(0,4).forEach(item => rows.push({ title:item.naam || item.medewerker || 'Dienst', sub:`${item.datum || 'Geen datum'}${item.tijd ? ' · ' + item.tijd : ''}`, badge:item.rol || 'Dienst' }));
+    upcoming.slice(0,4).forEach(item => rows.push({
+      title:getDienstDisplayName(item),
+      sub:`${formatDienstDate(item.datum)}${getDienstTimeLabel(item) ? ' · ' + getDienstTimeLabel(item) : ''}${getDienstLocation(item) ? ' · ' + getDienstLocation(item) : ''}`,
+      badge:dienstStatusLabel(item.status),
+      badgeClass:dienstStatusBadgeClass(item.status)
+    }));
     if (pageAllowed('fooienpot')) rows.unshift({ title: appData.general?.fooienpot_label || 'Fooienpot', sub: isAdmin() ? 'Algemene stand voor het team.' : 'Jouw persoonlijke stand van vandaag.', badge: euro(appData.general?.fooienpot || 0), badgeClass:'accent' });
     setText('generalTodayBadge', rows.length ? `${rows.length} items` : 'Rustig');
     renderMiniRows('generalTodayList', rows.slice(0,4), 'Hier kun je snel diensten en je fooienpot volgen zonder naar losse pagina’s te hoeven springen.');
   }
+
 
   function renderKitchenOverview(){
     const lists = safeArray(appData.kitchen?.lists);
@@ -4115,7 +5774,8 @@ HTML = r"""
     if (pageAllowed('bar-oplijst')) cards.push({ kicker:'Bar', title:'Op-lijst', sub:'Alles wat op is of weer terug op voorraad moet.', badge:`${opCount} op`, badgeClass: opCount ? 'warn' : 'good', actions:[{ label:'Open op-lijst', kind:'accent', onclick:`openPage('bar-oplijst')` }] });
     if (pageAllowed('bar-productsoorten')) cards.push({ kicker:'Bar', title:'Productsoorten', sub:'Beheer soorten en indeling per locatie.', badge:`${safeArray(appData.types).length} soorten`, actions:[{ label:'Open soorten', kind:'accent', onclick:`openPage('bar-productsoorten')` }] });
     if (pageAllowed('bar-locaties')) cards.push({ kicker:'Bar', title:'Locaties', sub:'Overzicht van opslagplekken en logische looproutes.', badge:`${safeArray(appData.locations).filter(Boolean).length} locaties`, actions:[{ label:'Open locaties', kind:'accent', onclick:`openPage('bar-locaties')` }] });
-    renderOverviewCards('barOverviewGrid', cards, 'Je ziet hier alleen de bar-onderdelen waar jij echt iets mee kunt.');
+    renderHubCards('barOverviewGrid', cards, 'Je ziet hier alleen de bar-onderdelen waar jij echt iets mee kunt.');
+    setText('barHeroMetric', String(fill.length));
 
     const rows = [];
     fill.slice(0,3).forEach(item => rows.push({ title:item.product, sub:`${item.koeling} · ${item.locatie || '-'} · nu ${item.voorraad}`, badge:`+${item.bijvullen}`, badgeClass:'warn' }));
@@ -5281,7 +6941,7 @@ function renderKitchenListDetail(){
 
 
   function defaultClientBarSlot(index){
-    return { id: `slot_${index}`, label: `Vak ${index}`, product_id: '', product_name: '', image_url: '', note: '' };
+    return { id: `slot_${index}`, label: `Vak ${index}`, product_id: '', product_name: '', image_url: ''};
   }
 
   function defaultClientBarShelf(index){
@@ -5317,9 +6977,7 @@ function renderKitchenListDetail(){
             label: slot?.label || `Vak ${slotIndex+1}`,
             product_id: slot?.product_id || '',
             product_name: slot?.product_name || '',
-            image_url: slot?.image_url || '',
-            note: slot?.note || ''
-          }))
+            image_url: slot?.image_url || ''}))
         }))
       }))
     }));
@@ -5346,9 +7004,7 @@ function renderKitchenListDetail(){
             label: slot?.label || `Vak ${slotIndex+1}`,
             product_id: slot?.product_id || '',
             product_name: slot?.product_name || '',
-            image_url: slot?.image_url || '',
-            note: slot?.note || ''
-          }));
+            image_url: slot?.image_url || ''}));
           while(shelf.slots.length < facings) shelf.slots.push(defaultClientBarSlot(shelf.slots.length + 1));
           shelf.name = shelf?.name || (shelf.is_floor ? 'Bodem' : `Plank ${shelfIndex+1}`);
           shelf.height = shelf.is_floor ? 'low' : shelf.height;
@@ -5359,8 +7015,7 @@ function renderKitchenListDetail(){
           ...shelf,
           is_floor: false,
           id: shelf?.id || `shelf_${idx + 1}`,
-          name: (shelf?.name || '').trim() || `Plank ${idx + 1}`,
-        }));
+          name: (shelf?.name || '').trim() || `Plank ${idx + 1}`}));
         const keptFloor = normalizeShelfShape({
           ...(floorShelves[0] || { id: `shelf_${topShelves.length + 1}`, name: 'Bodem', facings: 9, height: 'low', is_floor: true, slots: Array.from({length:9}, (_,i) => defaultClientBarSlot(i + 1)) }),
           is_floor: true,
@@ -5374,7 +7029,6 @@ function renderKitchenListDetail(){
     return {
       id: item.id || '',
       name: item.name || 'Indeling',
-      note: item.note || '',
       created_at: item.created_at || '',
       units
     };
@@ -6190,15 +7844,13 @@ function openBarLayoutEditor(layoutId=null){
         facings: 9,
         height: 'medium',
         is_floor: false,
-        slots: Array.from({length:9}, (_, idx) => defaultClientBarSlot(idx + 1)),
-      }));
+        slots: Array.from({length:9}, (_, idx) => defaultClientBarSlot(idx + 1))}));
       const floorShelf = shelves.find(shelf => shelf?.is_floor);
       const topShelves = shelves.filter(shelf => !shelf?.is_floor).map((shelf, idx) => ({
         ...shelf,
         id: shelf?.id || `shelf_${idx + 1}`,
         name: (shelf?.name || '').trim() || `Plank ${idx + 1}`,
-        is_floor: false,
-      }));
+        is_floor: false}));
       cooler.shelves = floorShelf ? [...topShelves, normalizeShelfShape({ ...floorShelf, is_floor: true, name: (floorShelf?.name || 'Bodem').trim() || 'Bodem', facings: Math.max(1, Math.min(Number(floorShelf?.facings || 9) || 9, 9)) })] : topShelves;
     });
     window.currentBarLayoutShelfTarget = { unitIndex, coolerIndex, shelfIndex: Number(shelfIndex || 0) + 1, slotIndex: 0 };
@@ -6222,8 +7874,7 @@ function openBarLayoutEditor(layoutId=null){
         const slots = safeArray(shelf?.slots).slice(0, facings).map((slot, slotIndex) => ({
           ...defaultClientBarSlot(slotIndex + 1),
           ...(slot || {}),
-          facing: slotIndex + 1,
-        }));
+          facing: slotIndex + 1}));
         while(slots.length < facings) slots.push(defaultClientBarSlot(slots.length + 1));
         return {
           ...shelf,
@@ -6232,8 +7883,7 @@ function openBarLayoutEditor(layoutId=null){
           facings,
           height: shelf?.is_floor ? 'low' : (['low','medium','high','wine'].includes(String(shelf?.height || 'medium')) ? String(shelf.height || 'medium') : 'medium'),
           is_floor: Boolean(shelf?.is_floor),
-          slots,
-        };
+          slots};
       });
     });
     const freshShelves = safeArray(getSelectedBarLayout()?.units?.[unitIndex]?.coolers?.[coolerIndex]?.shelves);
@@ -6876,26 +8526,158 @@ function openUserModal(index=null){
     <div class="list-item"><div class="item-top"><div><div class="item-title">${user.name || 'Medewerker'}</div><div class="item-sub">Rol: ${user.role || 'medewerker'}</div></div><span class="badge accent">${user.role || 'medewerker'}</span></div><div class="meta-row"><span class="meta-chip">Code: ${user.pin || '-'}</span><span class="meta-chip">${permissionSummary(user)}</span></div><div class="item-actions"><button class="btn accent" onclick="openUserModal(${index})">Bewerken</button><button class="btn danger" onclick="confirmAction('Medewerker verwijderen','Weet je zeker dat je deze medewerker wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteUser',${index})&quot;)">Verwijderen</button></div></div>`, 'Nog geen gebruikers gevonden.'); }
 
   function renderDiensten(){
-    const diensten = safeArray(appData.general.diensten);
+    const { diensten, upcoming, thisWeek, changed, today } = collectDienstStats();
     const canManageDiensten = hasPermission('manage_diensten');
-    renderList(
-      'dienstenList',
-      diensten,
-      (item, index) => `
-        <div class="list-item">
-          <div class="item-top">
-            <div>
-              <div class="item-title">${item.naam || item.medewerker || 'Dienst'}</div>
-              <div class="item-sub">${item.datum || 'Geen datum'}${item.tijd ? ' · ' + item.tijd : ''}</div>
+
+    const summaryGrid = document.getElementById('dienstenSummaryGrid');
+    if (summaryGrid) summaryGrid.remove();
+
+    const focusRows = [];
+    if (today[0]){
+      focusRows.push({
+        title:`Vandaag · ${getDienstDisplayName(today[0])}`,
+        sub:`${formatDienstDate(today[0].datum)}${getDienstTimeLabel(today[0]) ? ' · ' + getDienstTimeLabel(today[0]) : ''}${getDienstLocation(today[0]) ? ' · ' + getDienstLocation(today[0]) : ''}`,
+        badge:dienstStatusLabel(today[0].status),
+        badgeClass:dienstStatusBadgeClass(today[0].status)
+      });
+    }
+    if (upcoming[0]){
+      focusRows.push({
+        title:`Volgende · ${getDienstDisplayName(upcoming[0])}`,
+        sub:`${formatDienstDate(upcoming[0].datum)}${getDienstTimeLabel(upcoming[0]) ? ' · ' + getDienstTimeLabel(upcoming[0]) : ''}`,
+        badge:getDienstLocation(upcoming[0]) || 'Gepland',
+        badgeClass:getDienstLocation(upcoming[0]) ? 'accent' : ''
+      });
+    }
+    thisWeek.slice(0,2).forEach(item => {
+      focusRows.push({
+        title:getDienstDisplayName(item),
+        sub:`${formatDienstDate(item.datum)}${getDienstTimeLabel(item) ? ' · ' + getDienstTimeLabel(item) : ''}${getDienstNote(item) ? ' · ' + getDienstNote(item) : ''}`,
+        badge:dienstStatusLabel(item.status),
+        badgeClass:dienstStatusBadgeClass(item.status)
+      });
+    });
+    setText('dienstenWeekBadge', thisWeek.length ? `${thisWeek.length} diensten` : '0 diensten');
+    renderMiniRows('dienstenWeekList', focusRows.slice(0,4), 'Nog geen diensten in beeld.');
+
+    const quickActions = document.getElementById('dienstenQuickActions');
+    if (quickActions){
+      quickActions.innerHTML = [
+        `<button class="stat-card diensten-quick-card" onclick="setDienstenView('week', { keepDayFilter: true })"><div class="stat-label">Week</div><div class="stat-value">${thisWeek.length}</div><div class="stat-sub">Bekijk alleen deze week</div></button>`,
+        `<button class="stat-card diensten-quick-card" onclick="setDienstDayFilter(String(new Date().getDay() || 0)); setDienstenView('all')"><div class="stat-label">Vandaag</div><div class="stat-value">${today.length}</div><div class="stat-sub">Open alleen vandaag</div></button>`,
+        `<button class="stat-card diensten-quick-card" onclick="openPage('dienstsoorten')"><div class="stat-label">Soorten</div><div class="stat-value">${safeArray(appData.dienst_types).length}</div><div class="stat-sub">Beheer dienstsoorten</div></button>`,
+        `<button class="stat-card diensten-quick-card" onclick="openDishImportModal()"><div class="stat-label">DISH</div><div class="stat-value">📸</div><div class="stat-sub">Importeer blauw gemarkeerde dagen</div></button>`,
+        `<button class="stat-card diensten-quick-card" onclick="openCalendarLinkModal()"><div class="stat-label">Agenda</div><div class="stat-value">↗</div><div class="stat-sub">Koppel jouw diensten</div></button>`,
+        `${canManageDiensten ? `<button class="stat-card diensten-quick-card" onclick="openDienstModal()"><div class="stat-label">Actie</div><div class="stat-value">+</div><div class="stat-sub">Nieuwe dienst toevoegen</div></button>` : ''}`
+      ].join('');
+    }
+    setText('dienstenQuickBadge', currentDienstView === 'week' ? 'Weekmodus' : 'Planning');
+    setText('dienstenQuickNote', currentDienstDayFilter === 'all' ? 'Gebruik de dagknoppen hieronder om je planning nog sneller te filteren.' : `Dagfilter actief: ${dienstDayLabel(currentDienstDayFilter)}.`);
+
+    const baseDiensten = currentDienstView === 'week' ? thisWeek : diensten;
+    const visibleDiensten = baseDiensten.filter(item => isDienstOnSelectedDay(item));
+    const allBtn = document.getElementById('dienstenFilterAllBtn');
+    const weekBtn = document.getElementById('dienstenFilterWeekBtn');
+    if (allBtn) allBtn.classList.toggle('accent', currentDienstView === 'all');
+    if (weekBtn) weekBtn.classList.toggle('accent', currentDienstView === 'week');
+    setText('dienstenListIntro', currentDienstView === 'week' ? (appData.general?.diensten_personal_view ? 'Je ziet jouw diensten uit deze week.' : 'Je ziet nu alleen diensten uit deze week in compacte weekblokken.') : (appData.general?.diensten_personal_view ? 'Je ziet alleen jouw eigen geplande diensten.' : 'Je ziet alle geplande diensten in compacte weekblokken.'));
+
+    const dayRow = document.getElementById('dienstenDayFilterRow');
+    if (dayRow){
+      const days = ['1','2','3','4','5','6','0'];
+      dayRow.innerHTML = days.map(day => `<button type="button" class="task-switcher-btn ${currentDienstDayFilter === day ? 'active' : ''}" onclick="setDienstDayFilter('${day}')">${dienstDayLabel(day)}</button>`).join('');
+    }
+
+    const listEl = document.getElementById('dienstenList');
+    if (!listEl) return;
+    if (!visibleDiensten.length){
+      listEl.innerHTML = `<div class="empty">${currentDienstView === 'week'
+        ? (currentDienstDayFilter === 'all' ? 'Nog geen diensten in deze week.' : `Nog geen diensten op ${dienstDayLabel(currentDienstDayFilter)} in deze week.`)
+        : (currentDienstDayFilter === 'all' ? 'Nog geen diensten gevonden.' : `Nog geen diensten op ${dienstDayLabel(currentDienstDayFilter)}.`)}</div>`;
+      return;
+    }
+
+    const weekGroups = new Map();
+    visibleDiensten.forEach(item => {
+      const date = parseDienstDate(item.datum);
+      const weekKey = date ? isoWeekKey(date) : 'zonder-week';
+      if (!weekGroups.has(weekKey)) weekGroups.set(weekKey, new Map());
+      const dateKey = item.datum || 'zonder-datum';
+      if (!weekGroups.get(weekKey).has(dateKey)) weekGroups.get(weekKey).set(dateKey, []);
+      weekGroups.get(weekKey).get(dateKey).push(item);
+    });
+
+    const sortedWeekEntries = Array.from(weekGroups.entries()).sort((a, b) => {
+      if (a[0] === 'zonder-week') return 1;
+      if (b[0] === 'zonder-week') return -1;
+      return a[0].localeCompare(b[0]);
+    });
+
+    const currentDate = new Date();
+    const currentWeekKey = isoWeekKey(currentDate);
+    const weekRangeLabel = (weekMap) => {
+      const keys = Array.from(weekMap.keys()).filter(k => k && k !== 'zonder-datum').sort((a,b)=> a.localeCompare(b));
+      if (!keys.length) return 'Geen datumbereik';
+      const first = keys[0];
+      const last = keys[keys.length - 1];
+      return first === last ? formatDienstDate(first) : `${formatDienstDate(first)} – ${formatDienstDate(last)}`;
+    };
+
+    listEl.innerHTML = sortedWeekEntries.map(([weekKey, dayMap], index) => {
+      const weekItems = Array.from(dayMap.values()).flat();
+      const sortedDays = Array.from(dayMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+      const shouldOpen = weekKey === currentWeekKey || (currentDienstView === 'week' && index === 0);
+      return `
+        <details class="dienst-week-compact" ${shouldOpen ? 'open' : ''}>
+          <summary class="dienst-week-summary">
+            <div class="dienst-week-summary-left">
+              <div class="dienst-group-kicker">Week</div>
+              <div class="dienst-week-summary-title">${weekKey === 'zonder-week' ? 'Geen week' : weekLabelFromKey(weekKey)}</div>
+              <div class="dienst-week-summary-sub">${weekRangeLabel(dayMap)}</div>
             </div>
-            <span class="badge">${item.rol || 'Dienst'}</span>
+            <div class="dienst-week-summary-right">
+              <span class="badge accent">${weekItems.length} ${weekItems.length === 1 ? 'dienst' : 'diensten'}</span>
+              <span class="group-chevron">⌄</span>
+            </div>
+          </summary>
+          <div class="dienst-week-compact-body">
+            ${sortedDays.map(([dateKey, items]) => {
+              const prettyDate = dateKey === 'zonder-datum' ? 'Geen datum' : formatDienstDate(dateKey);
+              return `
+                <section class="dienst-day-compact ${dateKey === getTodayString() ? 'is-today' : ''}">
+                  <div class="dienst-day-compact-head">
+                    <div class="dienst-day-compact-head-left">
+                      <div class="dienst-day-compact-title">${prettyDate}</div>
+                      ${dateKey === getTodayString() ? `<span class="badge accent">Vandaag</span>` : ``}
+                    </div>
+                    <span class="badge">${items.length}</span>
+                  </div>
+                  <div class="dienst-cards dienst-cards-compact">
+                    ${items.map(item => {
+                      const originalIndex = (item && item._global_index !== undefined) ? item._global_index : safeArray(appData.general?.diensten).indexOf(item);
+                      return `
+                        <article class="dienst-card-item dienst-card-item-compact ${item.status === 'gewijzigd' ? 'is-changed' : ''} ${String(item?.datum || '') === getTodayString() ? 'is-today' : ''}">
+                          <div class="dienst-card-top">
+                            <div class="dienst-card-time">${getDienstTimeLabel(item) || 'Tijd volgt'}</div>
+                            <div class="dienst-card-main">
+                              <div class="dienst-card-title">${getDienstDisplayName(item)}</div>
+                              <div class="dienst-card-sub">${item.naam ? item.naam : 'Dienst'}${getDienstLocation(item) ? ' · ' + getDienstLocation(item) : ''}${item.rol ? ' · ' + item.rol : ''}${getDienstNote(item) ? ' · ' + getDienstNote(item) : ''}</div>
+                            </div>
+                            <div class="dienst-card-side">
+                              <span class="badge ${dienstStatusBadgeClass(item.status)}">${dienstStatusLabel(item.status)}</span>
+                              ${canManageDiensten ? `<div class="dienst-inline-actions"><button class="dienst-inline-btn accent" onclick="openDienstModal(${originalIndex})">Bewerk</button><button class="dienst-inline-btn danger" onclick="confirmAction('Dienst verwijderen','Weet je zeker dat je deze dienst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteDienst',${originalIndex})&quot;)">Verwijder</button></div>` : ``}
+                            </div>
+                          </div>
+                        </article>`;
+                    }).join('')}
+                  </div>
+                </section>`;
+            }).join('')}
           </div>
-          ${canManageDiensten ? `<div class="item-actions"><button class="btn accent" onclick="openDienstModal(${index})">Bewerken</button><button class="btn danger" onclick="confirmAction('Dienst verwijderen','Weet je zeker dat je deze dienst wilt verwijderen?','Verwijderen', &quot;doConfirmed('deleteDienst',${index})&quot;)">Verwijderen</button></div>` : ''}
-        </div>
-      `,
-      'Nog geen diensten gevonden.'
-    );
+        </details>`;
+    }).join('');
   }
+
     function renderAll(){
     applyPermissions();
     const newDienstBtn = document.getElementById('newDienstBtn');
@@ -6947,12 +8729,33 @@ function openUserModal(index=null){
     return safeArray(appData.dienst_types).find(item => item.naam === name) || {};
   }
 
+  function applyDienstTypeTimes(force=false){
+    const name = document.getElementById('dienstNaam')?.value || '';
+    const item = getDienstTypeByName(name);
+    const startInput = document.getElementById('dienstStart');
+    const endInput = document.getElementById('dienstEinde');
+    const typeStart = normalizeDienstTimeValue(item.start || '');
+    const typeEnd = normalizeDienstTimeValue(item.einde || '');
+    if (startInput && (force || !normalizeDienstTimeValue(startInput.value || '')) && typeStart) startInput.value = typeStart;
+    if (endInput && (force || !normalizeDienstTimeValue(endInput.value || '')) && typeEnd) endInput.value = typeEnd;
+    return { typeStart, typeEnd };
+  }
+
   function updateDienstTimePreview(){
     const name = document.getElementById('dienstNaam')?.value || '';
     const item = getDienstTypeByName(name);
-    const text = item.start || item.einde ? `${item.start || '--:--'} - ${item.einde || '--:--'}` : 'Geen tijden ingesteld';
+    const startInput = document.getElementById('dienstStart');
+    const endInput = document.getElementById('dienstEinde');
+    const startValue = normalizeDienstTimeValue(startInput?.value || '') || normalizeDienstTimeValue(item.start || '') || '';
+    const endValue = normalizeDienstTimeValue(endInput?.value || '') || normalizeDienstTimeValue(item.einde || '') || '';
+    const text = buildDienstTimeLabel(startValue, endValue);
     const el = document.getElementById('dienstTimePreview');
-    if (el) el.textContent = text;
+    if (el) el.value = text || 'Geen tijden ingesteld';
+  }
+
+  function handleDienstTypeChange(){
+    applyDienstTypeTimes(true);
+    updateDienstTimePreview();
   }
 
   function openDienstTypeModal(name=''){
@@ -7032,51 +8835,302 @@ function openUserModal(index=null){
     }catch(err){ toast(err.message, 'error'); }
   }
 
+
+  function dishImportTypeSelectOptions(selected=''){
+    const options = ['<option value="">Kies dienstsoort</option>'];
+    safeArray(appData.dienst_types).forEach(item => {
+      options.push(`<option value="${escapeHtml(item.naam)}" ${item.naam === selected ? 'selected' : ''}>${escapeHtml(item.naam)}</option>`);
+    });
+    return options.join('');
+  }
+  
+  async function openCalendarLinkModal(){
+    let url = String(appData?.auth?.calendar_url || '').trim();
+
+    if (!url){
+      try{
+        const res = await fetch('/api/casa/calendar-link', { credentials:'same-origin' });
+        const data = await res.json();
+        if (data && data.ok && data.url){
+          url = String(data.url || '').trim();
+          appData.auth = appData.auth || {};
+          appData.auth.calendar_url = url;
+        }else if (data && data.message){
+          toast(data.message, 'error');
+          return;
+        }
+      }catch(err){}
+    }
+
+    if (!url){
+      toast('Agenda link kon niet worden gemaakt. Log opnieuw in en probeer het nog eens.', 'error');
+      return;
+    }
+
+    const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
+    const feedCount = Number(appData?.auth?.calendar_event_count || 0);
+    const firstEvent = String(appData?.auth?.calendar_first_event || '').trim();
+
+    openModal(
+      'Agenda koppelen',
+      'Kopieer jouw persoonlijke agenda-link en voeg hem toe als agenda-abonnement.',
+      `<div class="calendar-link-card">
+        <div class="calendar-link-status">
+          <div>
+            <div class="calendar-link-kicker">Persoonlijke feed</div>
+            <div class="calendar-link-title">${feedCount ? `${feedCount} diensten klaar voor agenda` : 'Agenda feed klaar'}</div>
+            <div class="calendar-link-sub">${firstEvent || 'Na je Render deploy gebruik je deze HTTPS-link voor Apple Agenda, Google Calendar of Outlook.'}</div>
+          </div>
+          <span class="badge accent">ICS</span>
+        </div>
+
+        <div class="field">
+          <label>Agenda-link</label>
+          <input id="calendarFeedUrl" value="${url}" readonly onclick="this.select()">
+        </div>
+
+        <div class="overview-note">
+          Deze link is persoonlijk. Deel hem niet met anderen. Je agenda-app ververst abonnementen periodiek automatisch.
+        </div>
+
+        <div class="calendar-link-actions">
+          <button class="btn accent calendar-main-action" onclick="copyCalendarFeedUrl()">Kopieer agenda-link</button>
+          <a class="btn calendar-secondary-action" href="${webcalUrl}" target="_blank" rel="noopener">Open in agenda-app</a>
+        </div>
+      </div>`
+    );
+  }
+
+  async function copyCalendarFeedUrl(){
+    const input = document.getElementById('calendarFeedUrl');
+    const url = input?.value || String(appData?.auth?.calendar_url || '');
+    try{
+      await navigator.clipboard.writeText(url);
+      toast('Agenda link gekopieerd.');
+    }catch(err){
+      if (input){
+        input.select();
+        document.execCommand('copy');
+        toast('Agenda link gekopieerd.');
+      }else{
+        toast('Kopiëren lukt niet automatisch.', 'error');
+      }
+    }
+  }
+
+function openDishImportModal(){
+    const now = new Date();
+    const monthOptions = Array.from({length:12}, (_, idx) => `<option value="${idx + 1}" ${(idx + 1) === (now.getMonth() + 1) ? 'selected' : ''}>${new Intl.DateTimeFormat('nl-NL', { month:'long' }).format(new Date(2025, idx, 1))}</option>`).join('');
+    const yearOptions = Array.from({length:5}, (_, idx) => {
+      const year = now.getFullYear() - 1 + idx;
+      return `<option value="${year}" ${year === now.getFullYear() ? 'selected' : ''}>${year}</option>`;
+    }).join('');
+    openModal('', 'Upload je DISH screenshot en bekijk eerst de preview.', `
+      <div class="form-grid">
+        <div class="field"><label>Screenshot van je DISH maandrooster</label><input id="dishImportFile" type="file" accept="image/*"></div>
+        <div class="field"><label>Maand van screenshot</label><select id="dishImportMonth">${monthOptions}</select></div>
+        <div class="field"><label>Jaar</label><select id="dishImportYear">${yearOptions}</select></div>
+        <div class="field"><label><input id="dishImportBlueOnly" type="checkbox" checked style="width:auto;min-height:auto;margin-right:8px"> Alleen volledig blauwe dagen herkennen</label></div>
+        <div class="overview-note">Preview eerst. v5 herkent alleen volledig blauwe DISH-dagen. Omcirkeld blauw en groen worden genegeerd. Daarna kies jij per dag zelf de juiste dienstsoort; de tijden komen automatisch uit je dienstsoorten.</div>
+        <div id="dishImportPreview" class="mini-list"></div>
+        <div class="form-actions">
+          <button class="btn" onclick="closeModal()">Sluiten</button>
+          <button class="btn" onclick="previewDishImport()">Preview</button>
+          <button class="btn accent" id="dishImportConfirmBtn" onclick="applyDishImport()" style="display:none">Importeren</button>
+        </div>
+      </div>
+    `);
+    window.latestDishImportPreview = [];
+  }
+  async function readDishImportFile(){
+    const fileInput = document.getElementById('dishImportFile');
+    const file = fileInput?.files?.[0];
+    if (!file) throw new Error('Kies eerst een screenshot.');
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Kon de screenshot niet lezen.'));
+      reader.readAsDataURL(file);
+    });
+  }
+  function dishImportIncludeColors(){
+    return ['blue'];
+  }
+  function renderDishImportPreview(){
+    const previewEl = document.getElementById('dishImportPreview');
+    if (!previewEl) return;
+    const items = safeArray(window.latestDishImportPreview);
+    if (!items.length){
+      previewEl.innerHTML = '<div class="empty">We herkenden nog geen dagen. Probeer eventueel een iets strakkere screenshot van alleen de maandkalender.</div>';
+      return;
+    }
+    previewEl.innerHTML = items.map((item, index) => {
+      const suggested = item.naam || item.suggested_name || '';
+      return `
+        <div class="mini-row" style="align-items:flex-start">
+          <div style="min-width:0">
+            <strong>${formatDienstDate(item.datum)}</strong>
+            <span>Gedetecteerde kleur: ${item.color || 'blauw'}</span>
+          </div>
+          <div style="display:grid;gap:8px;min-width:220px;max-width:260px;width:100%">
+            <select id="dishImportType_${index}" onchange="window.handleDishPreviewTypeChange(${index})">${dishImportTypeSelectOptions(suggested)}</select>
+            <div id="dishImportTime_${index}" class="meta-chip">${item.start && item.einde ? item.start + ' - ' + item.einde : 'Kies een dienstsoort om tijden te vullen'}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+  function handleDishPreviewTypeChange(index){
+    const item = safeArray(window.latestDishImportPreview)[index] || {};
+    const selectedName = document.getElementById(`dishImportType_${index}`)?.value || '';
+    const dienstType = getDienstTypeByName(selectedName);
+    item.naam = selectedName;
+    item.start = normalizeDienstTimeValue(dienstType.start || '') || '';
+    item.einde = normalizeDienstTimeValue(dienstType.einde || '') || '';
+    item.tijd = buildDienstTimeLabel(item.start, item.einde);
+    const timeEl = document.getElementById(`dishImportTime_${index}`);
+    if (timeEl) timeEl.textContent = item.tijd || 'Geen standaardtijd gevonden';
+  }
+  async function previewDishImport(){
+    try{
+      const payload = {
+        image_data: await readDishImportFile(),
+        month: document.getElementById('dishImportMonth')?.value,
+        year: document.getElementById('dishImportYear')?.value,
+        color_map: {},
+        include_colors: dishImportIncludeColors()};
+      const response = await postJSON('/api/manage/dish-import-preview', payload);
+      window.latestDishImportPreview = safeArray(response.items);
+      renderDishImportPreview();
+      const confirmBtn = document.getElementById('dishImportConfirmBtn');
+      if (confirmBtn) confirmBtn.style.display = window.latestDishImportPreview.length ? '' : 'none';
+      toast(window.latestDishImportPreview.length ? 'Preview klaar' : 'Geen dagen herkend', window.latestDishImportPreview.length ? 'success' : 'error');
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  }
+  async function applyDishImport(){
+    try{
+      const items = safeArray(window.latestDishImportPreview).map((item, index) => {
+        const selectedName = document.getElementById(`dishImportType_${index}`)?.value || item.naam || '';
+        const dienstType = getDienstTypeByName(selectedName);
+        const start = normalizeDienstTimeValue(dienstType.start || item.start || '') || '';
+        const einde = normalizeDienstTimeValue(dienstType.einde || item.einde || '') || '';
+        return {
+          ...item,
+          naam: selectedName,
+          start,
+          einde,
+          tijd: buildDienstTimeLabel(start, einde)};
+      }).filter(item => item.naam);
+      if (!items.length) throw new Error('Kies in de preview minstens één dienstsoort.');
+      const response = await postJSON('/api/manage/dish-import-apply', { items });
+      closeModal();
+      await loadData();
+      openPage('diensten');
+      setDienstenView('all', { render:false, scroll:false });
+      currentDienstDayFilter = 'all';
+      renderDiensten();
+      toast(response.message || 'DISH diensten geïmporteerd');
+    }catch(err){
+      toast(err.message, 'error');
+    }
+  }
+  window.openDishImportModal = openDishImportModal;
+  window.handleDishPreviewTypeChange = handleDishPreviewTypeChange;
+
   function openDienstModal(index=null){
-    const item = index !== null ? safeArray(appData.general.diensten)[index] || {} : {};
+    const item = index !== null ? (safeArray(appData.general.diensten).find(d => String(d?._global_index) === String(index)) || safeArray(appData.general.diensten)[index] || {}) : {};
+    const typeName = item.naam || item.medewerker || '';
+    const dienstType = getDienstTypeByName(typeName);
+    const startValue = normalizeDienstTimeValue(getDienstStart(item) || dienstType.start || '') || '';
+    const endValue = normalizeDienstTimeValue(getDienstEnd(item) || dienstType.einde || '') || '';
     openModal(
       index === null ? 'Dienst toevoegen' : 'Dienst bewerken',
-      'Kies een dienstsoort en vul daarna alleen datum en eventueel een notitie in.',
+      'Vul de dienst rustig aan met datum, tijden, locatie, status en notitie. Alles blijft binnen je huidige dienstenfunctie.',
       `
         <div class="form-grid">
           <div class="field">
             <label>Dienstsoort</label>
-            <select id="dienstNaam" onchange="updateDienstTimePreview()">${dienstTypeOptions(item.naam || item.medewerker || '')}</select>
+            <select id="dienstNaam" onchange="window.handleDienstTypeChange()">${dienstTypeOptions(typeName)}</select>
           </div>
           <div class="field">
-            <label>Begintijd - eindtijd</label>
+            <label>Datum</label>
+            <input id="dienstDatum" type="date" value="${item.datum || ''}">
+          </div>
+          <div class="field">
+            <label>Begintijd</label>
+            <input id="dienstStart" type="time" value="${startValue}" onchange="window.updateDienstTimePreview()">
+          </div>
+          <div class="field">
+            <label>Eindtijd</label>
+            <input id="dienstEinde" type="time" value="${endValue}" onchange="window.updateDienstTimePreview()">
+          </div>
+          <div class="field">
+            <label>Voorbeeld tijdsblok</label>
             <input id="dienstTimePreview" value="" disabled>
           </div>
-          <div class="field"><label>Datum</label><input id="dienstDatum" type="date" value="${item.datum || ''}"></div>
-          <div class="field"><label>Notitie</label><input id="dienstRol" value="${item.rol || ''}" placeholder="Bijv. Floor / Extra druk"></div>
+          <div class="field">
+            <label>Locatie / afdeling</label>
+            <input id="dienstLocatie" value="${item.locatie || ''}" placeholder="Bijv. Bar, keuken of terras">
+          </div>
+          <div class="field">
+            <label>Status</label>
+            <select id="dienstStatus"></select>
+          </div>
+          <div class="field"><label>Notitie</label><input id="dienstRol" value="${getDienstNote(item)}" placeholder="Bijv. Floor / Extra druk / Sluitdienst"></div>
           ${hasPermission('manage_dienst_types') ? `<div class="actions"><button class="btn" onclick="openDienstTypeModal()">Dienstsoort toevoegen</button><button class="btn" onclick="openPage('dienstsoorten'); closeModal()">Beheer dienstsoorten</button></div>` : ''}
           <div class="form-actions">
             <button class="btn" onclick="closeModal()">Annuleren</button>
-            <button class="btn accent" onclick="saveDienst(${index === null ? 'null' : index})">Opslaan</button>
+            <button class="btn accent" onclick="window.saveDienst(${index === null ? 'null' : index})">Opslaan</button>
           </div>
         </div>
       `
     );
+    const statusEl = document.getElementById('dienstStatus');
+    if (statusEl){
+      const current = normalizeDienstStatus(item.status);
+      statusEl.innerHTML = [
+        {value:'ingepland', label:'Ingepland'},
+        {value:'bevestigd', label:'Bevestigd'},
+        {value:'gewijzigd', label:'Gewijzigd'},
+        {value:'vervallen', label:'Vervallen'}
+      ].map(opt => `<option value="${opt.value}" ${opt.value === current ? 'selected' : ''}>${opt.label}</option>`).join('');
+    }
     updateDienstTimePreview();
   }
+
+  window.applyDienstTypeTimes = applyDienstTypeTimes;
+  window.updateDienstTimePreview = updateDienstTimePreview;
+  window.handleDienstTypeChange = handleDienstTypeChange;
 
   async function saveDienst(index){
     const dienstNaam = document.getElementById('dienstNaam').value;
     const dienstType = getDienstTypeByName(dienstNaam);
+    const start = normalizeDienstTimeValue(document.getElementById('dienstStart').value || dienstType.start || '') || '';
+    const einde = normalizeDienstTimeValue(document.getElementById('dienstEinde').value || dienstType.einde || '') || '';
     const payload = {
       index,
       naam: dienstNaam,
       datum: document.getElementById('dienstDatum').value,
-      tijd: `${dienstType.start || ''}${dienstType.start || dienstType.einde ? ' - ' : ''}${dienstType.einde || ''}`,
-      rol: document.getElementById('dienstRol').value,
-    };
+      start,
+      einde,
+      tijd: buildDienstTimeLabel(start, einde),
+      locatie: document.getElementById('dienstLocatie').value,
+      status: document.getElementById('dienstStatus').value,
+      notitie: document.getElementById('dienstRol').value,
+      rol: document.getElementById('dienstRol').value};
     try{
       await postJSON('/api/manage/dienst-save', payload);
       closeModal();
+      currentDienstView = 'all';
+      currentDienstDayFilter = 'all';
       await loadData();
+      document.getElementById('dienstenListPanel')?.scrollIntoView({behavior:'smooth', block:'start'});
       toast('Dienst opgeslagen');
     }catch(err){ toast(err.message, 'error'); }
   }
+
 
   async function deleteDienst(index){
     try{
@@ -7153,8 +9207,7 @@ function openUserModal(index=null){
       await postJSON('/api/manage/type-save', {
         original,
         naam: document.getElementById('typeName').value,
-        locatie: document.getElementById('typeLocation').value,
-      });
+        locatie: document.getElementById('typeLocation').value});
       closeModal();
       await loadData();
       toast('Productsoort opgeslagen');
@@ -7240,8 +9293,7 @@ function openUserModal(index=null){
         voorraad: document.getElementById('productVoorraad').value,
         minimum: document.getElementById('productMinimum').value,
         soort: document.getElementById('productSoort').value,
-        image_url: document.getElementById('productImageUrl')?.value || '',
-      });
+        image_url: document.getElementById('productImageUrl')?.value || ''});
       closeModal();
       await loadData();
       toast('Product opgeslagen');
@@ -7267,8 +9319,7 @@ function openUserModal(index=null){
         voorraad: minimum,
         minimum: minimum,
         soort: product.soort || 'Overig',
-        op: false,
-      });
+        op: false});
       await loadData();
       toast('Product op minimum gezet');
     }catch(err){ toast(err.message, 'error'); }
@@ -7539,8 +9590,7 @@ def manage_bar_layout_save():
             "name": name,
             "note": note,
             "created_at": datetime.now().strftime("%d-%m-%Y %H:%M"),
-            "units": default_bar_layout_structure(),
-        })
+            "units": default_bar_layout_structure()})
         if not data.get("active_id"):
             data["active_id"] = new_id
     data["items"] = items
@@ -7625,8 +9675,7 @@ def api_bar():
     bar_data = get_bar_data()
     return jsonify({
         "koelingen": bar_data.get("koelingen", []),
-        "fill_items": build_fill_items(bar_data),
-    })
+        "fill_items": build_fill_items(bar_data)})
 
 @casa_cara.route("/api/general")
 def api_general():
@@ -7685,24 +9734,60 @@ def manage_dienst_save():
     payload = request.get_json(silent=True) or {}
     naam = (payload.get("naam") or "").strip()
     datum = (payload.get("datum") or "").strip()
-    tijd = (payload.get("tijd") or "").strip()
-    rol = (payload.get("rol") or "").strip()
+    start, einde, tijd = extract_dienst_times(
+        payload.get("start") or "",
+        payload.get("einde") or "",
+        payload.get("tijd") or "",
+    )
+    rol = (payload.get("rol") or payload.get("notitie") or "").strip()
+    notitie = (payload.get("notitie") or payload.get("rol") or "").strip()
+    locatie = (payload.get("locatie") or "").strip()
+    status = normalize_dienst_status(payload.get("status"))
     if not naam:
-        return jsonify({"ok": False, "message": "Vul een naam in."}), 400
+        return jsonify({"ok": False, "message": "Kies een dienstsoort."}), 400
+    if not datum:
+        return jsonify({"ok": False, "message": "Kies een datum."}), 400
 
     data = get_general_data()
     diensten = data.get("diensten", [])
-    item = {"naam": naam, "datum": datum, "tijd": tijd, "rol": rol}
     index = payload.get("index", None)
+    now_iso = get_now_iso_minutes()
+
+    current_owner = current_casa_owner_name()
+    base = {
+        "naam": naam,
+        "datum": datum,
+        "start": start,
+        "einde": einde,
+        "tijd": tijd,
+        "rol": rol,
+        "notitie": notitie,
+        "locatie": locatie,
+        "status": status,
+        "updated_at": now_iso}
+
     if index is None:
+        item = normalize_dienst_item({
+            **base,
+            "source": (payload.get("source") or "manual"),
+            "owner_name": current_owner,
+            "created_at": now_iso})
         diensten.append(item)
     else:
         try:
             index = int(index)
+            existing = normalize_dienst_item(diensten[index])
+            if not dienst_can_current_user_modify(existing):
+                return permission_denied_response("Je mag alleen je eigen diensten aanpassen.")
+            item = normalize_dienst_item({
+                **existing,
+                **base,
+                "owner_name": existing.get("owner_name") or current_owner,
+                "created_at": existing.get("created_at") or now_iso})
             diensten[index] = item
         except Exception:
             return jsonify({"ok": False, "message": "Ongeldige dienst."}), 400
-    data["diensten"] = diensten
+    data["diensten"] = normalize_diensten(diensten)
     save_general_data(data)
     return jsonify({"ok": True})
 
@@ -7719,6 +9804,9 @@ def manage_dienst_delete():
     diensten = data.get("diensten", [])
     if index < 0 or index >= len(diensten):
         return jsonify({"ok": False, "message": "Dienst niet gevonden."}), 404
+    existing = normalize_dienst_item(diensten[index])
+    if not dienst_can_current_user_modify(existing):
+        return permission_denied_response("Je mag alleen je eigen diensten verwijderen.")
     diensten.pop(index)
     data["diensten"] = diensten
     save_general_data(data)
@@ -7949,8 +10037,7 @@ def manage_product_save():
         "minimum": minimum,
         "soort": soort,
         "image_url": image_url,
-        "op": bool(payload.get("op", False)),
-    })
+        "op": bool(payload.get("op", False))})
     save_bar_data(bar)
     return jsonify({"ok": True})
 
@@ -8066,13 +10153,17 @@ def manage_dienst_type_save():
     if not name:
         return jsonify({"ok": False, "message": "Vul een dienstsoort in."}), 400
 
-    start = (payload.get("start") or "").strip()
-    einde = (payload.get("einde") or "").strip()
+    start = normalize_dienst_time_value(payload.get("start") or "")
+    einde = normalize_dienst_time_value(payload.get("einde") or "")
 
     items = get_dienst_types()
     replaced = False
+    original_start = ""
+    original_einde = ""
     for item in items:
         if original and item.get("naam") == original:
+            original_start = normalize_dienst_time_value(item.get("start") or "")
+            original_einde = normalize_dienst_time_value(item.get("einde") or "")
             item["naam"] = name
             item["start"] = start
             item["einde"] = einde
@@ -8087,7 +10178,14 @@ def manage_dienst_type_save():
     for item in data.get("diensten", []):
         if item.get("naam") == original:
             item["naam"] = name
-            item["tijd"] = f"{start}{' - ' if (start or einde) else ''}{einde}"
+            current_start = normalize_dienst_time_value(item.get("start") or "")
+            current_einde = normalize_dienst_time_value(item.get("einde") or "")
+            if not current_start or current_start == original_start:
+                item["start"] = start
+            if not current_einde or current_einde == original_einde:
+                item["einde"] = einde
+            item["tijd"] = build_dienst_time_label(item.get("start") or "", item.get("einde") or "")
+            item["updated_at"] = get_now_iso_minutes()
             changed = True
     if changed:
         save_general_data(data)
@@ -8774,8 +10872,7 @@ def manage_user_save():
         "code": pin,
         "role": role,
         "active": True,
-        "permissions": permissions,
-    }
+        "permissions": permissions}
 
     if index is None:
         users.append(user_record)
@@ -8881,6 +10978,94 @@ def recipe_delete():
     data["items"] = items
     save_recipes_data(data)
     return jsonify({"ok": True})
+
+
+
+@casa_cara.route("/api/manage/dish-import-preview", methods=["POST"])
+def manage_dish_import_preview():
+    if not has_casa_permission("manage_diensten"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    try:
+        month = int(payload.get("month") or 0)
+        year = int(payload.get("year") or 0)
+        if month < 1 or month > 12 or year < 2020 or year > 2100:
+            raise ValueError
+    except Exception:
+        return jsonify({"ok": False, "message": "Kies een geldige maand en jaar."}), 400
+
+    try:
+        items = build_dish_import_preview(
+            payload.get("image_data") or "",
+            year,
+            month,
+            payload.get("color_map") or {},
+            payload.get("include_colors") or ["blue"],
+        )
+        return jsonify({"ok": True, "items": items})
+    except Exception as exc:
+        return jsonify({"ok": False, "message": str(exc) or "Kon de DISH screenshot niet verwerken."}), 400
+
+
+@casa_cara.route("/api/manage/dish-import-apply", methods=["POST"])
+def manage_dish_import_apply():
+    if not has_casa_permission("manage_diensten"):
+        return permission_denied_response()
+    payload = request.get_json(silent=True) or {}
+    raw_items = payload.get("items") or []
+    if not isinstance(raw_items, list) or not raw_items:
+        return jsonify({"ok": False, "message": "Geen diensten om te importeren."}), 400
+
+    data = get_general_data()
+    diensten = [normalize_dienst_item(item) for item in data.get("diensten", [])]
+    existing_keys = {
+        (
+            str(item.get("datum") or "").strip(),
+            str(item.get("naam") or "").strip().lower(),
+            str(item.get("start") or "").strip(),
+            str(item.get("einde") or "").strip(),
+            str(item.get("source") or "manual").strip(),
+            str(item.get("owner_name") or "").strip().lower(),
+        )
+        for item in diensten
+    }
+
+    added = 0
+    now_iso = get_now_iso_minutes()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        naam = (raw.get("naam") or "").strip()
+        datum = (raw.get("datum") or "").strip()
+        if not naam or not datum:
+            continue
+        start, einde, tijd = extract_dienst_times(raw.get("start") or "", raw.get("einde") or "", raw.get("tijd") or "")
+        source = (raw.get("source") or "dish_screenshot").strip() or "dish_screenshot"
+        owner_name = current_casa_owner_name()
+        key = (datum, naam.lower(), start, einde, source, owner_name.lower())
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        diensten.append(normalize_dienst_item({
+            "naam": naam,
+            "datum": datum,
+            "start": start,
+            "einde": einde,
+            "tijd": tijd,
+            "status": normalize_dienst_status(raw.get("status") or "ingepland"),
+            "source": source,
+            "owner_name": owner_name,
+            "notitie": str(raw.get("notitie") or "").strip(),
+            "rol": str(raw.get("rol") or "").strip(),
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "last_synced_at": now_iso}))
+        added += 1
+
+    diensten.sort(key=lambda item: ((item.get("datum") or "9999-99-99"), normalize_dienst_time_value(item.get("start") or "23:59"), (item.get("naam") or "").lower()))
+    data["diensten"] = diensten
+    save_general_data(data)
+    return jsonify({"ok": True, "message": f"{added} dienst{'en' if added != 1 else ''} toegevoegd."})
 
 
 @casa_cara.route("/casa-cara-logout")
