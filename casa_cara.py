@@ -446,7 +446,19 @@ def normalize_tasklist_data(path: Path):
     changed = False
     for item in data.get("lists", []):
         item.setdefault("tasks", [])
-        item["day"] = normalize_task_day(item.get("day"))
+        raw_days = item.get("days")
+        if isinstance(raw_days, list):
+            days = []
+            for day_value in raw_days:
+                normalized = normalize_task_day(day_value)
+                if normalized not in days:
+                    days.append(normalized)
+            if not days:
+                days = [normalize_task_day(item.get("day"))]
+        else:
+            days = [normalize_task_day(item.get("day"))]
+        item["days"] = days
+        item["day"] = days[0] if days else "altijd"
         for task in item.get("tasks", []):
             if "last_checked_by" not in task:
                 task["last_checked_by"] = ""
@@ -2554,6 +2566,19 @@ HTML = r"""
       color:var(--text) !important;
     }
 
+
+.day-chip input[type="checkbox"]{
+  width:16px !important;
+  height:16px !important;
+  transform:scale(1) !important;
+  margin:0;
+}
+.day-chip{
+  padding:4px 8px !important;
+  min-height:auto !important;
+  font-size:13px !important;
+}
+
 </style>
 </head>
 <body>
@@ -2714,7 +2739,7 @@ HTML = r"""
             <button class="check-filter active" id="checkFilter-all" onclick="setChecklistFilter('all')">Alle</button>
             <button class="check-filter" id="checkFilter-todo" onclick="setChecklistFilter('todo')">Te doen</button>
             <button class="check-filter" id="checkFilter-done" onclick="setChecklistFilter('done')">Klaar</button>
-            <button class="check-settings-btn admin-only-action" onclick="openChecklistManagerPage()" title="Checklist instellingen">⚙️</button>
+            <button type="button" class="check-settings-btn checklist-manage-action" onclick="openChecklistManagerPage(); return false;" title="Checklist instellingen">⚙️</button>
           </div>
           <div class="check-datebar">
             <button class="check-date-btn" onclick="shiftChecklistDate(-1)" aria-label="Vorige dag">‹</button>
@@ -2731,7 +2756,7 @@ HTML = r"""
       </div>
     </section>
 
-    <section class="page admin-only-page" id="page-checklists-beheer">
+    <section class="page checklist-manage-page" id="page-checklists-beheer">
       <div class="hero">
         <h1>⚙️ Checklist beheer</h1>
         <p>Beheer hier centraal je checklists, dagen, taken en subtaken zonder popup-gedoe.</p>
@@ -3247,7 +3272,7 @@ HTML = r"""
   function adminOnly(html){ return isAdmin() ? html : ''; }
   function hasPermission(key){ return isAdmin() ? true : !!(appData?.auth?.permissions || {})[key]; }
   function canManageBarLayouts(){ return hasPermission('manage_bar_layouts'); }
-  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','checklists-beheer','keuken-takenlijst-beheer','bar-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
+  function employeeForbiddenPages(){ return ['dienstsoorten','gebruikers','keuken-takenlijst-beheer','bar-takenlijst-beheer','bar-productsoorten','bar-locaties']; }
   function pageAllowed(page){
     if (isAdmin()) return true;
     const map = {
@@ -3327,6 +3352,7 @@ HTML = r"""
 
   function applyPermissions(){
     document.querySelectorAll('.admin-only, .admin-only-page, .admin-only-action').forEach(el => { el.style.display = isAdmin() ? '' : 'none'; });
+    document.querySelectorAll('.checklist-manage-action, .checklist-manage-page').forEach(el => { el.style.display = pageAllowed('checklists-beheer') ? '' : 'none'; });
     document.querySelectorAll('.layout-manage-action').forEach(el => { el.style.display = canManageBarLayouts() ? '' : 'none'; });
     document.querySelectorAll('.nav-btn[data-page], .sub-btn[data-page]').forEach(btn => {
       btn.style.display = pageAllowed(btn.dataset.page) ? '' : 'none';
@@ -4205,6 +4231,21 @@ HTML = r"""
     renderChecklistsPage();
   }
 
+
+  function getChecklistListDays(list){
+    const raw = Array.isArray(list?.days) && list.days.length ? list.days : [list?.day || 'altijd'];
+    const cleaned = [];
+    raw.forEach(day => {
+      const value = String(day || 'altijd').toLowerCase();
+      if (getTaskDayOptions().includes(value) && !cleaned.includes(value)) cleaned.push(value);
+    });
+    return cleaned.length ? cleaned : ['altijd'];
+  }
+
+  function formatTaskDaysLabel(list){
+    return getChecklistListDays(list).map(day => formatTaskDayLabel(day)).join(' + ');
+  }
+
   function checklistManageSections(){
     const sections = [];
     if (hasPermission('access_bar') && hasPermission('manage_bar_tasklists')) {
@@ -4218,14 +4259,78 @@ HTML = r"""
 
   function renderChecklistManagerBody(){
     const sections = checklistManageSections();
+    const state = currentChecklistAdminEditor || { mode:'overview' };
     if (!sections.length){
       return `<div class="check-admin-editor"><div class="check-admin-editor-title">Geen toegang</div><div class="check-admin-editor-sub">Je hebt geen beheerrechten voor checklists.</div></div>`;
+    }
+    if (state.mode === 'manage-list'){
+      const section = sections.find(item => item.key === state.section);
+      const list = getChecklistList(state.section, state.listId);
+      if (!section || !list){
+        currentChecklistAdminEditor = { mode:'overview', section:'', listId:'', taskId:'', subtaskId:'' };
+        return renderChecklistManagerBody();
+      }
+      return `
+        <div class="check-admin-layout">
+          <div class="check-admin-toolbar">
+            <div class="check-admin-note">${section.title} · ${escapeHtml(list.name || 'Checklist')} · ${formatTaskDaysLabel(list)}</div>
+            <div class="check-admin-actions">
+              <button class="btn" onclick="setChecklistAdminEditor('overview')">← Terug</button>
+              <button class="btn accent" onclick="openChecklistTaskModal('${section.key}','${list.id}')">+ Taak</button>
+              <button class="btn" onclick="openChecklistListEditModal('${section.key}','${list.id}')">Checklist wijzigen</button>
+            </div>
+          </div>
+          <div class="check-admin-section">
+            <div class="check-admin-section-head">
+              <div>
+                <div class="check-admin-title">${escapeHtml(list.name || 'Checklist')}</div>
+                <div class="check-admin-sub">${safeArray(list.tasks).length} taken · ${formatTaskDaysLabel(list)}</div>
+              </div>
+            </div>
+            <div class="check-admin-tasks">
+              ${safeArray(list.tasks).length ? safeArray(list.tasks).map(task => `
+                <div class="check-admin-task">
+                  <div class="check-admin-task-head">
+                    <div>
+                      <div class="check-admin-task-name">${escapeHtml(task.name || 'Taak')}</div>
+                      <div class="check-admin-task-meta">${safeArray(task.subtasks).length} subtaken</div>
+                    </div>
+                    <div class="check-admin-actions">
+                      <button class="check-mini-btn" onclick="openChecklistTaskEditModal('${section.key}','${list.id}','${task.id}')">Wijzig</button>
+                      <button class="check-mini-btn" onclick="openChecklistSubtaskModal('${section.key}','${list.id}','${task.id}')">+ Subtaak</button>
+                      <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','task','${list.id}','${task.id}')">Verwijder</button>
+                    </div>
+                  </div>
+                  ${safeArray(task.subtasks).length ? `
+                    <div class="check-admin-subtasks">
+                      ${safeArray(task.subtasks).map(sub => `
+                        <div class="check-admin-subtask">
+                          <div>
+                            <div class="check-admin-subtask-name">${escapeHtml(sub.name || 'Subtaak')}</div>
+                            ${formatAuditLine(sub) ? `<div class="check-admin-subtask-meta">${formatAuditLine(sub)}</div>` : ''}
+                          </div>
+                          <div class="check-admin-actions">
+                            <button class="check-mini-btn" onclick="openChecklistSubtaskEditModal('${section.key}','${list.id}','${task.id}','${sub.id}')">Wijzig</button>
+                            <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','subtask','${list.id}','${task.id}','${sub.id}')">Verwijder</button>
+                          </div>
+                        </div>
+                      `).join('')}
+                    </div>
+                  ` : `<div class="check-admin-empty">Nog geen subtaken.</div>`}
+                </div>
+              `).join('') : `<div class="check-admin-empty">Nog geen taken in deze checklist.</div>`}
+            </div>
+          </div>
+        </div>`;
     }
     return `
       <div class="check-admin-layout">
         <div class="check-admin-toolbar">
-          <div class="check-admin-note">Beheer hier centraal alle checklists, dagen, taken en subtaken.</div>
-          <button class="btn accent" onclick="setChecklistAdminEditor('new-list', { section: sections[0]?.key || '' })">+ Nieuwe checklist</button>
+          <div class="check-admin-note">Open per checklist het beheerscherm. Toevoegen en wijzigen gebeurt via popups.</div>
+          <div class="check-admin-actions">
+            <button class="btn" onclick="openPage('checklists')">← Terug</button>
+            ${sections.map(section => `<button class="btn accent" onclick="openChecklistListModal('${section.key}')">+ ${section.title} checklist</button>`).join('')}
+          </div>
         </div>
         ${sections.map(section => `
           <div class="check-admin-section">
@@ -4234,7 +4339,6 @@ HTML = r"""
                 <div class="check-admin-title">${section.title}</div>
                 <div class="check-admin-sub">${section.lists.length} checklist${section.lists.length === 1 ? '' : 's'}</div>
               </div>
-              <button class="check-mini-btn" onclick="setChecklistAdminEditor('new-list', { section: '${section.key}' })">+ Checklist</button>
             </div>
             <div class="check-admin-lists">
               ${section.lists.length ? section.lists.map(list => `
@@ -4242,46 +4346,13 @@ HTML = r"""
                   <div class="check-admin-list-head">
                     <div>
                       <div class="check-admin-list-name">${escapeHtml(list.name || 'Checklist')}</div>
-                      <div class="check-admin-list-meta">${formatTaskDayLabel(list.day || 'altijd')} · ${safeArray(list.tasks).length} taken</div>
+                      <div class="check-admin-list-meta">${formatTaskDaysLabel(list)} · ${safeArray(list.tasks).length} taken</div>
                     </div>
                     <div class="check-admin-actions">
-                      <button class="check-mini-btn" onclick="setChecklistAdminEditor('edit-list', { section: '${section.key}', listId: '${list.id}' })">Wijzig</button>
-                      <button class="check-mini-btn" onclick="setChecklistAdminEditor('new-task', { section: '${section.key}', listId: '${list.id}' })">+ Taak</button>
+                      <button class="check-mini-btn" onclick="setChecklistAdminEditor('manage-list', { section: '${section.key}', listId: '${list.id}' })">Beheer</button>
+                      <button class="check-mini-btn" onclick="openChecklistListEditModal('${section.key}','${list.id}')">Wijzig</button>
                       <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','list','${list.id}')">Verwijder</button>
                     </div>
-                  </div>
-                  <div class="check-admin-tasks">
-                    ${safeArray(list.tasks).length ? safeArray(list.tasks).map(task => `
-                      <div class="check-admin-task">
-                        <div class="check-admin-task-head">
-                          <div>
-                            <div class="check-admin-task-name">${escapeHtml(task.name || 'Taak')}</div>
-                            <div class="check-admin-task-meta">${safeArray(task.subtasks).length} subtaken</div>
-                          </div>
-                          <div class="check-admin-actions">
-                            <button class="check-mini-btn" onclick="setChecklistAdminEditor('edit-task', { section: '${section.key}', listId: '${list.id}', taskId: '${task.id}' })">Wijzig</button>
-                            <button class="check-mini-btn" onclick="setChecklistAdminEditor('new-subtask', { section: '${section.key}', listId: '${list.id}', taskId: '${task.id}' })">+ Subtaak</button>
-                            <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','task','${list.id}','${task.id}')">Verwijder</button>
-                          </div>
-                        </div>
-                        ${safeArray(task.subtasks).length ? `
-                          <div class="check-admin-subtasks">
-                            ${safeArray(task.subtasks).map(sub => `
-                              <div class="check-admin-subtask">
-                                <div>
-                                  <div class="check-admin-subtask-name">${escapeHtml(sub.name || 'Subtaak')}</div>
-                                  ${formatAuditLine(sub) ? `<div class="check-admin-subtask-meta">${formatAuditLine(sub)}</div>` : ''}
-                                </div>
-                                <div class="check-admin-actions">
-                                  <button class="check-mini-btn" onclick="setChecklistAdminEditor('edit-subtask', { section: '${section.key}', listId: '${list.id}', taskId: '${task.id}', subtaskId: '${sub.id}' })">Wijzig</button>
-                                  <button class="check-mini-btn danger" onclick="confirmChecklistDelete('${section.key}','subtask','${list.id}','${task.id}','${sub.id}')">Verwijder</button>
-                                </div>
-                              </div>
-                            `).join('')}
-                          </div>
-                        ` : `<div class="check-admin-empty">Nog geen subtaken.</div>`}
-                      </div>
-                    `).join('') : `<div class="check-admin-empty">Nog geen taken in deze checklist.</div>`}
                   </div>
                 </div>
               `).join('') : `<div class="check-admin-empty">Nog geen checklists in ${section.title.toLowerCase()}.</div>`}
@@ -4296,9 +4367,32 @@ HTML = r"""
     renderChecklistManagerPage();
   }
 
+
+  function bindChecklistManageButtonFallback(){
+    if (window.__checklistManageFallbackBound) return;
+    window.__checklistManageFallbackBound = true;
+    document.addEventListener('click', function(e){
+      const btn = e.target.closest('.check-settings-btn, .checklist-manage-action');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try{
+        openChecklistManagerPage();
+      }catch(err){
+        try{
+          currentChecklistAdminEditor = { mode:'overview', section:'', listId:'', taskId:'', subtaskId:'' };
+          openPage('checklists-beheer');
+          renderChecklistManagerPage();
+        }catch(innerErr){}
+      }
+    }, true);
+  }
+
   function openChecklistManagerPage(){
     setChecklistAdminEditor('overview');
     openPage('checklists-beheer');
+    renderChecklistManagerPage();
+    return false;
   }
 
   function openChecklistSettings(){
@@ -4306,68 +4400,6 @@ HTML = r"""
   }
 
   function renderChecklistManagerEditor(){
-    const state = currentChecklistAdminEditor || { mode:'overview' };
-    const sectionTitle = state.section === 'bar' ? 'Bar' : state.section === 'kitchen' ? 'Keuken' : 'Checklist';
-    if (state.mode === 'overview'){
-      return `
-        <div class="check-admin-editor">
-          <div class="check-admin-editor-title">Checklist beheer</div>
-          <div class="check-admin-editor-sub">Kies links wat je wilt aanpassen. Je kunt checklists aan een dag koppelen en taken of subtaken rustig beheren vanaf deze pagina.</div>
-          <div class="form-actions">
-            ${checklistManageSections().map(section => `<button class="btn accent" onclick="setChecklistAdminEditor('new-list', { section: '${section.key}' })">+ ${section.title} checklist</button>`).join('')}
-            <button class="btn" onclick="openPage('checklists')">Terug naar checklists</button>
-          </div>
-        </div>`;
-    }
-    if (state.mode === 'new-list' || state.mode === 'edit-list'){
-      const list = state.mode === 'edit-list' ? getChecklistList(state.section, state.listId) : null;
-      return `
-        <div class="check-admin-editor">
-          <div class="check-admin-editor-title">${state.mode === 'new-list' ? 'Nieuwe checklist' : 'Checklist wijzigen'}</div>
-          <div class="check-admin-editor-sub">${sectionTitle}: stel naam en dag van deze checklist in.</div>
-          <div class="form-grid">
-            <div class="field"><label>Sectie</label><select id="checkAdminListSection">${checklistManageSections().map(section => `<option value="${section.key}" ${(section.key === state.section) ? 'selected' : ''}>${section.title}</option>`).join('')}</select></div>
-            <div class="field"><label>Naam checklist</label><input id="checkAdminListName" value="${escapeHtml(list?.name || '')}" placeholder="Bijv. Opening"></div>
-            <div class="field"><label>Dag</label><select id="checkAdminListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === (list?.day || getChecklistDayLabel()) ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
-            <div class="form-actions">
-              <button class="btn" onclick="setChecklistAdminEditor('overview')">Terug</button>
-              <button class="btn accent" onclick="saveChecklistAdminList('${state.mode}', '${state.listId || ''}')">Opslaan</button>
-            </div>
-          </div>
-        </div>`;
-    }
-    if (state.mode === 'new-task' || state.mode === 'edit-task'){
-      const task = state.mode === 'edit-task' ? getChecklistTask(state.section, state.listId, state.taskId) : null;
-      const list = getChecklistList(state.section, state.listId);
-      return `
-        <div class="check-admin-editor">
-          <div class="check-admin-editor-title">${state.mode === 'new-task' ? 'Nieuwe taak' : 'Taak wijzigen'}</div>
-          <div class="check-admin-editor-sub">${sectionTitle} · ${escapeHtml(list?.name || 'Checklist')}</div>
-          <div class="form-grid">
-            <div class="field"><label>Naam taak</label><input id="checkAdminTaskName" value="${escapeHtml(task?.name || '')}" placeholder="Bijv. Koelingen checken"></div>
-            <div class="form-actions">
-              <button class="btn" onclick="setChecklistAdminEditor('overview')">Terug</button>
-              <button class="btn accent" onclick="saveChecklistAdminTask('${state.mode}', '${state.section}', '${state.listId}', '${state.taskId || ''}')">Opslaan</button>
-            </div>
-          </div>
-        </div>`;
-    }
-    if (state.mode === 'new-subtask' || state.mode === 'edit-subtask'){
-      const task = getChecklistTask(state.section, state.listId, state.taskId);
-      const sub = safeArray(task?.subtasks).find(item => item.id === state.subtaskId) || null;
-      return `
-        <div class="check-admin-editor">
-          <div class="check-admin-editor-title">${state.mode === 'new-subtask' ? 'Nieuwe subtaak' : 'Subtaak wijzigen'}</div>
-          <div class="check-admin-editor-sub">${sectionTitle} · ${escapeHtml(task?.name || 'Taak')}</div>
-          <div class="form-grid">
-            <div class="field"><label>Naam subtaak</label><input id="checkAdminSubtaskName" value="${escapeHtml(sub?.name || '')}" placeholder="Bijv. Frisse doeken klaarleggen"></div>
-            <div class="form-actions">
-              <button class="btn" onclick="setChecklistAdminEditor('overview')">Terug</button>
-              <button class="btn accent" onclick="saveChecklistAdminSubtask('${state.mode}', '${state.section}', '${state.listId}', '${state.taskId}', '${state.subtaskId || ''}')">Opslaan</button>
-            </div>
-          </div>
-        </div>`;
-    }
     return '';
   }
 
@@ -4427,22 +4459,35 @@ HTML = r"""
     return source.find(item => item.id === listId) || null;
   }
 
+  function renderChecklistDayCheckboxes(inputName, selectedDays){
+    const selected = Array.isArray(selectedDays) && selectedDays.length ? selectedDays : [getChecklistDayLabel()];
+    return `<div class="day-chip-row">${getTaskDayOptions().map(day => `
+      <label class="day-chip ${selected.includes(day) ? 'active' : ''}">
+        <input type="checkbox" name="${inputName}" value="${day}" ${selected.includes(day) ? 'checked' : ''} onchange="this.parentElement.classList.toggle('active', this.checked)">
+        <span>${formatTaskDayLabel(day)}</span>
+      </label>
+    `).join('')}</div>`;
+  }
+
+  function selectedChecklistDaysFrom(inputName){
+    const values = Array.from(document.querySelectorAll(`input[name="${inputName}"]:checked`)).map(el => el.value);
+    return values.length ? values : ['altijd'];
+  }
+
   function getChecklistTask(section, listId, taskId){
     const list = getChecklistList(section, listId);
     return safeArray(list?.tasks).find(item => item.id === taskId) || null;
   }
 
   function openChecklistListModal(section){
-    setChecklistAdminEditor('new-list', { section });
-    return;
     const canManage = section === 'bar' ? hasPermission('manage_bar_tasklists') : hasPermission('manage_kitchen_tasklists');
     if (!canManage) return;
     openModal(`${section === 'bar' ? 'Bar' : 'Keuken'} checklist toevoegen`, 'Maak een nieuwe checklist aan.', `
       <div class="form-grid">
         <div class="field"><label>Naam checklist</label><input id="centralChecklistListName" placeholder="Bijv. Opening"></div>
-        <div class="field"><label>Dag</label><select id="centralChecklistListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === getChecklistDayLabel() ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
+        <div class="field"><label>Dagen</label>${renderChecklistDayCheckboxes('centralChecklistListDays', [getChecklistDayLabel()])}</div>
         <div class="form-actions">
-          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn" onclick="closeModal()">Annuleer</button>
           <button class="btn accent" onclick="saveCentralChecklistList('${section}')">Opslaan</button>
         </div>
       </div>`);
@@ -4451,25 +4496,25 @@ HTML = r"""
   async function saveCentralChecklistList(section){
     const url = section === 'bar' ? '/api/bar-tasks/list-save' : '/api/kitchen/list-save';
     try{
-      await postJSON(url, { name: document.getElementById('centralChecklistListName').value, day: document.getElementById('centralChecklistListDay').value });
+      await postJSON(url, { name: document.getElementById('centralChecklistListName').value, days: selectedChecklistDaysFrom('centralChecklistListDays') });
+      closeModal();
       await loadData();
       renderChecklistsPage();
-      openChecklistSettings();
+      setChecklistAdminEditor('overview');
+      openPage('checklists-beheer');
       toast('Checklist opgeslagen');
     }catch(err){ toast(err.message, 'error'); }
   }
 
   function openChecklistListEditModal(section, listId){
-    setChecklistAdminEditor('edit-list', { section, listId });
-    return;
     const list = getChecklistList(section, listId);
     if (!list) return;
-    openModal('Checklist wijzigen', 'Pas naam of dag van deze checklist aan.', `
+    openModal('Checklist wijzigen', 'Pas naam of dagen van deze checklist aan.', `
       <div class="form-grid">
         <div class="field"><label>Naam checklist</label><input id="centralChecklistEditListName" value="${escapeHtml(list.name || '')}"></div>
-        <div class="field"><label>Dag</label><select id="centralChecklistEditListDay">${getTaskDayOptions().map(day => `<option value="${day}" ${day === (list.day || 'altijd') ? 'selected' : ''}>${formatTaskDayLabel(day)}</option>`).join('')}</select></div>
+        <div class="field"><label>Dagen</label>${renderChecklistDayCheckboxes('centralChecklistEditListDays', getChecklistListDays(list))}</div>
         <div class="form-actions">
-          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn" onclick="closeModal()">Annuleer</button>
           <button class="btn accent" onclick="saveChecklistListEdit('${section}','${listId}')">Opslaan</button>
         </div>
       </div>`);
@@ -4478,22 +4523,22 @@ HTML = r"""
   async function saveChecklistListEdit(section, listId){
     const url = section === 'bar' ? '/api/bar-tasks/list-rename' : '/api/kitchen/list-rename';
     try{
-      await postJSON(url, { list_id: listId, name: document.getElementById('centralChecklistEditListName').value, day: document.getElementById('centralChecklistEditListDay').value });
+      await postJSON(url, { list_id: listId, name: document.getElementById('centralChecklistEditListName').value, days: selectedChecklistDaysFrom('centralChecklistEditListDays') });
+      closeModal();
       await loadData();
       renderChecklistsPage();
-      openChecklistSettings();
+      setChecklistAdminEditor('overview');
+      openPage('checklists-beheer');
       toast('Checklist bijgewerkt');
     }catch(err){ toast(err.message, 'error'); }
   }
 
   function openChecklistTaskModal(section, listId){
-    setChecklistAdminEditor('new-task', { section, listId });
-    return;
     openModal('Taak toevoegen', 'Voeg een taak toe aan deze checklist.', `
       <div class="form-grid">
         <div class="field"><label>Naam taak</label><input id="centralChecklistTaskName" placeholder="Bijv. Koelingen checken"></div>
         <div class="form-actions">
-          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn" onclick="closeModal()">Annuleer</button>
           <button class="btn accent" onclick="saveCentralChecklistTask('${section}','${listId}')">Opslaan</button>
         </div>
       </div>`);
@@ -4503,23 +4548,23 @@ HTML = r"""
     const url = section === 'bar' ? '/api/bar-tasks/task-save' : '/api/kitchen/task-save';
     try{
       await postJSON(url, { list_id: listId, name: document.getElementById('centralChecklistTaskName').value });
+      closeModal();
       await loadData();
       renderChecklistsPage();
-      openChecklistSettings();
+      setChecklistAdminEditor('manage-list', { section, listId });
+      openPage('checklists-beheer');
       toast('Taak opgeslagen');
     }catch(err){ toast(err.message, 'error'); }
   }
 
   function openChecklistTaskEditModal(section, listId, taskId){
-    setChecklistAdminEditor('edit-task', { section, listId, taskId });
-    return;
     const task = getChecklistTask(section, listId, taskId);
     if (!task) return;
     openModal('Taak wijzigen', 'Pas de naam van deze taak aan.', `
       <div class="form-grid">
         <div class="field"><label>Naam taak</label><input id="centralChecklistEditTaskName" value="${escapeHtml(task.name || '')}"></div>
         <div class="form-actions">
-          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn" onclick="closeModal()">Annuleer</button>
           <button class="btn accent" onclick="saveChecklistTaskEdit('${section}','${listId}','${taskId}')">Opslaan</button>
         </div>
       </div>`);
@@ -4529,21 +4574,21 @@ HTML = r"""
     const url = section === 'bar' ? '/api/bar-tasks/task-rename' : '/api/kitchen/task-rename';
     try{
       await postJSON(url, { list_id: listId, task_id: taskId, name: document.getElementById('centralChecklistEditTaskName').value });
+      closeModal();
       await loadData();
       renderChecklistsPage();
-      openChecklistSettings();
+      setChecklistAdminEditor('manage-list', { section, listId });
+      openPage('checklists-beheer');
       toast('Taak bijgewerkt');
     }catch(err){ toast(err.message, 'error'); }
   }
 
   function openChecklistSubtaskModal(section, listId, taskId){
-    setChecklistAdminEditor('new-subtask', { section, listId, taskId });
-    return;
     openModal('Subtaak toevoegen', 'Voeg een subtaak toe onder deze taak.', `
       <div class="form-grid">
         <div class="field"><label>Naam subtaak</label><input id="centralChecklistSubtaskName" placeholder="Bijv. Frisse doeken klaarleggen"></div>
         <div class="form-actions">
-          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn" onclick="closeModal()">Annuleer</button>
           <button class="btn accent" onclick="saveCentralChecklistSubtask('${section}','${listId}','${taskId}')">Opslaan</button>
         </div>
       </div>`);
@@ -4553,16 +4598,16 @@ HTML = r"""
     const url = section === 'bar' ? '/api/bar-tasks/subtask-save' : '/api/kitchen/subtask-save';
     try{
       await postJSON(url, { list_id: listId, task_id: taskId, name: document.getElementById('centralChecklistSubtaskName').value });
+      closeModal();
       await loadData();
       renderChecklistsPage();
-      openChecklistSettings();
+      setChecklistAdminEditor('manage-list', { section, listId });
+      openPage('checklists-beheer');
       toast('Subtaak opgeslagen');
     }catch(err){ toast(err.message, 'error'); }
   }
 
   function openChecklistSubtaskEditModal(section, listId, taskId, subtaskId){
-    setChecklistAdminEditor('edit-subtask', { section, listId, taskId, subtaskId });
-    return;
     const task = getChecklistTask(section, listId, taskId);
     const sub = safeArray(task?.subtasks).find(item => item.id === subtaskId) || null;
     if (!sub) return;
@@ -4570,7 +4615,7 @@ HTML = r"""
       <div class="form-grid">
         <div class="field"><label>Naam subtaak</label><input id="centralChecklistEditSubtaskName" value="${escapeHtml(sub.name || '')}"></div>
         <div class="form-actions">
-          <button class="btn" onclick="openChecklistManagerPage()">Terug</button>
+          <button class="btn" onclick="closeModal()">Annuleer</button>
           <button class="btn accent" onclick="saveChecklistSubtaskEdit('${section}','${listId}','${taskId}','${subtaskId}')">Opslaan</button>
         </div>
       </div>`);
@@ -4580,37 +4625,64 @@ HTML = r"""
     const url = section === 'bar' ? '/api/bar-tasks/subtask-rename' : '/api/kitchen/subtask-rename';
     try{
       await postJSON(url, { list_id: listId, task_id: taskId, subtask_id: subtaskId, name: document.getElementById('centralChecklistEditSubtaskName').value });
+      closeModal();
       await loadData();
       renderChecklistsPage();
-      openChecklistSettings();
+      setChecklistAdminEditor('manage-list', { section, listId });
+      openPage('checklists-beheer');
       toast('Subtaak bijgewerkt');
     }catch(err){ toast(err.message, 'error'); }
   }
 
   function confirmChecklistDelete(section, kind, listId, taskId='', subtaskId=''){
-    const title = kind === 'list' ? 'Checklist verwijderen' : kind === 'task' ? 'Taak verwijderen' : 'Subtaak verwijderen';
-    const text = kind === 'list' ? 'Weet je zeker dat je deze checklist wilt verwijderen?' : kind === 'task' ? 'Weet je zeker dat je deze taak wilt verwijderen?' : 'Weet je zeker dat je deze subtaak wilt verwijderen?';
-    openConfirm(title, text, async () => {
-      try{
-        let url = '';
-        let payload = { list_id: listId };
-        if (kind === 'list') {
-          url = section === 'bar' ? '/api/bar-tasks/list-delete' : '/api/kitchen/list-delete';
-        } else if (kind === 'task') {
-          url = section === 'bar' ? '/api/bar-tasks/task-delete' : '/api/kitchen/task-delete';
-          payload.task_id = taskId;
-        } else {
-          url = section === 'bar' ? '/api/bar-tasks/subtask-delete' : '/api/kitchen/subtask-delete';
-          payload.task_id = taskId;
-          payload.subtask_id = subtaskId;
-        }
-        await postJSON(url, payload);
-        await loadData();
-        renderChecklistsPage();
-        renderChecklistManagerPage();
-        toast(`${kind === 'list' ? 'Checklist' : kind === 'task' ? 'Taak' : 'Subtaak'} verwijderd`);
-      }catch(err){ toast(err.message, 'error'); }
-    });
+    const title = kind === 'list'
+      ? 'Checklist verwijderen'
+      : kind === 'task'
+        ? 'Taak verwijderen'
+        : 'Subtaak verwijderen';
+    const bodyText = kind === 'list'
+      ? 'Weet je zeker dat je deze checklist wilt verwijderen?'
+      : kind === 'task'
+        ? 'Weet je zeker dat je deze taak wilt verwijderen?'
+        : 'Weet je zeker dat je deze subtaak wilt verwijderen?';
+
+    openModal(title, bodyText, `
+      <div class="form-actions">
+        <button class="btn" onclick="closeModal()">Annuleer</button>
+        <button class="btn danger" onclick="runChecklistDelete('${section}','${kind}','${listId}','${taskId}','${subtaskId}')">Ja, verwijder</button>
+      </div>
+    `);
+  }
+
+  async function runChecklistDelete(section, kind, listId, taskId='', subtaskId=''){
+    try{
+      let url = '';
+      let payload = { list_id: listId };
+      if (kind === 'list') {
+        url = section === 'bar' ? '/api/bar-tasks/list-delete' : '/api/kitchen/list-delete';
+      } else if (kind === 'task') {
+        url = section === 'bar' ? '/api/bar-tasks/task-delete' : '/api/kitchen/task-delete';
+        payload.task_id = taskId;
+      } else {
+        url = section === 'bar' ? '/api/bar-tasks/subtask-delete' : '/api/kitchen/subtask-delete';
+        payload.task_id = taskId;
+        payload.subtask_id = subtaskId;
+      }
+      await postJSON(url, payload);
+      closeModal();
+      await loadData();
+      renderChecklistsPage();
+      if (kind === 'list') {
+        setChecklistAdminEditor('overview');
+      } else {
+        setChecklistAdminEditor('manage-list', { section, listId });
+      }
+      if (typeof renderChecklistManagerPage === 'function') renderChecklistManagerPage();
+      openPage('checklists-beheer');
+      toast(`${kind === 'list' ? 'Checklist' : kind === 'task' ? 'Taak' : 'Subtaak'} verwijderd`);
+    }catch(err){
+      toast(err.message, 'error');
+    }
   }
 
   function checklistTaskStatus(task, section){
@@ -4725,7 +4797,7 @@ HTML = r"""
                 <div class="check-list-head" onclick="toggleChecklistList('${section}','${list.id}')">
                   <div class="check-list-main">
                     <div class="check-list-name">${list.name || 'Takenlijst'}</div>
-                    <div class="check-list-meta">${done}/${total} taken gedaan · ${formatTaskDayLabel(list.day || 'altijd')}</div>
+                    <div class="check-list-meta">${done}/${total} taken gedaan · ${formatTaskDaysLabel(list)}</div>
                   </div>
                   <div class="check-list-right">
                     <span class="badge accent">${percent}%</span>
@@ -4930,7 +5002,7 @@ HTML = r"""
                 <div class="klist-icon">☑</div>
                 <div>
                   <div class="klist-name">${list.name}</div>
-                  <div class="klist-sub">${formatTaskDayLabel(list.day || 'altijd')} · ${done} van ${tasks.length} taken gedaan</div>
+                  <div class="klist-sub">${formatTaskDaysLabel(list)} · ${done} van ${tasks.length} taken gedaan</div>
                 </div>
               </div>
               <span class="badge accent">${percent}%</span>
@@ -6243,7 +6315,7 @@ async function saveCurrentBarLayoutStructure(){
                 <div class="klist-icon">✓</div>
                 <div>
                   <div class="klist-name">${list.name}</div>
-                  <div class="klist-sub">${formatTaskDayLabel(list.day || 'altijd')} · ${done} van ${tasks.length} taken gedaan</div>
+                  <div class="klist-sub">${formatTaskDaysLabel(list)} · ${done} van ${tasks.length} taken gedaan</div>
                 </div>
               </div>
               <span class="badge accent">${percent}%</span>
@@ -7222,6 +7294,7 @@ function openUserModal(index=null){
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeDrawer(); });
 
   openPage('dashboard');
+  bindChecklistManageButtonFallback();
   loadData();
 </script>
 </body>
@@ -8068,6 +8141,17 @@ def kitchen_list_save():
         return permission_denied_response("Je hebt geen rechten om keuken takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
+    raw_days = payload.get("days")
+    if isinstance(raw_days, list):
+        days = []
+        for day_value in raw_days:
+            normalized = normalize_task_day(day_value)
+            if normalized not in days:
+                days.append(normalized)
+        if not days:
+            days = [normalize_task_day(payload.get("day"))]
+    else:
+        days = [normalize_task_day(payload.get("day"))]
     if not name:
         return jsonify({"ok": False, "message": "Vul een naam in voor de takenlijst."}), 400
 
@@ -8083,7 +8167,8 @@ def kitchen_list_save():
     data["lists"].append({
         "id": new_id,
         "name": name,
-        "day": day,
+        "day": days[0] if days else "altijd",
+        "days": days,
         "tasks": []
     })
     save_kitchen_data(data)
@@ -8110,14 +8195,25 @@ def kitchen_list_rename():
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
-    day = normalize_task_day(payload.get("day"))
+    raw_days = payload.get("days")
+    if isinstance(raw_days, list):
+        days = []
+        for day_value in raw_days:
+            normalized = normalize_task_day(day_value)
+            if normalized not in days:
+                days.append(normalized)
+        if not days:
+            days = [normalize_task_day(payload.get("day"))]
+    else:
+        days = [normalize_task_day(payload.get("day"))]
     if not list_id or not name:
         return jsonify({"ok": False, "message": "Checklist gegevens ontbreken."}), 400
     data = get_kitchen_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
             item["name"] = name
-            item["day"] = day
+            item["day"] = days[0] if days else "altijd"
+            item["days"] = days
             save_kitchen_data(data)
             return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
@@ -8365,7 +8461,17 @@ def bar_list_save():
         return permission_denied_response("Je hebt geen rechten om bar takenlijsten te beheren.")
     payload = request.get_json(silent=True) or {}
     name = (payload.get("name") or "").strip()
-    day = normalize_task_day(payload.get("day"))
+    raw_days = payload.get("days")
+    if isinstance(raw_days, list):
+        days = []
+        for day_value in raw_days:
+            normalized = normalize_task_day(day_value)
+            if normalized not in days:
+                days.append(normalized)
+        if not days:
+            days = [normalize_task_day(payload.get("day"))]
+    else:
+        days = [normalize_task_day(payload.get("day"))]
     if not name:
         return jsonify({"ok": False, "message": "Vul een naam in voor de takenlijst."}), 400
     data = get_bar_tasks_data()
@@ -8376,7 +8482,7 @@ def bar_list_save():
     while new_id in existing:
         new_id = f"{base}_{count}"
         count += 1
-    data["lists"].append({"id": new_id, "name": name, "day": day, "tasks": []})
+    data["lists"].append({"id": new_id, "name": name, "day": days[0] if days else "altijd", "days": days, "tasks": []})
     save_bar_tasks_data(data)
     return jsonify({"ok": True})
 
@@ -8401,14 +8507,25 @@ def bar_list_rename():
     payload = request.get_json(silent=True) or {}
     list_id = payload.get("list_id")
     name = (payload.get("name") or "").strip()
-    day = normalize_task_day(payload.get("day"))
+    raw_days = payload.get("days")
+    if isinstance(raw_days, list):
+        days = []
+        for day_value in raw_days:
+            normalized = normalize_task_day(day_value)
+            if normalized not in days:
+                days.append(normalized)
+        if not days:
+            days = [normalize_task_day(payload.get("day"))]
+    else:
+        days = [normalize_task_day(payload.get("day"))]
     if not list_id or not name:
         return jsonify({"ok": False, "message": "Checklist gegevens ontbreken."}), 400
     data = get_bar_tasks_data()
     for item in data.get("lists", []):
         if item.get("id") == list_id:
             item["name"] = name
-            item["day"] = day
+            item["day"] = days[0] if days else "altijd"
+            item["days"] = days
             save_bar_tasks_data(data)
             return jsonify({"ok": True})
     return jsonify({"ok": False, "message": "Takenlijst niet gevonden."}), 404
