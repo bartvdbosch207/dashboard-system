@@ -3913,6 +3913,8 @@ HTML = r"""
             <button class="check-filter active" id="checkFilter-all" onclick="setChecklistFilter('all')">Alle</button>
             <button class="check-filter" id="checkFilter-todo" onclick="setChecklistFilter('todo')">Te doen</button>
             <button class="check-filter" id="checkFilter-done" onclick="setChecklistFilter('done')">Klaar</button>
+            <button class="check-filter" id="checkFilter-kitchen" onclick="setChecklistFilter('kitchen')">Keuken</button>
+            <button class="check-filter" id="checkFilter-bar" onclick="setChecklistFilter('bar')">Bar</button>
             <button type="button" class="check-settings-btn checklist-manage-action" onclick="openChecklistManagerPage(); return false;" title="Checklist instellingen">⚙️</button>
           </div>
           <div class="check-datebar">
@@ -5822,8 +5824,10 @@ function renderDashboard(){
   }
 
   function taskListMatchesDay(list, selectedDay){
-    const day = ((list && list.day) || 'altijd').toLowerCase();
-    return day === 'altijd' || day === selectedDay;
+    const selected = (selectedDay || 'altijd').toLowerCase();
+    const rawDays = Array.isArray(list?.days) && list.days.length ? list.days : [list?.day || 'altijd'];
+    const days = rawDays.map(day => String(day || 'altijd').toLowerCase());
+    return days.includes('altijd') || days.includes(selected);
   }
 
   function renderTaskDaySwitcher(targetId, selectedDay, changeFnName){
@@ -5888,6 +5892,9 @@ function renderDashboard(){
 
   function setChecklistFilter(filter){
     currentChecklistFilter = filter || 'all';
+    document.querySelectorAll('.check-filter').forEach(btn => btn.classList.remove('active'));
+    const active = document.getElementById('checkFilter-' + currentChecklistFilter);
+    if (active) active.classList.add('active');
     renderChecklistsPage();
   }
 
@@ -6475,11 +6482,17 @@ function renderDashboard(){
     `;
   }
 
+  function checklistSectionMatchesFilter(section){
+    if (currentChecklistFilter === 'kitchen') return section === 'kitchen';
+    if (currentChecklistFilter === 'bar') return section === 'bar';
+    return true;
+  }
+
   function renderChecklistsPage(){
     const selectedDay = getChecklistDayLabel();
     currentKitchenTaskDay = selectedDay;
     currentBarTaskDay = selectedDay;
-    ['all','todo','done'].forEach(filter => {
+    ['all','todo','done','kitchen','bar'].forEach(filter => {
       const btn = document.getElementById(`checkFilter-${filter}`);
       if (btn) btn.classList.toggle('active', currentChecklistFilter === filter);
     });
@@ -6491,8 +6504,8 @@ function renderDashboard(){
 
     const canSeeBarChecklists = hasPermission('access_bar') && hasPermission('use_bar_tasklists');
     const canSeeKitchenChecklists = hasPermission('access_kitchen') && hasPermission('use_kitchen_tasklists');
-    const barLists = canSeeBarChecklists ? safeArray(appData.bar_tasks?.lists).filter(list => taskListMatchesDay(list, selectedDay)) : [];
-    const kitchenLists = canSeeKitchenChecklists ? safeArray(appData.kitchen?.lists).filter(list => taskListMatchesDay(list, selectedDay)) : [];
+    const barLists = canSeeBarChecklists && checklistSectionMatchesFilter('bar') ? safeArray(appData.bar_tasks?.lists).filter(list => taskListMatchesDay(list, selectedDay)) : [];
+    const kitchenLists = canSeeKitchenChecklists && checklistSectionMatchesFilter('kitchen') ? safeArray(appData.kitchen?.lists).filter(list => taskListMatchesDay(list, selectedDay)) : [];
     const barStats = getChecklistSectionStats(barLists, 'bar');
     const kitchenStats = getChecklistSectionStats(kitchenLists, 'kitchen');
     const total = barStats.total + kitchenStats.total;
@@ -6505,7 +6518,7 @@ function renderDashboard(){
           <div>
             <div class="check-progress-title">Voortgang ${isChecklistToday() ? 'vandaag' : 'planning'}</div>
             <div class="check-progress-count">${done}/${total} taken</div>
-            <div class="check-progress-meta">${currentChecklistFilter === 'all' ? 'Alles in beeld' : currentChecklistFilter === 'todo' ? 'Alleen wat nog open staat' : 'Alleen afgeronde taken'}</div>
+            <div class="check-progress-meta">${currentChecklistFilter === 'all' ? 'Alles in beeld' : currentChecklistFilter === 'todo' ? 'Alleen wat nog open staat' : currentChecklistFilter === 'done' ? 'Alleen afgeronde taken' : currentChecklistFilter === 'kitchen' ? 'Alleen keuken checklists' : 'Alleen bar checklists'}</div>
           </div>
           <div class="check-progress-percent">${percent}%</div>
         </div>
